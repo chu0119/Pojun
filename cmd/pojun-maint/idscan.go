@@ -32,7 +32,7 @@ func runIDScan(args []string) {
 	until := fs.Int64("until", 0, "只扫描 ts < 该 Unix 秒")
 	limit := fs.Int("limit", 0, "最多扫描多少条 exchange（0=不限）")
 	batch := fs.Int("batch", 200, "每批行数（上限 1000）")
-	maxBody := fs.Int64("max-body-bytes", 4<<20, "单条正文最多读取字节")
+	maxBody := fs.Int64("max-body-bytes", traffic.IdentityDefaultMaxBodyBytes, "单条正文最多读取字节（默认 5 MiB，覆盖录制阈值内的全部正文）")
 	outPath := fs.String("out", "", "把完整报告写成 JSON（0600）")
 	failOnFindings := fs.Bool("fail-on-findings", false, "存在 finding 时退出码 3（可用于回归门禁）")
 	_ = fs.Parse(args)

@@ -34,7 +34,11 @@ const (
 	identitySamplesCap           = 500
 	identitySamplesPerHostList   = 3
 	identityDefaultBatch         = 200
-	identityDefaultMaxBodyBytes  = 4 << 20
+	// IdentityDefaultMaxBodyBytes covers every body the recorder can store:
+	// go-mitmproxy streams (and the recorder therefore skips) a body once it
+	// reaches its 5 MiB StreamLargeBodies threshold, so recorded bodies are
+	// always smaller than 5 MiB.
+	IdentityDefaultMaxBodyBytes = 5 << 20
 )
 
 // IdentityScanOptions configures an offline scan.
@@ -415,7 +419,7 @@ func ScanIdentity(ctx context.Context, opt IdentityScanOptions) (*IdentityReport
 	}
 	maxBody := opt.MaxBodyBytes
 	if maxBody <= 0 {
-		maxBody = identityDefaultMaxBodyBytes
+		maxBody = IdentityDefaultMaxBodyBytes
 	}
 	hosts := map[string]bool{}
 	for _, h := range opt.Hosts {
