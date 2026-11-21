@@ -32,8 +32,9 @@ const nextConfig = {
         }
       : {
           // 开发：把 /api/* 反代到 Go 后端（默认 :8787，可用 AUTOPENTEST_API 覆盖）。
+          // 后端默认只绑 IPv4 loopback，localhost 可能先解析到 ::1 而连不上。
           async rewrites() {
-            const backend = process.env.AUTOPENTEST_API ?? "http://localhost:8787";
+            const backend = process.env.AUTOPENTEST_API ?? "http://127.0.0.1:8787";
             return [{ source: "/api/:path*", destination: `${backend}/api/:path*` }];
           },
         }),

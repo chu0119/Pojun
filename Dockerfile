@@ -114,6 +114,9 @@ COPY docker/docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh
 # data/（SQLite + jwt.key）持久化点
 VOLUME ["/app/data"]
+# EXPOSE 只是镜像元数据，不控制绑定：真正的可达性由 compose 的宿主侧发布决定。
+# CMD 必须保持容器内 0.0.0.0（:8787）——改成 127.0.0.1 会让 published port
+# 不可达；宿主上的「仅本机」由 docker-compose.yml 的宿主绑定地址负责。
 EXPOSE 8787 8788
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["-addr", ":8787", "-proxy", ":8788"]

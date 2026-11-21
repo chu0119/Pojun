@@ -69,6 +69,8 @@ export default function LoginPage() {
     setLoading(true);
     setError("");
     try {
+      // 服务端契约：/api/auth/login 只接受固定用户名（POJUN/ARTEX，见 server/auth.go），
+      // 页面不再渲染用户名字段。该字面量仍会出现在导出的公开 JS 里——静态导出无法隐藏。
       const { token } = await api.login("POJUN", password);
       auth.setToken(token);
       window.location.replace("/function/tasks");
@@ -161,15 +163,6 @@ export default function LoginPage() {
           </div>
 
           <form onSubmit={handleSubmit} className="flex flex-col gap-5">
-            <div className="space-y-1.5">
-              <Label htmlFor="username" className="text-muted-foreground text-xs">用户名</Label>
-              <Input
-                id="username"
-                value="POJUN"
-                readOnly
-                className="border-border/60 bg-muted/50 font-mono text-muted-foreground"
-              />
-            </div>
             <div className="space-y-1.5">
               <Label htmlFor="password" className="text-muted-foreground text-xs">密码</Label>
               <div className="relative">

@@ -55,7 +55,8 @@ PAGES = [
 
 def main():
     out = sys.argv[1] if len(sys.argv) > 1 else "pages.json"
-    base = os.environ.get("ARTEX_BASE", "http://10.10.70.17:8787")
+    # 控制台默认仅绑定回环；跨机检查请显式设 ARTEX_BASE=http://<host>:8787
+    base = os.environ.get("ARTEX_BASE", "http://127.0.0.1:8787")
     doc = {
         "base": base,
         "count": len(PAGES),

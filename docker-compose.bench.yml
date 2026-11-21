@@ -7,6 +7,7 @@
 #   docker compose -f docker-compose.bench.yml logs -f
 #   docker compose -f docker-compose.bench.yml down            # 停止(加 -v 连数据卷一起删)
 # 浏览器：http://localhost:8787（用 ADMIN_PASSWORD 登录）
+# 注意：build 依赖本地 bench/ 与 Dockerfile.bench（均在 .gitignore 中，不入库），干净检出无法直接构建。
 
 services:
   pojun-bench:
@@ -20,6 +21,9 @@ services:
     # 与物理机共享网络：容器直接用宿主网络栈，可直连宿主/VPN 上的靶机网络。
     # host 模式下不用 ports 映射，容器直接绑宿主端口：8787(UI/API)、8788(代理)、
     # 以及内部 PostgreSQL 5432 —— 请确保宿主这三个端口空闲（本地测前先停掉占用它们的服务）。
+    # 暴露面告警：镜像 CMD 是 "-addr :8787 -proxy :8788"，host 模式下两者都监听
+    # 宿主所有接口（本 PR 的回环默认只作用于二进制/安装器/仓库 compose，管不到这里）。
+    # 是否公网可达取决于宿主防火墙；仅限受控评测环境使用，勿部署到公网主机。
     network_mode: host
     restart: "no"
 

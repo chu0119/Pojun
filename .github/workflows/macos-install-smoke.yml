@@ -21,6 +21,12 @@ on:
     paths:
       - "install.sh"
       - ".github/workflows/macos-install-smoke.yml"
+  # install.sh 的地址归一/plist 透传只有 macOS 能真机验证；不纳入 PR 门禁时，
+  # 改动在合并前完全没有执行证据。
+  pull_request:
+    paths:
+      - "install.sh"
+      - ".github/workflows/macos-install-smoke.yml"
 
 jobs:
   smoke:
@@ -81,6 +87,14 @@ jobs:
           "$PGBIN/psql" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='pojun'" | grep -q 1
           # config.json 权限
           [ "$(stat -f '%Lp' ~/pojun/config.json)" = "600" ]
+          # 绑定断言：plist 必须显式传 -addr，且只监听回环。
+          # 旧 plist 不传 -addr，start.sh 会吃到旧二进制默认的 :8787（全接口）。
+          args=$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments' ~/Library/LaunchAgents/com.pojun.plist)
+          echo "$args" | grep -q -- '-addr'
+          echo "$args" | grep -q '127.0.0.1:8787'
+          lsof -nP -iTCP:8787 -sTCP:LISTEN | grep -q '127.0.0.1:8787'
+          ! lsof -nP -iTCP:8787 -sTCP:LISTEN | grep -Eq '\*:8787|0\.0\.0\.0:8787'
+          echo "bind assertions OK (127.0.0.1:8787 only)"
 
       - name: Verify idempotent re-run (upgrade path)
         run: |

@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -35,6 +36,42 @@ const banner = `
 /_/   \_\_| \_\|_| |_____/_/\_\
 `
 
+// defaultListenAddr is the control-plane bind address for a bare binary.
+// Loopback by default: the console executes commands on the host, so exposing it
+// must be an explicit choice (0.0.0.0:8787 / reverse proxy).
+const defaultListenAddr = "127.0.0.1:8787"
+
+// isLoopbackListenAddr reports whether addr binds to a loopback-only host.
+// An unparsable address returns false (nothing to promise about it).
+func isLoopbackListenAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// warnIfExposed logs a loud warning when the console is bound to anything other
+// than loopback. A malformed address is left to ListenAndServe to report.
+func warnIfExposed(addr string) {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return
+	}
+	if isLoopbackListenAddr(addr) {
+		return
+	}
+	desc := host
+	if desc == "" {
+		desc = "所有接口"
+	}
+	log.Printf("WARN: HTTP 控制台监听 %s 非回环（%s），将对其他主机可达；如非必要请使用 127.0.0.1:8787 或置于反向代理之后", addr, desc)
+}
+
 // printBanner writes the startup banner + version/runtime info to stdout.
 func printBanner(addr string) {
 	fmt.Print(banner)
@@ -53,11 +90,15 @@ func main() {
 
 func run() int {
 	var (
-		addr    = flag.String("addr", ":8787", "HTTP listen address")
+		addr    = flag.String("addr", defaultListenAddr, "HTTP listen address (default loopback; use 0.0.0.0:8787 to expose)")
 		dataDir = flag.String("data", filepath.Join(config.BaseDir(), "data"), "data directory for SQLite stores (default: data/ next to the executable)")
 		proxy   = flag.String("proxy", "127.0.0.1:8788", "traffic recording proxy address (empty to disable)")
 	)
 	flag.Parse()
+
+	// 非回环绑定时喊一声：默认是回环，改成 0.0.0.0/:PORT 属于显式选择，
+	// 但开机后日志里必须留下暴露面的痕迹。
+	warnIfExposed(*addr)
 
 	// hand the build version to the server package so GET /api/health can report it
 	// to the frontend top bar.

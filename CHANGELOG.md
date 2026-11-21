@@ -4,6 +4,57 @@
 
 ## [Unreleased]
 
+### 安全
+
+- **控制台默认仅本机**：`cmd/pojun` 的 `-addr` 默认由 `:8787` 改为
+  `127.0.0.1:8787`，非回环绑定时启动日志打印 WARN。systemd unit / launchd plist
+  由 `install.sh` 显式透传规范化后的地址（旧 plist 不传 `-addr`，导致 `--listen`
+  在 macOS 上静默失效，已修复）。
+- **安装器监听地址归一**：`--listen` 支持 `IP:端口` / 纯端口 / `[IPv6]:端口`，
+  拒绝主机名、IPv6 zone、空/越界端口；`--listen=:PORT` 保持「空 host = 全接口」
+  语义并告警。Docker 形态拆分 `PROBE_HOST` / `PUBLISH_HOST`：`--listen=127.0.0.1:9000`
+  生成的端口映射不再丢弃 IP 前缀；健康检查按实际绑定地址探测，
+  `--listen=<局域网IP>:8787` 不再 30 次失败退出。
+- **Docker 宿主侧默认回环**：仓库 `docker-compose.yml` 改为
+  `${POJUN_BIND_IP:-127.0.0.1}:8787:8787`；容器内仍监听 `0.0.0.0:8787`（镜像 CMD
+  不变，否则 published port 不可达）。
+- **品牌资产去稳定枚举路径**：`web/public/logo.png` 移到
+  `web/src/assets/logo.png` 改为模块导入；删除 `public/logo.svg`、
+  `public/logo-mono.svg`、`public/favicon.ico`；删除 1920×1920 的
+  `app/icon.png`，新增中性 `app/icon.svg` 并替换为同源中性 `favicon.ico`
+  （16/32/48）。登录页移除只读 `POJUN` 用户名输入框。
+- 公开 JS chunk 仍含登录契约所需的 `POJUN` 字面量、mock/demo 字符串与
+  `package.json` 内联，`logo.png` 的哈希副本仍在 `_next/static/media` 下——
+  未鉴权者仍可取到该品牌图（只是路径从稳定 URL 变成带哈希的构建产物路径），
+  静态导出无法隐藏，留作后续治理。
+
+### 升级须知
+
+- 重跑 `install.sh` 会重写 unit/plist/生成的 compose 并重启服务，监听地址回到
+  `127.0.0.1:8787`；检测到旧安装是全接口时会打印醒目告警（现在按 `-addr` /
+  ports 的实际地址判断，不再只认 8787 与裸 `"8787:8787"`，`--listen=:9000`、
+  `<网卡IP>:8787` 等旧安装同样会告警）。保留局域网/公网直连需显式
+  `--listen=0.0.0.0:<端口>`。
+- Docker 放开旋钮分两种：仓库根 `docker-compose.yml` 用
+  `POJUN_BIND_IP=0.0.0.0`；`install.sh --mode=docker` 生成的 compose 是字面量，
+  只认 `--listen=0.0.0.0:<端口>`（或手改生成的 compose）。
+- **macOS 旧 launchd plist**：旧 plist 不传 `-addr`，应用内「一键更新」重启时
+  不经过安装器。`start.sh` 检测到这种旧 plist 会沿用旧默认 `-addr :8787` 并告警，
+  避免远端控制台静默失联；重跑 `install.sh` 后 plist 固定为规范化地址。
+- `--listen=:PORT` 仍是全接口（与二进制 `-addr :PORT` 一致），会告警。
+
+### 测试
+
+- 新增 `TestDefaultListenAddrIsLoopback` / `TestIsLoopbackListenAddr`。
+- 新增 `scripts/install_listen_test.sh`：抽取 install.sh 的监听地址函数做输入
+  矩阵断言（默认 / 纯端口 / `0.0.0.0` / IPv6 / 非法 IPv4 / 主机名 / zone /
+  端口越界）、回环判定、compose 端口映射判定与 `PORTMAP` 生成；CI 中执行。
+- CI：`bash -n install.sh`；前端静态导出后断言品牌资产已移除且图标中性；
+  compose job 打印版本、断言仓库 compose 与 `windows`/`macos` 合并后的宿主
+  `host_ip`。
+- macOS 冒烟新增 plist `-addr` 与 `lsof` 仅回环断言，并改为 `pull_request`
+  （路径命中 install.sh）触发。
+
 ## [0.4.91] - 2026-11-21
 ### 新增：LLM 配置模块重构（厂商知识层 + 三步新建向导）
 

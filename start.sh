@@ -4,7 +4,7 @@
 # 用法：
 #   ./start.sh                       前台运行（Ctrl-C 停止）
 #   nohup ./start.sh >pojun.log 2>&1 &   后台常驻
-#   ./start.sh -addr :9000           额外参数原样透传给 pojun
+#   ./start.sh -addr 127.0.0.1:9000   额外参数原样透传给 pojun
 #
 # 它只做一件事：把 pojun 跑起来，进程退出后按退出码决定要不要再拉起。
 #
@@ -22,6 +22,25 @@ cd "$(dirname "$0")" || exit 1
 
 BIN=./pojun
 [ -x "$BIN" ] || { echo "[pojun] 找不到可执行文件 $BIN" >&2; exit 1; }
+
+# 旧版 macOS launchd plist 只启动本脚本、不传 -addr。新二进制的默认值已改为
+# 回环，若原样交给它，「一键更新」(exit 75) 重启后远端控制台会静默失联。
+# 这里检测旧 plist 并沿用旧默认 :8787，同时告警；重跑 install.sh 后 plist 会
+# 带上 -addr，本分支不再触发。
+has_addr=0
+for _a in "$@"; do
+	case "$_a" in
+		-addr|-addr=*) has_addr=1 ;;
+	esac
+done
+if [ "$has_addr" -eq 0 ] && [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then
+	_plist="$HOME/Library/LaunchAgents/com.pojun.plist"
+	if [ -f "$_plist" ] && ! grep -q -- "-addr" "$_plist"; then
+		echo "[pojun] 检测到旧版 launchd plist（未传 -addr）：沿用旧默认 -addr :8787，避免远端控制台失联。" >&2
+		echo "[pojun] 建议重跑 install.sh 固定为 127.0.0.1:8787（或显式 --listen=<地址>:<端口>）。" >&2
+		set -- "$@" -addr :8787
+	fi
+fi
 
 RESTART_CODE=75
 MAX_DELAY=60

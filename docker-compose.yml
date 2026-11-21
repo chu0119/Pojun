@@ -36,7 +36,10 @@ services:
       POJUN_LLM_BASE_URL: ${POJUN_LLM_BASE_URL:-}
       POJUN_LLM_PROXY: ${POJUN_LLM_PROXY:-}
     ports:
-      - "8787:8787"
+      # 默认仅本机：控制台能在宿主机执行命令，暴露必须是显式选择。
+      # 局域网直连：POJUN_BIND_IP=0.0.0.0 docker compose up -d（不推荐，优先 HTTPS 反代）。
+      # 容器内仍监听 0.0.0.0:8787（镜像 CMD），这里只限宿主机侧的发布地址。
+      - "${POJUN_BIND_IP:-127.0.0.1}:8787:8787"
       - "127.0.0.1:8788:8788"
       # 回连端口映射(按需放开):容器内 MSF/listener 监听的端口要映射到宿主,
       # agent 才能收到 reverse shell。示例(解除注释并按需改):

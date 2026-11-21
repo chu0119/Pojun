@@ -4,6 +4,7 @@ import Link from "next/link";
 
 import { useShallow } from "zustand/react/shallow";
 
+import logo from "@/assets/logo.png";
 import {
   Sidebar,
   SidebarContent,
@@ -42,8 +43,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           <SidebarMenuItem>
             <SidebarMenuButton asChild>
               <Link prefetch={false} href="/function/tasks">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src="/logo.png" alt="POJUN" width={40} height={40} className="shrink-0" />
+                {/* 品牌图由模块导入（不在 public/，避免未鉴权可枚举的稳定 URL） */}
+                <img src={logo.src} alt="" aria-hidden width={40} height={40} className="shrink-0" />
                 <span className="font-semibold text-base">{APP_CONFIG.name}</span>
               </Link>
             </SidebarMenuButton>

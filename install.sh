@@ -25,7 +25,11 @@ RUN_USER="pojun"
 VERSION="latest"
 MODE="${MODE:-}"
 WITH_TOOLS=0
-LISTEN_ADDR="${LISTEN_ADDR:-:8787}"
+# 监听地址。默认仅本机（控制台能执行命令，暴露必须是显式选择）。
+# 环境变量 LISTEN_ADDR 与 --listen 都视为显式；归一化在 normalize_listen。
+LISTEN_EXPLICIT=0
+if [ -n "${LISTEN_ADDR:-}" ]; then LISTEN_EXPLICIT=1; fi
+LISTEN_ADDR="${LISTEN_ADDR:-127.0.0.1:8787}"
 PROXY_ADDR="${PROXY_ADDR:-127.0.0.1:8788}"
 PG_SUPER="${PG_SUPER:-postgres}"
 # 安装期出网代理（apt / curl / go 下载走它）。留空 = 直连。
@@ -65,7 +69,8 @@ POJUN 安装脚本
 通用:
   --version=VER          版本，默认 latest（如 v0.3.20）
   --dir=PATH             安装目录（默认 /opt/pojun）
-  --listen=ADDR          监听地址（默认 :8787）
+  --listen=ADDR          监听地址（默认 127.0.0.1:8787，仅本机；0.0.0.0:8787 放开所有接口；
+                         Docker 形态为宿主发布地址；仅写端口等价 127.0.0.1:端口）
   --proxy=ADDR           流量记录代理地址（默认 127.0.0.1:8788）
   --install-proxy=URL    安装期出网代理，如 http://10.0.0.14:7897（默认取 \$HTTPS_PROXY）
   -y, --yes              非交互，全部用默认值
@@ -93,7 +98,7 @@ for arg in "$@"; do
     --with-tools)      WITH_TOOLS=1 ;;
     --version=*)       VERSION="${arg#--version=}" ;;
     --dir=*)           INSTALL_DIR="${arg#--dir=}"; DIR_EXPLICIT=1 ;;
-    --listen=*)        LISTEN_ADDR="${arg#--listen=}" ;;
+    --listen=*)        LISTEN_ADDR="${arg#--listen=}"; LISTEN_EXPLICIT=1 ;;
     --proxy=*)         PROXY_ADDR="${arg#--proxy=}" ;;
     --install-proxy=*) INSTALL_PROXY="${arg#--install-proxy=}" ;;
     --user=*)          RUN_USER="${arg#--user=}" ;;
@@ -390,6 +395,228 @@ Environment=HTTPS_PROXY=${INSTALL_PROXY}"
   esac
 fi
 
+# ── 监听地址归一 ─────────────────────────────────
+# 三层地址模型必须分开：
+#   1. 进程绑定（唯一真值）：systemd ExecStart / launchd plist 的 -addr；
+#   2. 容器内绑定：镜像 CMD 固定 :8787（0.0.0.0），改回环会让 published port 不可达；
+#   3. 宿主发布：compose 的 ports 左侧，只在这里决定暴露面。
+# 本函数只归一化用户输入，输出 LISTEN_ADDR / LISTEN_PORT / PROBE_HOST / PUBLISH_HOST。
+# bash 3.2 兼容：不用 ${var,,}、不用关联数组。
+# >>> LISTEN_HELPERS（scripts/install_listen_test.sh 抽取本段做回归，勿删标记）
+is_ipv4(){
+  local ip="$1" o
+  case "$ip" in
+    *[!0-9.]*|.*|*.) return 1 ;;
+  esac
+  local IFS='.'
+  local parts=($ip)
+  [ "${#parts[@]}" -eq 4 ] || return 1
+  for o in "${parts[@]}"; do
+    [ -n "$o" ] || return 1
+    [ "$o" -le 255 ] 2>/dev/null || return 1
+  done
+  return 0
+}
+
+# -addr 的 host 段是否仅本机。支持 "127.0.0.1:8787"、"[::1]:8787"、
+# "localhost:8787"；":8787"（空 host = 所有接口）与具体网卡 IP 都算非回环。
+addr_is_loopback(){
+  local a="$1" h
+  case "$a" in
+    \[*\]:*) h="${a#\[}"; h="${h%%]*}" ;;
+    :*)      return 1 ;;   # 空 host 即所有接口
+    *:*)     h="${a%:*}" ;;
+    *)       return 1 ;;   # 没有地址，只有端口 → 所有接口
+  esac
+  case "$h" in
+    127.*|localhost|::1) return 0 ;;
+  esac
+  return 1
+}
+
+# 从 systemd unit 提取 -addr 的值（兼容 "-addr :8787" 与 "-addr=:8787"）。
+unit_addr_value(){
+  sed -nE 's/.*-addr(=|[[:space:]])+([^[:space:]]+).*/\2/p' "$1" 2>/dev/null | head -n1
+}
+
+# 从 launchd plist 的 ProgramArguments 里取 -addr 之后的那一项。
+plist_addr_value(){
+  awk '/<string>-addr<\/string>/{getline; sub(/^.*<string>/,""); sub(/<\/string>.*$/,""); gsub(/^[ \t]+|[ \t]+$/,""); print; exit}' "$1" 2>/dev/null
+}
+
+# compose 端口映射的宿主地址是否对外开放（识别旧版生成的暴露映射）。
+# 输入形如 "8787:8787" / "0.0.0.0:8787:8787" / "[::1]:8787:8787"。
+compose_host_exposed(){
+  local m="$1" h
+  case "$m" in
+    \[*\]:*:8787) h="${m#\[}"; h="${h%%]*}" ;;
+    *:*:8787)     h="${m%%:*}" ;;
+    *:8787)       return 0 ;;   # 无 host 前缀 = 所有接口
+    *)            return 0 ;;
+  esac
+  case "$h" in
+    127.*|localhost|::1) return 1 ;;
+  esac
+  return 0
+}
+
+# 生成 compose 的宿主端口映射（deploy_docker 与回归测试共用）。
+compose_portmap(){
+  local port="$1" publish="$2"
+  if [ -n "$publish" ]; then
+    printf '%s:%s:8787' "$publish" "$port"
+  else
+    printf '%s:8787' "$port"
+  fi
+}
+
+normalize_listen(){
+  local raw="$LISTEN_ADDR"
+  if [ -z "$raw" ]; then
+    # 显式传了 --listen= 但值为空 → 报错；未设置则用默认
+    [ "$LISTEN_EXPLICIT" = "1" ] && die "监听地址不能为空"
+    raw="127.0.0.1:8787"
+  fi
+
+  local host port bracket_v6=0
+  case "$raw" in
+    \[*\]:*)
+      bracket_v6=1
+      local rest="${raw#\[}"
+      host="${rest%%]*}"
+      port="${rest#*]}"
+      port="${port#:}"
+      ;;
+    *:*)
+      host="${raw%:*}"
+      port="${raw##*:}"
+      case "$host" in
+        *:*) die "--listen 的 IPv6 地址必须写成 [地址]:端口，如 [::1]:8787" ;;
+      esac
+      ;;
+    *)
+      host="127.0.0.1"
+      port="$raw"
+      ;;
+  esac
+
+  case "$port" in
+    ''|*[!0-9]*) die "监听端口不合法: '$port'（应为 1-65535）" ;;
+  esac
+  [ "${#port}" -le 5 ] || die "监听端口越界: $port（应为 1-65535）"
+  local pnum=$((10#$port))
+  if [ "$pnum" -lt 1 ] || [ "$pnum" -gt 65535 ]; then
+    die "监听端口越界: $port（应为 1-65535）"
+  fi
+  port="$pnum"
+
+  case "$host" in
+    *%*) die "监听地址不支持 IPv6 zone（'%'）: $host" ;;
+  esac
+  if [ "$bracket_v6" = "1" ] && [ -z "$host" ]; then
+    die "非法的 IPv6 地址: []"
+  fi
+
+  if [ "$host" = "localhost" ]; then
+    host="127.0.0.1"
+  elif [ -n "$host" ] && [ "$bracket_v6" = "1" ]; then
+    case "$host" in
+      *[!0-9a-fA-F:.]*) die "非法的 IPv6 地址: $host" ;;
+    esac
+    case "$host" in
+      *:*) : ;;
+      *) die "非法的 IPv6 地址: $host" ;;
+    esac
+  elif [ -n "$host" ] && ! is_ipv4 "$host"; then
+    # 主机名会让「绑定」与「探测」的解析结果不一致，直接拒绝。
+    # 纯数字点号（如 1.2.3.400）是地址非法，而不是「不支持的主机名」。
+    case "$host" in
+      *[!0-9.]*) die "不支持的主机名: $host（仅接受 IP、localhost 或空 host）" ;;
+      *)         die "非法的 IPv4 地址: $host（每段应为 0-255）" ;;
+    esac
+  fi
+
+  if [ -z "$host" ]; then
+    LISTEN_ADDR=":${port}"
+    PROBE_HOST="127.0.0.1"
+    PUBLISH_HOST=""
+  elif [ "$host" = "0.0.0.0" ]; then
+    LISTEN_ADDR="0.0.0.0:${port}"
+    PROBE_HOST="127.0.0.1"
+    PUBLISH_HOST="0.0.0.0"
+  elif [ "$bracket_v6" = "1" ]; then
+    LISTEN_ADDR="[${host}]:${port}"
+    case "$host" in
+      ::|::1) PROBE_HOST="[::1]" ;;
+      *)      PROBE_HOST="[${host}]" ;;
+    esac
+    PUBLISH_HOST="[${host}]"
+  else
+    LISTEN_ADDR="${host}:${port}"
+    PROBE_HOST="${host}"
+    PUBLISH_HOST="${host}"
+  fi
+  LISTEN_PORT="$port"
+
+  if [ "$MODE" = "docker" ] && [ "$bracket_v6" = "1" ]; then
+    die "Docker 发布不支持 IPv6 宿主地址（$LISTEN_ADDR）；请改用 IPv4 或空 host"
+  fi
+
+  if [ "$LISTEN_EXPLICIT" = "1" ]; then
+    case "$host" in
+      ''|0.0.0.0|::) warn "绑定所有接口（$LISTEN_ADDR）；仅本机请用 127.0.0.1:${port}" ;;
+    esac
+  fi
+  if [ "$IS_MAC" = "1" ] && [ "$port" -lt 1024 ]; then
+    warn "端口 ${port} < 1024：launchd 用户级代理无法绑定低位端口（需 root 或改用高位端口）"
+  fi
+}
+# <<< LISTEN_HELPERS
+
+# 升级安全：旧版的 unit/plist/compose 都默认监听所有接口，而下面三处写文件
+# 都是无条件重写并重启。覆盖前检测旧值并明确告知「会收回 loopback」。
+# 不做自动继承——保留旧暴露面必须显式 --listen=0.0.0.0:PORT。
+warn_legacy_exposure(){
+  [ "$LISTEN_EXPLICIT" = "1" ] && return 0
+  local legacy=0
+  case "$MODE" in
+    binary)
+      if [ "$IS_MAC" = "1" ]; then
+        local plist="$HOME/Library/LaunchAgents/com.pojun.plist"
+        [ -f "$plist" ] || return 0
+        # 旧 plist 不传 -addr，start.sh 于是吃到旧二进制默认的 :8787。
+        # 有 -addr 时也要判断地址本身，不能只看到关键字就算「已收敛」。
+        local paddr
+        paddr="$(plist_addr_value "$plist")"
+        if [ -z "$paddr" ] || ! addr_is_loopback "$paddr"; then legacy=1; fi
+      else
+        local unit="/etc/systemd/system/${SERVICE}.service"
+        [ -f "$unit" ] || return 0
+        # 不能只认默认端口 8787：旧安装用 --listen=:9000 / <网卡IP>:8787 时同样
+        # 是跨机可达，漏检会让升级后静默失联。
+        local uaddr
+        uaddr="$(unit_addr_value "$unit")"
+        if [ -z "$uaddr" ] || ! addr_is_loopback "$uaddr"; then legacy=1; fi
+      fi
+      ;;
+    docker)
+      local compose="$INSTALL_DIR/docker-compose.yml"
+      [ -f "$compose" ] || return 0
+      # 不只认裸 "8787:8787"：安装器会生成 "0.0.0.0:8787:8787" /
+      # "<网卡IP>:8787:8787" / "<端口>:8787"，这些同样是跨机可达。
+      local m
+      for m in $(grep -oE '"[^"]*:8787"' "$compose" | tr -d '"'); do
+        case "$m" in *'${'*) continue ;; esac
+        if compose_host_exposed "$m"; then legacy=1; break; fi
+      done
+      ;;
+  esac
+  [ "$legacy" = "1" ] || return 0
+  warn "检测到既有安装监听所有接口（旧 unit/plist/compose）。"
+  warn "本次会重写配置并重启服务，控制台将收回 127.0.0.1:${LISTEN_PORT}（仅本机）。"
+  warn "如需保留局域网/公网直连：重跑时加 --listen=0.0.0.0:${LISTEN_PORT}，或改用反向代理（推荐）。"
+}
+
 # ── 选择部署形态 ─────────────────────────────────
 choose_mode(){
   if [ -n "$MODE" ]; then
@@ -414,7 +641,8 @@ choose_mode(){
 }
 
 choose_mode
-ok "部署形态: $MODE  目标目录: $INSTALL_DIR"
+normalize_listen
+ok "部署形态: $MODE  目标目录: $INSTALL_DIR  监听: $LISTEN_ADDR"
 
 # ── 解析版本 ─────────────────────────────────────
 resolve_version(){
@@ -575,6 +803,8 @@ JSON
   #   - Environment=HOME 指到安装目录：ProtectHome + 家目录不可写会让 nuclei 的模板/缓存
   #     目录(~/nuclei-templates 等)写不进去。
   # 注：--dir 若指向 /home 或 /root 底下，ProtectHome=true 会把它整个藏起来，需自行去掉该项。
+  # 覆盖前先看旧 unit 是不是全接口：重写+重启会收回 loopback，必须让用户看见
+  warn_legacy_exposure
   cat > "/etc/systemd/system/${SERVICE}.service" <<UNIT
 [Unit]
 Description=POJUN - AI Autonomous Penetration Testing System
@@ -754,6 +984,8 @@ JSON
   local PLIST_DIR="$HOME/Library/LaunchAgents"
   local PLIST="$PLIST_DIR/$PLIST_LABEL.plist"
   mkdir -p "$PLIST_DIR"
+  # 覆盖前检测旧 plist（旧版不含 -addr，等于默认 :8787）
+  warn_legacy_exposure
   cat > "$PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -764,6 +996,10 @@ JSON
   <array>
     <string>/bin/sh</string>
     <string>$INSTALL_DIR/start.sh</string>
+    <string>-addr</string>
+    <string>$LISTEN_ADDR</string>
+    <string>-proxy</string>
+    <string>$PROXY_ADDR</string>
   </array>
   <key>WorkingDirectory</key><string>$INSTALL_DIR</string>
   <key>RunAtLoad</key><true/>
@@ -947,7 +1183,12 @@ ENV
     fi
   fi
 
-  local PORT="${LISTEN_ADDR##*:}" PROXY_PORT="${PROXY_ADDR##*:}"
+  local PROXY_PORT="${PROXY_ADDR##*:}"
+  # 宿主发布地址：PUBLISH_HOST 为空 = 所有接口（与 --listen=:PORT 语义一致）
+  local PORTMAP
+  PORTMAP="$(compose_portmap "$LISTEN_PORT" "$PUBLISH_HOST")"
+  # 覆盖前检测旧 compose 的 "8787:8787"（全接口）
+  warn_legacy_exposure
   cat > "$INSTALL_DIR/docker-compose.yml" <<COMPOSE
 # 由 install.sh 生成。数据在 ./data，skills 在 ./skills，数据库在卷 pgdata。
 services:
@@ -983,7 +1224,7 @@ services:
       # config.json，只能走环境变量；服务端读它作为数据库 setting 的兜底。
       POJUN_INSTALL_PROXY: \${POJUN_INSTALL_PROXY:-}
     ports:
-      - "${PORT}:8787"
+      - "${PORTMAP}"
       - "127.0.0.1:${PROXY_PORT}:8788"
       # 回连端口映射（按需放开）：容器内 MSF/listener 监听的端口要映射到宿主，
       # agent 才能收到 reverse shell。示例：
@@ -1382,19 +1623,30 @@ fi
 persist_install_proxy
 
 # ── 健康检查 ─────────────────────────────────────
-PORT="${LISTEN_ADDR##*:}"
+PORT="$LISTEN_PORT"
 for _n in $(seq 1 30); do
   # 每轮失败打进度：装机现场「卡在哪一步」必须可见，也方便排障
   # curl 的退出码显式捕获：set -e 下 if 条件本应豁免，但显式 rc 让「为什么退出」
   # 直接可见（曾在此处出现无输出退出的怪象，靠这行定位）
+  # 探测走 PROBE_HOST（通配绑定探测回环，具体 IP 探测该 IP），
+  # --listen=<LAN IP>:8787 不再因为绑非回环而 30 次失败。
   health_rc=0
-  curl -fsS -o /dev/null "http://127.0.0.1:${PORT}/api/health" 2>/dev/null || health_rc=$?
+  curl -fsS -o /dev/null "http://${PROBE_HOST}:${PORT}/api/health" 2>/dev/null || health_rc=$?
   echo "[*] health check #${_n}: rc=${health_rc}"
   if [ "$health_rc" = "0" ]; then
-    # macOS 的 hostname 没有 -I（退出码 1），set -o pipefail 会把它传染整条管道、
-    # set -e 当场杀掉脚本——曾让 macOS 安装在 health 200 后静默退出
-    HOST_IP="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
-    ok "服务已就绪 → http://${HOST_IP:-127.0.0.1}:${PORT}（首次访问设置管理员密码）"
+    ok "服务已就绪 → http://${PROBE_HOST}:${PORT}（首次访问设置管理员密码）"
+    # 不再用 hostname -I 猜 LAN IP：探测地址就是用户指定的绑定地址。
+    ACCESS_WILDCARD=0
+    case "$LISTEN_ADDR" in
+      :*|0.0.0.0:*|\[::\]:*) ACCESS_WILDCARD=1 ;;
+    esac
+    if [ "$ACCESS_WILDCARD" = "1" ]; then
+      warn "监听所有接口（${LISTEN_ADDR}）：其他主机可通过本机 IP 访问控制台；默认仅本机，跨机请显式指定绑定地址或走反向代理"
+    elif [ "$PROBE_HOST" = "127.0.0.1" ] || [ "$PROBE_HOST" = "[::1]" ]; then
+      info "默认仅本机；跨机访问需显式 --listen=0.0.0.0:${PORT} 或反向代理"
+    else
+      warn "控制台绑定在 ${PROBE_HOST}:${PORT}，其他主机可直接访问；请确认暴露面或改用反向代理"
+    fi
     info "下一步：①设置管理员密码 ②「LLM 配置」配通道 ③「系统→MCP」用预设接入 FOFA/Playwright ④建任务可套用内置 Playbook"
     if [ "$MODE" = "binary" ]; then
       if [ "$IS_MAC" = "1" ]; then
@@ -1420,4 +1672,15 @@ if [ "$MODE" = "binary" ]; then
 else
   warn "60s 内未就绪，查看日志: cd $INSTALL_DIR && docker compose logs --tail 50"
 fi
+# 具体网卡地址探测失败的最常见原因是「该 IP 不在这台机器上」——绑定时内核
+# 会 bind 失败，而健康检查只回显 curl 的退出码，指不到真因。
+case "$PROBE_HOST" in
+  127.0.0.1|\[::1\]) : ;;
+  *)
+    case "$LISTEN_ADDR" in
+      :*|0.0.0.0:*|\[::\]:*) : ;;
+      *) warn "探测地址 ${PROBE_HOST} 若非本机已配置的网卡 IP，请改用实际地址或 0.0.0.0:${LISTEN_PORT}" ;;
+    esac
+    ;;
+esac
 exit 1

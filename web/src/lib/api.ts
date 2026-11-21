@@ -226,7 +226,11 @@ export function sseUrl(path: string): string {
   const base =
     process.env.NEXT_PUBLIC_SSE_BASE ??
     (process.env.NODE_ENV !== "production" && typeof window !== "undefined"
-      ? `${window.location.protocol}//${window.location.hostname}:8787`
+      ? // 后端默认只绑 IPv4 loopback：dev 下把 localhost 映射到 127.0.0.1，
+        // 避免 EventSource 走 ::1 连接被拒。生产保持同源。
+        `${window.location.protocol}//${
+          window.location.hostname === "localhost" ? "127.0.0.1" : window.location.hostname
+        }:8787`
       : "");
   const token = getToken();
   const sep = path.includes("?") ? "&" : "?";
