@@ -9,6 +9,10 @@
 //	 把内置 agent 提示词更新到当前二进制内置版本（老库的 prompt 是首次安装
 //	 时的旧版，新版本不会自动覆盖）。默认只报告差异；--force 才写回（会覆盖
 //	 该 agent 的自定义编辑，慎用）。
+//
+//	pojun-maint idscan --config /opt/pojun/config.json [--db FILE] [--out FILE]
+//	 离线只读扫描流量索引，统计品牌/能力/工具默认值命中与录制覆盖率（issue #40）。
+//	 不连 PostgreSQL、不发网络请求、不写流量库。
 package main
 
 import (
@@ -40,10 +44,16 @@ const (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: pojun-maint <scan-artifacts|previews|reset-prompts|fix-permissions|scope-audit> --config <config.json> [--force] [--out file]")
+		fmt.Fprintln(os.Stderr, "usage: pojun-maint <scan-artifacts|previews|reset-prompts|fix-permissions|scope-audit|idscan> --config <config.json> [--force] [--out file]")
 		os.Exit(2)
 	}
 	cmd := os.Args[1]
+	// idscan is offline and read-only: it needs neither PostgreSQL nor the shared
+	// flag set (whose ExitOnError would reject --db/--tiers/--task-map with exit 2).
+	if cmd == "idscan" {
+		runIDScan(os.Args[2:])
+		return
+	}
 	fs := flag.NewFlagSet(cmd, flag.ExitOnError)
 	cfgPath := fs.String("config", "/opt/pojun/config.json", "POJUN config.json 路径")
 	dataDir := fs.String("data", "", "数据目录（默认取 config 目录下的 data）")
