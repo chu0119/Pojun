@@ -784,10 +784,16 @@ func sanitize(s string) string {
 
 var blobHashRe = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
-// blobPath locates a stored blob. Current writes use one bucket level; blobs
-// written before that change used two, so both layouts are probed rather than
-// migrated.
-func (t *Traffic) blobPath(hash string) (string, error) {
+// blobPath locates a stored blob under this recorder's data directory.
+func (t *Traffic) blobPath(hash string) (string, error) { return blobPathIn(t.dir, hash) }
+
+// blobPathIn locates a stored blob under an arbitrary traffic directory. It is
+// shared with the offline identity scanner, which opens the index read-only and
+// must resolve blobs without constructing a Traffic (whose Open starts a proxy).
+//
+// Current writes use one bucket level; blobs written before that change used
+// two, so both layouts are probed rather than migrated.
+func blobPathIn(dir, hash string) (string, error) {
 	hash = strings.ToLower(strings.TrimSpace(hash))
 	// Validated as pure hex before touching the filesystem, so a crafted hash can
 	// never traverse out of the blob directory.
@@ -795,8 +801,8 @@ func (t *Traffic) blobPath(hash string) (string, error) {
 		return "", fmt.Errorf("非法的 blob hash")
 	}
 	for _, p := range []string{
-		filepath.Join(t.dir, "_blobs", "sha256", hash[:2], hash+".bin"),
-		filepath.Join(t.dir, "_blobs", "sha256", hash[:2], hash[2:4], hash+".bin"),
+		filepath.Join(dir, "_blobs", "sha256", hash[:2], hash+".bin"),
+		filepath.Join(dir, "_blobs", "sha256", hash[:2], hash[2:4], hash+".bin"),
 	} {
 		if st, err := os.Stat(p); err == nil && !st.IsDir() {
 			return p, nil
