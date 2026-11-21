@@ -3,6 +3,19 @@
 本项目的重要变更记录在此文件中，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
 ## [Unreleased]
+### 新增（issue #41）
+
+- **curl 系工具支持可选 `user_agent`（issue #41）**：`http_probe` / `api_contract` /
+  `diff_responses` / `js_audit` 四个工具的入参加入可选 `user_agent`，让模型能以
+  单个参数复现特定客户端身份，不再手拼命令。省略或传空时所有生成物与改动前
+  **逐字节一致**（命令、实际请求、输出 JSON 不变）；实现上 probe 用脚本内
+  `--ua` + `ua_args` 数组、contract 用条件 `uaArg`、diff 用条件 argv（A/B 共用，
+  `-H` 优先于 `-A`）、js_audit 用 `--ua` 覆盖且只改 User-Agent 头（三个 Accept*
+  头保持原值）。校验收敛到新入口 `normalizeToolUserAgent`（`agent/tools_ua.go`）：
+  前后空白 trim、仅可打印 ASCII 0x20-0x7E、≤1024 字节——curl 走 shell 单引号
+  透传，CR/LF 会变成新的头（CWE-113），必须拒绝式校验；非法值报错含 0-based
+  偏移与 0xXX、不落脚本。`diff_responses` 文件模式忽略该参数。老库升级无需
+  迁移：server 启动时 `MergeToolSchemaProperty` 会幂等补进新属性。
 
 ## [0.4.91] - 2026-11-21
 ### 新增：LLM 配置模块重构（厂商知识层 + 三步新建向导）

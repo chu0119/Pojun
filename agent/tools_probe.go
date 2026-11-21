@@ -35,9 +35,15 @@ const probeScriptName = "probe.sh"
 
 const httpProbeScript = `#!/usr/bin/env bash
 # probe: 对每个 URL 输出一行紧凑 JSON（url/status/bytes/time_ms/title/server/content_type/redirect）
+# 可选 --ua <value>：只覆盖 User-Agent，其余行为不变。
+ua_args=()
+if [ "$1" = "--ua" ] && [ $# -ge 2 ]; then
+  ua_args=(-A "$2")
+  shift 2
+fi
 for u in "$@"; do
   f=$(mktemp); h=$(mktemp)
-  out=$(curl -sS -k -L --max-time 10 -w '%{http_code} %{time_total}' -o "$f" -D "$h" "$u" 2>/dev/null)
+  out=$(curl -sS -k -L --max-time 10 "${ua_args[@]}" -w '%{http_code} %{time_total}' -o "$f" -D "$h" "$u" 2>/dev/null)
   code=${out%% *}; tt=${out##* }
   bytes=$(wc -c < "$f" | tr -d ' ')
   ms=$(awk -v t="$tt" 'BEGIN{printf "%d", t*1000}')
@@ -103,12 +109,20 @@ func (t *ToolSet) httpProbe() actool.CoreTool {
 				"items":       map[string]any{"type": "string"},
 				"description": "要探测的 URL 列表（1-40 个，绝对地址）",
 			},
+			"user_agent": str("自定义 User-Agent（可选；省略则沿用 curl 默认 UA，行为不变。只覆盖 User-Agent 头，不改 Accept/Accept-Language/Accept-Encoding 等其它头；一次注入对整个重定向链生效；仅可打印 ASCII，≤1024 字节）"),
 		}, "urls"),
 		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
 			var a struct {
-				URLs []string `json:"urls"`
+				URLs      []string `json:"urls"`
+				UserAgent string   `json:"user_agent"`
 			}
-			_ = json.Unmarshal(in, &a)
+			if err := json.Unmarshal(in, &a); err != nil {
+				return actool.Errorf("参数解析失败: " + err.Error()), nil
+			}
+			ua, uaErr := normalizeToolUserAgent(a.UserAgent)
+			if uaErr != nil {
+				return actool.Errorf(uaErr.Error()), nil
+			}
 			urls := make([]string, 0, len(a.URLs))
 			seen := map[string]bool{}
 			for _, u := range a.URLs {
@@ -131,10 +145,14 @@ func (t *ToolSet) httpProbe() actool.CoreTool {
 			}
 			quoted := make([]string, len(urls))
 			for i, u := range urls {
-				quoted[i] = "'" + strings.ReplaceAll(u, "'", `'\''`) + "'"
+				quoted[i] = quoteShell(u)
+			}
+			cmd := fmt.Sprintf("bash %s %s", script, strings.Join(quoted, " "))
+			if ua != "" {
+				cmd = fmt.Sprintf("bash %s --ua %s %s", script, quoteShell(ua), strings.Join(quoted, " "))
 			}
 			return jsonResult(map[string]any{
-				"run_with_bash": fmt.Sprintf("bash %s %s", script, strings.Join(quoted, " ")),
+				"run_with_bash": cmd,
 				"count":         len(urls),
 				"note":          "输出每行一个 JSON：url/status/bytes/time_ms/title/server/content_type/redirect。结论照常 record_fact（会自动锚定命中资产）。",
 			})

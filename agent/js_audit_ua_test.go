@@ -297,3 +297,119 @@ print(json.dumps(out))
 		t.Errorf("warn_events = %v，期望 2（多值编码与损坏数据各一次）", res["warn_events"])
 	}
 }
+
+// --ua 端到端：目标侧收到的 User-Agent 等于自定义值，Accept/Accept-Language/
+// Accept-Encoding 保持平台原值，sourcemaps_found 不因参数错位而漂移；
+// 不传 --ua 时仍收到平台默认 Chrome/131。
+func TestJsAuditUserAgentEndToEnd(t *testing.T) {
+	py := pythonBinary(t)
+	routes := map[string]string{
+		"/":           `<html><script src="/app.js"></script></html>`,
+		"/app.js":     "var k=1;\n//# sourceMappingURL=app.js.map\n",
+		"/app.js.map": `{"version":3,"sources":["src/main.js"],"sourcesContent":["const k=1;"],"mappings":""}`,
+	}
+	const customUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1"
+	type hit struct {
+		path string
+		ua   string
+		acc  string
+		lang string
+		enc  string
+	}
+	hits := make(chan hit, 16)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits <- hit{
+			path: r.URL.Path, ua: r.Header.Get("User-Agent"),
+			acc: r.Header.Get("Accept"), lang: r.Header.Get("Accept-Language"),
+			enc: r.Header.Get("Accept-Encoding"),
+		}
+		body, ok := routes[r.URL.Path]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/javascript")
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	wantHeaders := map[string]string{
+		"Accept":          platformAccept(t),
+		"Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+	}
+	run := func(ua string) (map[string]any, []hit) {
+		t.Helper()
+		dir := t.TempDir()
+		p := filepath.Join(dir, "js_audit.py")
+		if err := os.WriteFile(p, []byte(jsAuditScript), 0o600); err != nil {
+			t.Fatalf("写脚本: %v", err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		defer cancel()
+		args := []string{p, "--out", filepath.Join(dir, "out")}
+		if ua != "" {
+			args = append(args, "--ua", ua)
+		}
+		args = append(args, srv.URL+"/")
+		cmd := exec.CommandContext(ctx, py, args...)
+		cmd.Env = noProxyEnv()
+		raw, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("脚本执行失败: %v\n%s", err, raw)
+		}
+		var summary map[string]any
+		for _, line := range strings.Split(string(raw), "\n") {
+			var ev map[string]any
+			if json.Unmarshal([]byte(line), &ev) != nil {
+				continue
+			}
+			if ev["type"] == "summary" {
+				summary = ev
+			}
+		}
+		if summary == nil {
+			t.Fatalf("没有 summary 事件:\n%s", raw)
+		}
+		got := make([]hit, 0, len(hits))
+		for {
+			select {
+			case h := <-hits:
+				got = append(got, h)
+			default:
+				return summary, got
+			}
+		}
+	}
+
+	// 自定义 UA：三次请求（html/js/map）的 UA 都等于自定义值，其余头不变。
+	summary, got := run(customUA)
+	if summary["sourcemaps_found"] != float64(1) {
+		t.Fatalf("sourcemaps_found = %v，期望 1（--ua 不应吞掉 URL 或破坏流程）", summary["sourcemaps_found"])
+	}
+	if len(got) < 3 {
+		t.Fatalf("目标侧应至少收到 3 次请求（html/js/map），实际 %d", len(got))
+	}
+	for _, h := range got {
+		if h.ua != customUA {
+			t.Fatalf("path=%s 的 User-Agent = %q，期望自定义值", h.path, h.ua)
+		}
+		if h.acc != wantHeaders["Accept"] || h.lang != wantHeaders["Accept-Language"] {
+			t.Fatalf("path=%s 的 Accept/Accept-Language 被改动: %q / %q", h.path, h.acc, h.lang)
+		}
+		if !strings.Contains(h.enc, "gzip") {
+			t.Fatalf("path=%s 的 Accept-Encoding 应仍声明 gzip: %q", h.path, h.enc)
+		}
+	}
+
+	// 不传：仍为平台默认 UA。
+	summary, got = run("")
+	if summary["sourcemaps_found"] != float64(1) {
+		t.Fatalf("默认路径 sourcemaps_found = %v，期望 1", summary["sourcemaps_found"])
+	}
+	wantDefault := platformDefaultUA(t)
+	for _, h := range got {
+		if h.ua != wantDefault {
+			t.Fatalf("path=%s 的默认 User-Agent = %q，期望平台 %q", h.path, h.ua, wantDefault)
+		}
+	}
+}
