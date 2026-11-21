@@ -300,6 +300,10 @@ func OpenIndexReadOnly(path string) (*sql.DB, error) {
 		names = append(names, name)
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		db.Close()
+		return nil, err
+	}
 	if len(names) != 1 || names[0] != "main" {
 		db.Close()
 		return nil, fmt.Errorf("流量索引附加了非 main 数据库：%v", names)
@@ -336,6 +340,9 @@ func identityValidateSchema(ctx context.Context, db *sql.DB) error {
 			have[name] = true
 		}
 		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
 		if len(have) == 0 {
 			return fmt.Errorf("流量索引缺少表 %s", want.table)
 		}
@@ -742,6 +749,9 @@ func identityReadSide(trafficDir string, inline []byte, blob sql.NullString, lim
 		}
 		data, err := io.ReadAll(io.LimitReader(f, read))
 		if err != nil {
+			return nil, false, "blob"
+		}
+		if claimed > 0 && len(data) == 0 {
 			return nil, false, "blob"
 		}
 		return data, size > int64(len(data)), ""

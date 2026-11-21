@@ -384,9 +384,11 @@ func TestIdentityRenderSampleMasksSecrets(t *testing.T) {
 		"Cookie: sid=abc\n" +
 		"password=hunter2\n" +
 		"mail=user@example.com\n" +
-		"jwt=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U\n"
+		"jwt=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U\n" +
+		"url=http://user:pass@example.com/x\n" +
+		`{"token":"jsonsecret123"}`
 	masked := maskIdentitySample(text)
-	for _, secret := range []string{"SECRETVALUE123", "sid=abc", "hunter2", "user@example.com", "eyJhbGciOiJIUzI1NiJ9"} {
+	for _, secret := range []string{"SECRETVALUE123", "sid=abc", "hunter2", "user@example.com", "eyJhbGciOiJIUzI1NiJ9", "user:pass@", "jsonsecret123"} {
 		if strings.Contains(masked, secret) {
 			t.Fatalf("脱敏后仍包含 %q：%s", secret, masked)
 		}

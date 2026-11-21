@@ -88,6 +88,9 @@ func runIDScan(args []string) {
 		if err := os.WriteFile(*outPath, raw, 0o600); err != nil {
 			fail(err)
 		}
+		// WriteFile only applies the mode when creating; chmod so an existing
+		// file cannot keep a wider mode.
+		_ = os.Chmod(*outPath, 0o600)
 		fmt.Printf("\n完整报告已写入 %s（0600）\n", *outPath)
 	}
 	if *failOnFindings && rep.FindingsTotal > 0 {

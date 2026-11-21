@@ -21,7 +21,7 @@ const (
 
 var (
 	identityHeaderRe = regexp.MustCompile(`(?im)(authorization|proxy-authorization|cookie|set-cookie|x-api-key|x-auth-token)\s*:\s*[^\r\n]*`)
-	identityKVRe     = regexp.MustCompile(`(?i)(password|passwd|pwd|secret|token|api[_-]?key|session|csrf)\s*[=:]\s*[^&\s"']+`)
+	identityKVRe     = regexp.MustCompile(`(?i)["']?(authorization|proxy-authorization|x-api-key|x-auth-token|password|passwd|pwd|secret|token|api[_-]?key|session(?:[_-]?id)?|csrf)["']?\s*[=:]\s*["']?[^&\s"',}]+`)
 	identityJWTRe    = regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b`)
 	identityHexRe    = regexp.MustCompile(`\b[A-Fa-f0-9]{32,}\b`)
 	identityB64Re    = regexp.MustCompile(`\b[A-Za-z0-9+/]{40,}={0,2}`)
