@@ -59,15 +59,23 @@ func (t *ToolSet) apiContractTool() actool.CoreTool {
 			"拿到清单后，把它交给 vuln-hunting 的方法论做越权/可枚举/状态机判断。\n"+
 			"**本工具只组命令不执行**（下载请求走记录代理与审批管控）。",
 		obj(map[string]any{
-			"base_url": str("目标站点根地址，如 https://t.example.com（不带路径）"),
-			"paths":    str("自定义契约路径(可选)，逗号分隔；不给则探测常见路径"),
+			"base_url":   str("目标站点根地址，如 https://t.example.com（不带路径）"),
+			"paths":      str("自定义契约路径(可选)，逗号分隔；不给则探测常见路径"),
+			"user_agent": str("自定义 User-Agent（可选；省略则沿用 curl 默认 UA，行为不变。只覆盖 User-Agent 头，不改 Accept/Accept-Language/Accept-Encoding 等其它头；一次注入对整个重定向链生效；仅可打印 ASCII，≤1024 字节）"),
 		}, "base_url"),
 		func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
 			var a struct {
-				BaseURL string `json:"base_url"`
-				Paths   string `json:"paths"`
+				BaseURL   string `json:"base_url"`
+				Paths     string `json:"paths"`
+				UserAgent string `json:"user_agent"`
 			}
-			_ = json.Unmarshal(in, &a)
+			if err := json.Unmarshal(in, &a); err != nil {
+				return actool.Errorf("参数解析失败: " + err.Error()), nil
+			}
+			ua, uaErr := normalizeToolUserAgent(a.UserAgent)
+			if uaErr != nil {
+				return actool.Errorf(uaErr.Error()), nil
+			}
 			base := strings.TrimSpace(a.BaseURL)
 			if base == "" {
 				return actool.Errorf("base_url 不能为空"), nil
@@ -91,7 +99,7 @@ func (t *ToolSet) apiContractTool() actool.CoreTool {
 				return actool.Errorf("写出契约解析脚本失败: " + err.Error()), nil
 			}
 			paths := resolveContractPaths(a.Paths)
-			cmd := buildContractCmd(base, paths, scriptPath, workDir)
+			cmd := buildContractCmd(base, paths, scriptPath, workDir, ua)
 			return jsonResult(map[string]any{
 				"run_with_bash": cmd,
 				"script_path":   scriptPath,
@@ -150,17 +158,24 @@ func resolveContractPaths(custom string) []string {
 //
 // 流程：逐个路径 curl 探测（只看 200）→ 第一个命中的下载下来 → 交给解析脚本。
 // 契约文件落在工作目录（不是 /tmp——平台规约）。
-func buildContractCmd(base string, paths []string, scriptPath, workDir string) string {
+//
+// ua 非空时只给探测用的 curl 追加 -A（不是 -H：-A 语义最窄，且没有 @file 读取）。
+// uaArg 只能作为 Sprintf 的参数，不能拼进格式串——UA 里的 % 会被二次解释。
+func buildContractCmd(base string, paths []string, scriptPath, workDir, ua string) string {
 	quoted := make([]string, 0, len(paths))
 	for _, p := range paths {
 		quoted = append(quoted, quoteShell(base+p))
 	}
+	uaArg := ""
+	if ua != "" {
+		uaArg = " -A " + quoteShell(ua)
+	}
 	contractFile := filepath.Join(workDir, "api_contract.json")
 	// 第一步：逐个探测，命中就下载到工作目录并停。
 	probe := fmt.Sprintf(
-		"for u in %s; do code=$(curl -sS -o %s -w '%%{http_code}' --max-time 20 \"$u\"); "+
+		"for u in %s; do code=$(curl -sS%s -o %s -w '%%{http_code}' --max-time 20 \"$u\"); "+
 			"if [ \"$code\" = \"200\" ]; then echo \"CONTRACT $u\"; break; fi; done",
-		strings.Join(quoted, " "), quoteShell(contractFile))
+		strings.Join(quoted, " "), uaArg, quoteShell(contractFile))
 	// 第二步：交给解析脚本。
 	return probe + " ; " + fmt.Sprintf("python3 %s %s", quoteShell(scriptPath), quoteShell(contractFile))
 }

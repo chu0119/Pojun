@@ -9,9 +9,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	actool "github.com/Autumn-27/norma/tool"
 
@@ -577,6 +579,251 @@ func stringsOf(v any) []string {
 		out = append(out, s)
 	}
 	return out
+}
+
+// --- user_agent（issue #41）---
+
+// buildDiffScript 的 UA golden：空值与改动前逐字节一致；非空时 A/B 两次 fetch
+// 各含一次 -A（合计 2 次），-H 仍在 URL 之后（-H 优先于 -A 的 curl 语义）。
+func TestDiffResponsesUserAgentScript(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "resp_diff.py")
+	args := diffArgs{URLA: "https://a.test/x", URLB: "https://a.test/y", HeaderA: "Authorization: Bearer tk"}
+
+	// 空值 golden：期望串按改动前的格式手工构造。
+	fetchOld := func(url, header, out string) string {
+		parts := []string{"curl", "-sS", "--max-time", "20", "-o", quoteShell(out), "-w", "%{http_code}", quoteShell(url)}
+		if strings.TrimSpace(header) != "" {
+			parts = append(parts, "-H", quoteShell(header))
+		}
+		return strings.Join(parts, " ")
+	}
+	wantEmpty := fmt.Sprintf("S=$(%s) ; T=$(%s) ; python3 %s %s %s \"$S\" \"$T\"",
+		fetchOld(args.URLA, args.HeaderA, filepath.Join(dir, "resp_a_body")),
+		fetchOld(args.URLB, "", filepath.Join(dir, "resp_b_body")),
+		quoteShell(script), quoteShell(filepath.Join(dir, "resp_a_body")), quoteShell(filepath.Join(dir, "resp_b_body")))
+	gotEmpty := buildDiffScript(args, script, dir)
+	if gotEmpty != wantEmpty {
+		t.Fatalf("空 UA 的脚本应与改动前逐字节一致:\n got: %s\nwant: %s", gotEmpty, wantEmpty)
+	}
+
+	// 非空：A、B 各一次 -A，位置在 --max-time 之后、-o 之前；-H 仍在 URL 后。
+	got := buildDiffScript(diffArgs{
+		URLA: "https://a.test/x", URLB: "https://a.test/y",
+		HeaderA: "Authorization: Bearer tk", UserAgent: "MyUA/1.0",
+	}, script, dir)
+	if n := strings.Count(got, "-A 'MyUA/1.0'"); n != 2 {
+		t.Fatalf("A/B 两次 fetch 应各含一次 -A（实际 %d 次）: %s", n, got)
+	}
+	if !strings.Contains(got, "curl -sS --max-time 20 -A 'MyUA/1.0' -o") {
+		t.Fatalf("-A 应在 --max-time 之后、-o 之前: %s", got)
+	}
+	for _, m := range []string{
+		`-A 'MyUA/1.0' -o .* -w %{http_code} 'https://a\.test/x' -H 'Authorization: Bearer tk'`,
+		`-A 'MyUA/1.0' -o .* -w %{http_code} 'https://a\.test/y'`,
+	} {
+		if !regexp.MustCompile(m).MatchString(got) {
+			t.Fatalf("-H 应在 URL 之后（%q 不匹配）: %s", m, got)
+		}
+	}
+}
+
+// 工具面：文件模式忽略合法 UA（输出与不传完全一致）；非法值无论哪种模式都被拒。
+func TestDiffResponsesUserAgentTool(t *testing.T) {
+	dir := t.TempDir()
+	ts := &ToolSet{}
+	tool := ts.diffResponses()
+	ctx := intercept.WithReviewContext(context.Background(), dir, intercept.ReviewBackground{})
+	writeResp := func(name, body string) {
+		t.Helper()
+		full := "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n" + body
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(full), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeResp("a.json", `{"id":1,"name":"bob"}`)
+	writeResp("b.json", `{"id":2,"name":"eve"}`)
+
+	fileIn := map[string]any{"file_a": "a.json", "file_b": "b.json"}
+	base, err := tool.Call(ctx, mustJSON(fileIn), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base.IsError {
+		t.Fatalf("文件模式基线不应报错: %s", toolResultText(t, base))
+	}
+	withUA, err := tool.Call(ctx, mustJSON(map[string]any{
+		"file_a": "a.json", "file_b": "b.json", "user_agent": "MyUA/1.0",
+	}), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withUA.IsError {
+		t.Fatalf("文件模式传合法 UA 不应报错: %s", toolResultText(t, withUA))
+	}
+	if toolResultText(t, base) != toolResultText(t, withUA) {
+		t.Fatalf("文件模式合法 UA 应被忽略（输出不变）:\n%s\n%s",
+			toolResultText(t, base), toolResultText(t, withUA))
+	}
+	// 文件模式没有 run_with_bash。
+	if _, ok := toolResultJSON(t, base)["run_with_bash"]; ok {
+		t.Fatalf("文件模式不应返回 run_with_bash: %s", toolResultText(t, base))
+	}
+
+	// 非法值：文件模式与 URL 模式都被拒（normalize 在模式分派之前）。
+	for _, in := range []map[string]any{
+		{"file_a": "a.json", "file_b": "b.json", "user_agent": "a\r\nX-Injected: 1"},
+		{"url_a": "https://a.test/x", "url_b": "https://a.test/y", "user_agent": "a\r\nX-Injected: 1"},
+	} {
+		res, err := tool.Call(ctx, mustJSON(in), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !res.IsError {
+			t.Fatalf("CRLF UA 应被拒绝: %v", in)
+		}
+		if msg := toolResultText(t, res); !strings.Contains(msg, "0-based") {
+			t.Fatalf("错误应带偏移: %s", msg)
+		}
+	}
+
+	// URL 模式非法值也不落脚本。
+	urlDir := t.TempDir()
+	urlTS := &ToolSet{}
+	urlTool := urlTS.diffResponses()
+	urlCtx := intercept.WithReviewContext(context.Background(), urlDir, intercept.ReviewBackground{})
+	res, err := urlTool.Call(urlCtx, mustJSON(map[string]any{
+		"url_a": "https://a.test/x", "url_b": "https://a.test/y", "user_agent": "a\r\nX-Injected: 1",
+	}), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("URL 模式 CRLF UA 应被拒绝")
+	}
+	if _, err := os.Stat(filepath.Join(urlDir, "resp_diff.py")); !os.IsNotExist(err) {
+		t.Fatal("非法 UA 不应写出脚本")
+	}
+}
+
+// E2E：user_agent 与 header_a 同时带 User-Agent 时，curl 的 -H 覆盖 -A——
+// 目标侧只收到一个 User-Agent，值为 header 里的那个。
+func TestDiffResponsesUserAgentHeaderPriorityE2E(t *testing.T) {
+	uaCh := make(chan []string, 8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		uaCh <- []string{r.Header.Get("User-Agent"), r.Header.Get("Authorization")}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":1}`)
+	}))
+	defer srv.Close()
+
+	sh, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("未找到 bash")
+	}
+	dir := t.TempDir()
+	ts := &ToolSet{}
+	tool := ts.diffResponses()
+	ctx := intercept.WithReviewContext(context.Background(), dir, intercept.ReviewBackground{})
+	in, _ := json.Marshal(map[string]any{
+		"url_a":      srv.URL + "/a",
+		"url_b":      srv.URL + "/b",
+		"user_agent": "UATool/1.0",
+		"header_a":   "User-Agent: HeaderWins/1.0",
+	})
+	res, err := tool.Call(ctx, in, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("工具报错: %s", toolResultText(t, res))
+	}
+	out := toolResultJSON(t, res)
+	cmd, _ := out["run_with_bash"].(string)
+	run := exec.Command(sh, "-c", strings.ReplaceAll(cmd, `\`, `/`))
+	run.Dir = dir
+	if b, err := run.CombinedOutput(); err != nil {
+		t.Fatalf("命令执行失败: %v\n%s", err, b)
+	}
+
+	// A 请求带 -H 'User-Agent: HeaderWins/1.0'，B 请求只带 -A：哪个请求的 UA
+	// 等于 HeaderWins/1.0，哪个就是 A。取前两个请求（顺序无关），逐个核对。
+	var gotA, gotB string
+	deadline := time.After(10 * time.Second)
+	for i := 0; i < 2; i++ {
+		select {
+		case pair := <-uaCh:
+			if pair[0] == "HeaderWins/1.0" {
+				gotA = pair[0]
+			} else {
+				gotB = pair[0]
+			}
+		case <-deadline:
+			t.Fatal("目标侧没有收到两次请求")
+		}
+	}
+	if gotA != "HeaderWins/1.0" {
+		t.Fatalf("-H 应覆盖 -A：应有一个请求 UA=HeaderWins/1.0，实际 A=%q B=%q（完整命令 %s）", gotA, gotB, cmd)
+	}
+	if gotB != "UATool/1.0" {
+		t.Fatalf("B 请求应沿用 -A 的 UA=UATool/1.0，实际 B=%q（完整命令 %s）", gotB, cmd)
+	}
+}
+
+// E2E：只传 user_agent 时目标侧两次请求都收到它（A/B 共用同一 UA）。
+func TestDiffResponsesUserAgentEndToEnd(t *testing.T) {
+	uaCh := make(chan string, 8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		uaCh <- r.Header.Get("User-Agent")
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":1,"extra":"x"}`)
+	}))
+	defer srv.Close()
+
+	sh, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("未找到 bash")
+	}
+	dir := t.TempDir()
+	ts := &ToolSet{}
+	tool := ts.diffResponses()
+	ctx := intercept.WithReviewContext(context.Background(), dir, intercept.ReviewBackground{})
+	in, _ := json.Marshal(map[string]any{
+		"url_a": srv.URL + "/a", "url_b": srv.URL + "/b", "user_agent": "DiffUA/2.0",
+	})
+	res, err := tool.Call(ctx, in, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("工具报错: %s", toolResultText(t, res))
+	}
+	out := toolResultJSON(t, res)
+	cmd, _ := out["run_with_bash"].(string)
+	run := exec.Command(sh, "-c", strings.ReplaceAll(cmd, `\`, `/`))
+	run.Dir = dir
+	if b, err := run.CombinedOutput(); err != nil {
+		t.Fatalf("命令执行失败: %v\n%s", err, b)
+	}
+	for i := 0; i < 2; i++ {
+		select {
+		case got := <-uaCh:
+			if got != "DiffUA/2.0" {
+				t.Fatalf("第 %d 次请求 UA = %q，期望 DiffUA/2.0", i+1, got)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("目标侧没有收到两次请求")
+		}
+	}
+}
+
+// mustJSON 编码 map（测试辅助，失败即 Fatal）。
+func mustJSON(v map[string]any) json.RawMessage {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return b
 }
 
 func equalStrings(a, b []string) bool {

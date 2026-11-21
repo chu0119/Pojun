@@ -41,7 +41,7 @@ const jsAuditScriptName = "js_audit.py"
 const jsAuditScript = `#!/usr/bin/env python3
 """js_audit: SPA/webpack 前端源码泄露审计。
 
-用法: python3 js_audit.py --out <outdir> <url1> [url2 ...]
+用法: python3 js_audit.py --out <outdir> [--ua <user-agent>] <url1> [url2 ...]
 url 可以是入口 HTML（提取 <script src>）或 .js 文件本体。
 每行输出一个 JSON 事件；最后一行 type=summary。仅标准库；
 http(s)_proxy 环境变量自动生效（流量走记录代理）；证书校验关闭（同 curl -k）。
@@ -63,6 +63,18 @@ UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.3
       "Accept": "*/*",
       "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
       "Accept-Encoding": "gzip, deflate"}
+
+# --ua 覆盖值：默认空，表示沿用上面的平台默认 UA。
+# 只替换 User-Agent，Accept/Accept-Language/Accept-Encoding 保持原值——
+# 换 UA 不应顺带改掉其余头，否则会制造新的头集不自洽。
+UA_OVERRIDE = ""
+
+def _headers():
+    if not UA_OVERRIDE:
+        return UA
+    h = dict(UA)
+    h["User-Agent"] = UA_OVERRIDE
+    return h
 
 _ctx = ssl.create_default_context()
 _ctx.check_hostname = False
@@ -119,7 +131,7 @@ def _decode(raw, enc, cap):
     return raw
 
 def fetch(url, cap=MAX_BYTES):
-    req = urllib.request.Request(url, headers=UA)
+    req = urllib.request.Request(url, headers=_headers())
     with _opener.open(req, timeout=15) as r:
         raw = r.read(cap + 1)
         return r.getcode(), _decode(raw, r.headers.get("Content-Encoding"), cap), r.geturl()
@@ -314,6 +326,7 @@ def audit_js(url, outdir, seen_dirs):
     return (1 if found else 0), chunk_candidates(js, final), secrets_n + total, eps_n
 
 def main():
+    global UA_OVERRIDE
     args = sys.argv[1:]
     outdir = os.path.join(os.getcwd(), "jsmap")
     urls = []
@@ -321,6 +334,10 @@ def main():
     while i < len(args):
         if args[i] == "--out" and i + 1 < len(args):
             outdir = args[i + 1]
+            i += 2
+            continue
+        if args[i] == "--ua" and i + 1 < len(args):
+            UA_OVERRIDE = args[i + 1]
             i += 2
             continue
         urls.append(args[i])
@@ -400,12 +417,20 @@ func (t *ToolSet) jsAudit() actool.CoreTool {
 				"items":       map[string]any{"type": "string"},
 				"description": "入口 URL 列表（1-6 个：入口 HTML 或具体 .js 文件）",
 			},
+			"user_agent": str("自定义 User-Agent（可选；省略则沿用平台默认 Chrome/131 Windows。只替换 User-Agent，Accept/Accept-Language/Accept-Encoding 保持原值；仅可打印 ASCII，≤1024 字节）"),
 		}, "urls"),
 		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
 			var a struct {
-				URLs []string `json:"urls"`
+				URLs      []string `json:"urls"`
+				UserAgent string   `json:"user_agent"`
 			}
-			_ = json.Unmarshal(in, &a)
+			if err := json.Unmarshal(in, &a); err != nil {
+				return actool.Errorf("参数解析失败: " + err.Error()), nil
+			}
+			ua, uaErr := normalizeToolUserAgent(a.UserAgent)
+			if uaErr != nil {
+				return actool.Errorf(uaErr.Error()), nil
+			}
 			urls := make([]string, 0, len(a.URLs))
 			seen := map[string]bool{}
 			for _, u := range a.URLs {
@@ -428,11 +453,15 @@ func (t *ToolSet) jsAudit() actool.CoreTool {
 			}
 			quoted := make([]string, len(urls))
 			for i, u := range urls {
-				quoted[i] = "'" + strings.ReplaceAll(u, "'", `'\''`) + "'"
+				quoted[i] = quoteShell(u)
 			}
 			out := filepath.Join(t.runDir, "jsmap")
+			cmd := fmt.Sprintf("python3 %s --out %s %s", script, out, strings.Join(quoted, " "))
+			if ua != "" {
+				cmd = fmt.Sprintf("python3 %s --out %s --ua %s %s", script, out, quoteShell(ua), strings.Join(quoted, " "))
+			}
 			return jsonResult(map[string]any{
-				"run_with_bash": fmt.Sprintf("python3 %s --out %s %s", script, out, strings.Join(quoted, " ")),
+				"run_with_bash": cmd,
 				"count":         len(urls),
 				"note": "输出每行一个 JSON 事件（html/js/sourcemap/secrets/endpoints/warn/summary）。" +
 					"sourcemap found=true → CWE-540：还原源码落盘在 --out 目录，save_evidence 后报 high；" +

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	actool "github.com/Autumn-27/norma/tool"
 
@@ -489,5 +491,180 @@ func TestApiContractEndToEndWithRealServer(t *testing.T) {
 	// 契约文件应落在工作目录。
 	if _, err := os.Stat(filepath.Join(dir, "api_contract.json")); err != nil {
 		t.Errorf("契约文件应落在工作目录: %v", err)
+	}
+}
+
+// --- user_agent（issue #41）---
+
+// buildContractCmd 的 UA golden：空值必须与改动前逐字节一致；非空时条件追加 -A。
+//
+// 期望串是**手工按改动前的格式串拼出来的**（不是调 buildContractCmd 生成），
+// 这样格式串漂移（比如 -A 挪进 -o 之后、--max-time 位置变了）会直接红。
+func TestApiContractUserAgentCommand(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, contractScriptName)
+	base := "https://t.example.com"
+	paths := []string{"/openapi.json", "/swagger.json"}
+	contract := quoteShell(filepath.Join(dir, "api_contract.json"))
+
+	wantEmpty := fmt.Sprintf(
+		"for u in %s; do code=$(curl -sS -o %s -w '%%{http_code}' --max-time 20 \"$u\"); "+
+			"if [ \"$code\" = \"200\" ]; then echo \"CONTRACT $u\"; break; fi; done",
+		quoteShell(base+"/openapi.json")+" "+quoteShell(base+"/swagger.json"), contract,
+	) + " ; " + fmt.Sprintf("python3 %s %s", quoteShell(script), contract)
+
+	gotEmpty := buildContractCmd(base, paths, script, dir, "")
+	if gotEmpty != wantEmpty {
+		t.Fatalf("空 UA 的命令应与改动前逐字节一致:\n got: %s\nwant: %s", gotEmpty, wantEmpty)
+	}
+
+	got := buildContractCmd(base, paths, script, dir, "MyUA/1.0")
+	// -A 必须紧跟 -sS（curl 选项语义最窄、且没有 @file 读取），在 -o 之前。
+	if !strings.Contains(got, "curl -sS -A 'MyUA/1.0' -o") {
+		t.Fatalf("非空 UA 应在 -sS 后追加 -A: %s", got)
+	}
+	// 只给探测 curl 加 -A；解析脚本那半段不该出现 UA。
+	if strings.Count(got, "-A 'MyUA/1.0'") != 1 {
+		t.Fatalf("-A 应恰好出现一次: %s", got)
+	}
+	// %%{http_code} 仍渲染为 %{http_code}，--max-time 位置不变。
+	if !strings.Contains(got, `-w '%{http_code}' --max-time 20`) {
+		t.Fatalf("%%{http_code} 渲染或 --max-time 位置漂移: %s", got)
+	}
+
+	// UA 里的 % 系列必须是 Sprintf 参数原样保留——不能被格式串二次解释。
+	//（-w '%{http_code}' 那份是命令本身的格式占位，与 UA 里的字面量并存是合法形态。）
+	tricky := "%s %d %{http_code} %%"
+	gotTricky := buildContractCmd(base, []string{"/openapi.json"}, script, dir, tricky)
+	if !strings.Contains(gotTricky, "'"+tricky+"'") {
+		t.Fatalf("UA 中的 %% 序列应原样保留: %s", gotTricky)
+	}
+}
+
+// 工具面：非空 UA 进命令；CRLF（JSON 转义形式）被拒且不落脚本。
+func TestApiContractUserAgentTool(t *testing.T) {
+	dir := t.TempDir()
+	ts := &ToolSet{}
+	tool := ts.apiContractTool()
+	ctx := intercept.WithReviewContext(context.Background(), dir, intercept.ReviewBackground{})
+
+	call := func(extra map[string]any) (map[string]any, bool) {
+		in := map[string]any{"base_url": "https://t.example.com/"}
+		for k, v := range extra {
+			in[k] = v
+		}
+		raw, _ := json.Marshal(in)
+		res, err := tool.Call(ctx, raw, nil)
+		if err != nil {
+			t.Fatalf("Call: %v", err)
+		}
+		if res.IsError {
+			return map[string]any{"err": toolResultText(t, res)}, true
+		}
+		return toolResultJSON(t, res), false
+	}
+
+	out, isErr := call(nil)
+	if isErr {
+		t.Fatalf("默认调用不应报错: %v", out)
+	}
+	if strings.Contains(out["run_with_bash"].(string), " -A ") {
+		t.Fatalf("默认命令不应含 -A: %s", out["run_with_bash"])
+	}
+
+	out, isErr = call(map[string]any{"user_agent": "MyUA/1.0"})
+	if isErr {
+		t.Fatalf("合法 UA 不应报错: %v", out)
+	}
+	if !strings.Contains(out["run_with_bash"].(string), "-A 'MyUA/1.0'") {
+		t.Fatalf("命令应含 -A 'MyUA/1.0': %s", out["run_with_bash"])
+	}
+
+	// 非法值：报错、不落脚本——normalize 在 WriteContractScript 之前，
+	// 换全新目录才能断言「脚本不存在」。
+	badDir := t.TempDir()
+	badTS := &ToolSet{}
+	badTool := badTS.apiContractTool()
+	badCtx := intercept.WithReviewContext(context.Background(), badDir, intercept.ReviewBackground{})
+	badIn, _ := json.Marshal(map[string]any{
+		"base_url":   "https://t.example.com/",
+		"user_agent": "a\r\nX-Injected: 1",
+	})
+	badRes, err := badTool.Call(badCtx, badIn, nil)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if !badRes.IsError {
+		t.Fatalf("CRLF UA 应被拒绝: %s", toolResultText(t, badRes))
+	}
+	bad := toolResultText(t, badRes)
+	if !strings.Contains(bad, "user_agent") || !strings.Contains(bad, "0-based") {
+		t.Fatalf("错误应点名 user_agent 且带偏移: %s", bad)
+	}
+	if _, err := os.Stat(filepath.Join(badDir, contractScriptName)); !os.IsNotExist(err) {
+		t.Fatalf("非法 UA 不应写出脚本")
+	}
+}
+
+// E2E：真跑命令，目标侧收到的 UA——默认是 curl 自报的默认 UA，传入后是自定义值。
+func TestApiContractUserAgentEndToEnd(t *testing.T) {
+	uaCh := make(chan string, 8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/openapi.json" {
+			uaCh <- r.Header.Get("User-Agent")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(openapi3Sample))
+			return
+		}
+		w.WriteHeader(404)
+	}))
+	defer srv.Close()
+
+	sh, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("未找到 bash")
+	}
+
+	run := func(ua string) map[string]any {
+		t.Helper()
+		dir := t.TempDir()
+		ts := &ToolSet{}
+		tool := ts.apiContractTool()
+		ctx := intercept.WithReviewContext(context.Background(), dir, intercept.ReviewBackground{})
+		in := map[string]any{"base_url": srv.URL}
+		if ua != "" {
+			in["user_agent"] = ua
+		}
+		raw, _ := json.Marshal(in)
+		res, err := tool.Call(ctx, raw, nil)
+		if err != nil {
+			t.Fatalf("Call: %v", err)
+		}
+		if res.IsError {
+			t.Fatalf("工具报错: %s", toolResultText(t, res))
+		}
+		out := toolResultJSON(t, res)
+		cmd, _ := out["run_with_bash"].(string)
+		run_ := exec.Command(sh, "-c", strings.ReplaceAll(cmd, `\`, `/`))
+		run_.Dir = dir
+		if b, err := run_.CombinedOutput(); err != nil {
+			t.Fatalf("命令执行失败: %v\n%s", err, b)
+		}
+		select {
+		case got := <-uaCh:
+			return map[string]any{"ua": got, "dir": dir}
+		case <-time.After(10 * time.Second):
+			t.Fatal("目标侧没有收到请求")
+			return nil
+		}
+	}
+
+	def := run("")
+	if !strings.HasPrefix(def["ua"].(string), "curl/") {
+		t.Errorf("不传 UA 时目标侧应收到 curl 默认 UA（curl/…），实际 %q", def["ua"])
+	}
+	custom := run("ContractUA/1.0 (issue41)")
+	if custom["ua"] != "ContractUA/1.0 (issue41)" {
+		t.Errorf("传入 UA 后目标侧应收到自定义值，实际 %q", custom["ua"])
 	}
 }
