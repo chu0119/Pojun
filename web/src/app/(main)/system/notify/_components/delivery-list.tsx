@@ -126,7 +126,12 @@ export function DeliveryList({ channels }: { channels: NotificationChannel[] }) 
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">
-                      <Badge variant="outline" className={toneClasses[statusMeta("severity", d.severity).tone]}>
+                      <Badge
+                        variant="outline"
+                        data-slot="status-badge"
+                        data-tone={statusMeta("severity", d.severity).tone}
+                        className={toneClasses[statusMeta("severity", d.severity).tone]}
+                      >
                         {statusMeta("severity", d.severity).label}
                       </Badge>
                       <span className="truncate text-sm">{d.title || "（无标题）"}</span>
@@ -139,7 +144,12 @@ export function DeliveryList({ channels }: { channels: NotificationChannel[] }) 
                   </TableCell>
                   <TableCell className="text-sm">{d.channel_name}</TableCell>
                   <TableCell>
-                    <Badge variant="outline" className={toneClasses[statusMeta("delivery", d.state).tone]}>
+                    <Badge
+                      variant="outline"
+                      data-slot="status-badge"
+                      data-tone={statusMeta("delivery", d.state).tone}
+                      className={toneClasses[statusMeta("delivery", d.state).tone]}
+                    >
                       {statusMeta("delivery", d.state).label}
                     </Badge>
                   </TableCell>

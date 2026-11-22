@@ -178,7 +178,10 @@ function InterceptPendingBadge() {
   }, []);
   if (count === 0) return null;
   return (
-    <SidebarMenuBadge className="flex h-4.5 min-w-[18px] items-center justify-center rounded-full bg-amber-500 px-1 font-semibold text-[10px] text-white leading-none shadow-sm ring-1 ring-amber-400/40">
+    <SidebarMenuBadge
+      data-badge="pending"
+      className="flex h-4.5 min-w-[18px] items-center justify-center rounded-full bg-amber-500 px-1 font-semibold text-[10px] text-white leading-none shadow-sm ring-1 ring-amber-400/40"
+    >
       {count > 99 ? "99+" : count}
     </SidebarMenuBadge>
   );
@@ -312,6 +315,7 @@ function NavItemBadge({ badge }: { badge?: NavBadge }) {
 
   return (
     <SidebarMenuBadge
+      data-badge={badge}
       className={cn(
         "rounded-sm border capitalize",
         badge === "new" &&

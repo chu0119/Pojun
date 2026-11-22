@@ -465,8 +465,12 @@ function SessionItem({
           </span>
         ) : null}
         {s.live && (
-          <span className="inline-flex items-center gap-1 rounded bg-blue-500/15 px-1.5 py-0.5 font-medium text-[10px] text-blue-600 dark:text-blue-400">
-            <span className="size-1 animate-pulse rounded-full bg-blue-500" />
+          <span
+            data-slot="hud-live-badge"
+            data-live="true"
+            className="inline-flex items-center gap-1 rounded bg-blue-500/15 px-1.5 py-0.5 font-medium text-[10px] text-blue-600 dark:text-blue-400"
+          >
+            <span data-slot="hud-live-dot" data-live="true" className="size-1 animate-pulse rounded-full bg-blue-500" />
             实时
           </span>
         )}
@@ -1959,8 +1963,12 @@ export function SessionsTab({ taskId }: { taskId: string }) {
                 <Badge variant="outline">来源任务 #{active.source_task_id} · 只读历史</Badge>
               )}
               {active.live && (
-                <span className="inline-flex items-center gap-1 rounded bg-blue-500/15 px-1.5 py-0.5 font-medium text-[10px] text-blue-600 dark:text-blue-400">
-                  <span className="size-1 animate-pulse rounded-full bg-blue-500" />
+                <span
+                  data-slot="hud-live-badge"
+                  data-live="true"
+                  className="inline-flex items-center gap-1 rounded bg-blue-500/15 px-1.5 py-0.5 font-medium text-[10px] text-blue-600 dark:text-blue-400"
+                >
+                  <span data-slot="hud-live-dot" data-live="true" className="size-1 animate-pulse rounded-full bg-blue-500" />
                   实时
                 </span>
               )}

@@ -46,6 +46,8 @@ import { useStoredSortPreference } from "@/lib/sort-preference";
 import type { TrafficDetail, TrafficExchange, TrafficHost, TrafficResp } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+
 function fmtTime(ts: string) {
   return new Date(ts).toLocaleString("zh-CN", {
     month: "2-digit",
@@ -66,7 +68,14 @@ function fmtBytes(n: number) {
   return `${i === 0 ? v : v.toFixed(1)} ${units[i]}`;
 }
 
-function statusTone(status: number) {
+function statusTone(status: number, isMeshAtlas = false) {
+  if (isMeshAtlas) {
+    if (status >= 500) return "text-[var(--ma-bad)]";
+    if (status >= 400) return "text-[var(--ma-warn-fg)]";
+    if (status >= 300) return "text-muted-foreground";
+    if (status >= 200) return "text-foreground";
+    return "text-muted-foreground";
+  }
   if (status >= 500) return "text-red-500";
   if (status >= 400) return "text-amber-500";
   if (status >= 300) return "text-blue-500";
@@ -116,6 +125,7 @@ const SORT_STORAGE_KEY = "traffic-sort";
 const STATUS_BUCKETS = ["2xx", "3xx", "4xx", "5xx"];
 
 export default function TrafficPage() {
+  const isMeshAtlas = usePreferencesStore((s) => s.themePreset === "meshatlas");
   const [selectedFlows, setSelectedFlows] = React.useState<Set<string>>(() => new Set());
   const [linking, setLinking] = React.useState(false);
   const [page, setPage] = React.useState(0);
@@ -350,6 +360,8 @@ export default function TrafficPage() {
         </div>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
           <span
+            data-slot="hud-live-badge"
+            data-live={Boolean(traffic?.enabled)}
             className={cn(
               "inline-flex shrink-0 items-center gap-1.5 rounded-md border px-2 py-0.5 font-medium text-xs",
               traffic?.enabled
@@ -357,7 +369,15 @@ export default function TrafficPage() {
                 : "border-transparent bg-muted text-muted-foreground",
             )}
           >
-            <RadioTowerIcon className="size-3.5" />
+            {isMeshAtlas ? (
+              <span
+                data-slot="hud-live-dot"
+                data-live={Boolean(traffic?.enabled)}
+                className="inline-block size-1.5 shrink-0"
+              />
+            ) : (
+              <RadioTowerIcon className="size-3.5" />
+            )}
             {traffic?.enabled ? "录制中" : "已停用"}
           </span>
           {traffic?.proxy && <span className="font-mono text-muted-foreground text-xs">{traffic.proxy}</span>}
@@ -706,7 +726,7 @@ export default function TrafficPage() {
                       <span className="mt-0.5 block text-muted-foreground text-[10px] md:hidden">{e.content_type || "—"} · {fmtBytes(e.resp_len)}</span>
                     </TableCell>
                     <TableCell>
-                      <span className={cn("font-mono font-semibold text-xs tabular-nums", statusTone(e.status))}>
+                      <span className={cn("font-mono font-semibold text-xs tabular-nums", statusTone(e.status, isMeshAtlas))}>
                         {e.status}
                       </span>
                     </TableCell>
@@ -741,7 +761,7 @@ export default function TrafficPage() {
               <SheetHeader className="border-b px-5 py-4">
                 <div className="flex items-center gap-2 pr-8">
                   <MethodBadge method={selected.method} />
-                  <Badge variant="secondary" className={cn("font-mono tabular-nums", statusTone(selected.status))}>
+                  <Badge variant="secondary" className={cn("font-mono tabular-nums", statusTone(selected.status, isMeshAtlas))}>
                     {selected.status}
                   </Badge>
                   <span className="ml-auto text-muted-foreground text-xs tabular-nums">{fmtTime(selected.ts)}</span>

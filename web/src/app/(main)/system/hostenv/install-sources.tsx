@@ -62,7 +62,11 @@ export function InstallSources({
   }
 
   return (
-    <section aria-labelledby="install-sources-heading" className="flex flex-col gap-3 rounded-lg border bg-muted/30 p-3">
+    <section
+      aria-labelledby="install-sources-heading"
+      data-slot="hud-panel"
+      className="flex flex-col gap-3 rounded-lg border bg-muted/30 p-3"
+    >
       <h2 id="install-sources-heading" className="font-medium text-sm">安装源</h2>
       <p className="text-muted-foreground text-xs">
         APT 和 PyPI 可分别选择镜像，保存后对新建的工具安装任务生效。装机代理可单独设置。

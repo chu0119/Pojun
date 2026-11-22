@@ -96,14 +96,26 @@ const ASSET_COLORS: Record<string, string> = {
   endpoint: "bg-emerald-500",
 };
 
-function statusColor(code: number): string {
+function statusColor(code: number, isMeshAtlas = false): string {
+  if (isMeshAtlas) {
+    if (code < 300) return "text-foreground";
+    if (code < 400) return "text-muted-foreground";
+    if (code < 500) return "text-[var(--ma-warn-fg)]";
+    return "text-[var(--ma-bad)]";
+  }
   if (code < 300) return "text-emerald-500";
   if (code < 400) return "text-blue-400";
   if (code < 500) return "text-amber-400";
   return "text-red-400";
 }
 
-function statusBg(code: number): string {
+function statusBg(code: number, isMeshAtlas = false): string {
+  if (isMeshAtlas) {
+    if (code < 300) return "bg-foreground";
+    if (code < 400) return "bg-muted-foreground";
+    if (code < 500) return "bg-[var(--ma-warn)]";
+    return "bg-[var(--ma-bad)]";
+  }
   if (code < 300) return "bg-emerald-500";
   if (code < 400) return "bg-blue-400";
   if (code < 500) return "bg-amber-400";
@@ -136,7 +148,7 @@ function SectionTitle({
   sub?: React.ReactNode;
 }) {
   return (
-    <div className="mb-3 flex items-center justify-between">
+    <div data-slot="section-header" className="mb-3 flex items-center justify-between">
       <div data-slot="section-title" className="flex items-center gap-1.5 font-semibold text-xs">
         <Icon className="size-3.5 text-muted-foreground" />
         {children}
@@ -548,9 +560,19 @@ export default function DashboardPage() {
             </div>
           </CardHeader>
           <CardContent className="flex flex-wrap gap-x-2.5 gap-y-0.5 text-[10px]">
-            {(tasksByStatus.running ?? 0) > 0 && <span className="text-blue-400">探索 {tasksByStatus.running}</span>}
-            {(tasksByStatus.paused ?? 0) > 0 && <span className="text-amber-400">暂停 {tasksByStatus.paused}</span>}
-            {(tasksByStatus.done ?? 0) > 0 && <span className="text-emerald-400">完成 {tasksByStatus.done}</span>}
+            {(tasksByStatus.running ?? 0) > 0 && (
+              <span className={isMeshAtlas ? "text-foreground" : "text-blue-400"}>探索 {tasksByStatus.running}</span>
+            )}
+            {(tasksByStatus.paused ?? 0) > 0 && (
+              <span className={isMeshAtlas ? "text-[var(--ma-warn-fg)]" : "text-amber-400"}>
+                暂停 {tasksByStatus.paused}
+              </span>
+            )}
+            {(tasksByStatus.done ?? 0) > 0 && (
+              <span className={isMeshAtlas ? "text-muted-foreground" : "text-emerald-400"}>
+                完成 {tasksByStatus.done}
+              </span>
+            )}
             {tasks.length === 0 && <span className="text-muted-foreground">暂无任务</span>}
           </CardContent>
         </Card>
@@ -564,10 +586,18 @@ export default function DashboardPage() {
             <div className="font-semibold text-2xl tabular-nums">{findingStatsData?.total ?? 0}</div>
           </CardHeader>
           <CardContent className="flex flex-wrap gap-2.5 text-[10px]">
-            <span className="text-rose-500">严重 {findingsBySev.critical}</span>
-            <span className="text-red-400">高危 {findingsBySev.high}</span>
-            <span className="text-amber-400">中危 {findingsBySev.medium}</span>
-            <span className="text-slate-400">低危 {findingsBySev.low}</span>
+            <span className={isMeshAtlas ? "font-semibold text-[var(--ma-bad)]" : "text-rose-500"}>
+              严重 {findingsBySev.critical}
+            </span>
+            <span className={isMeshAtlas ? "text-[var(--ma-bad-fg)]" : "text-red-400"}>
+              高危 {findingsBySev.high}
+            </span>
+            <span className={isMeshAtlas ? "text-[var(--ma-warn-fg)]" : "text-amber-400"}>
+              中危 {findingsBySev.medium}
+            </span>
+            <span className={isMeshAtlas ? "text-muted-foreground" : "text-slate-400"}>
+              低危 {findingsBySev.low}
+            </span>
           </CardContent>
         </Card>
 
@@ -622,7 +652,7 @@ export default function DashboardPage() {
       {/* ── Row 2: LLM Token 消耗 ── */}
       <Card className="p-4">
         {/* Header */}
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <div data-slot="section-header" className="mb-4 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-1.5 font-semibold text-xs">
             <span data-slot="section-title" className="inline-flex items-center gap-1.5">
               <ZapIcon className="size-3.5 text-muted-foreground" />
@@ -856,6 +886,7 @@ export default function DashboardPage() {
 
             {dailyTokenData.length === 0 ? (
               <div
+                data-slot="hud-empty"
                 className={cn("flex flex-1 items-center justify-center border bg-muted/10 text-muted-foreground text-xs", isMeshAtlas ? "rounded-none bg-transparent" : "rounded-lg")}
                 style={{ minHeight: 180 }}
               >
@@ -916,7 +947,7 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         {/* 活动流 */}
         <Card className="p-4">
-          <div className="mb-3 flex items-center justify-between">
+          <div data-slot="section-header" className="mb-3 flex items-center justify-between">
             <div data-slot="section-title" className="flex items-center gap-1.5 font-semibold text-xs">
               <ActivityIcon className="size-3.5 text-muted-foreground" />
               活动流
@@ -985,7 +1016,7 @@ export default function DashboardPage() {
 
         {/* 发现 */}
         <Card className="p-4">
-          <div className="mb-3 flex items-center justify-between">
+          <div data-slot="section-header" className="mb-3 flex items-center justify-between">
             <div data-slot="section-title" className="flex items-center gap-1.5 font-semibold text-xs">
               <BugIcon className="size-3.5 text-muted-foreground" />
               发现
@@ -1168,10 +1199,15 @@ export default function DashboardPage() {
                   <div key={code} className="flex flex-1 flex-col items-center gap-1">
                     <span className="text-[9px] text-muted-foreground tabular-nums">{n}</span>
                     <div
-                      className={cn("min-h-1 w-full rounded-sm", statusBg(code), "opacity-80")}
+                      className={cn(
+                        "min-h-1 w-full",
+                        isMeshAtlas ? "rounded-none" : "rounded-sm",
+                        statusBg(code, isMeshAtlas),
+                        "opacity-80",
+                      )}
                       style={{ height: Math.max(4, (n / trafficMax) * 36) }}
                     />
-                    <span className={cn("font-mono text-[9px]", statusColor(code))}>{code}</span>
+                    <span className={cn("font-mono text-[9px]", statusColor(code, isMeshAtlas))}>{code}</span>
                   </div>
                 ))}
               </div>
@@ -1182,6 +1218,8 @@ export default function DashboardPage() {
                   {recentTraffic.map((e) => (
                     <div key={e.id} className="flex items-center gap-1.5 text-[10px]">
                       <span
+                        data-slot="http-method-badge"
+                        data-method={e.method.toUpperCase()}
                         className={cn(
                           "shrink-0 rounded border px-1 py-0 font-mono text-[9px]",
                           e.method === "GET"
@@ -1195,7 +1233,9 @@ export default function DashboardPage() {
                         {e.host}
                         {e.url.replace(/^https?:\/\/[^/]+/, "").substring(0, 30)}
                       </span>
-                      <span className={cn("shrink-0 font-mono text-[9px]", statusColor(e.status))}>{e.status}</span>
+                      <span className={cn("shrink-0 font-mono text-[9px]", statusColor(e.status, isMeshAtlas))}>
+                        {e.status}
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -1282,7 +1322,10 @@ export default function DashboardPage() {
           )}
 
           {pendingCount === 0 && (
-            <div className={cn("mt-3 border bg-muted/10 px-3 py-3 text-center text-[10px] text-muted-foreground", isMeshAtlas ? "rounded-none bg-transparent" : "rounded-lg")}>
+            <div
+              data-slot="hud-empty"
+              className={cn("mt-3 border bg-muted/10 px-3 py-3 text-center text-[10px] text-muted-foreground", isMeshAtlas ? "rounded-none bg-transparent" : "rounded-lg")}
+            >
               <ShieldCheckIcon className={cn("mx-auto mb-1 size-4", isMeshAtlas ? "text-muted-foreground" : "text-emerald-500/50")} />
               无待审批拦截
             </div>

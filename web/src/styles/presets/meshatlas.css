@@ -19,7 +19,7 @@ value: meshatlas
   --radius-3xl: 0px;
   --radius-4xl: 0px;
 
-  --background: #f6f6f5;
+  --background: #efefec;
   --foreground: #0a0a0a;
   --card: #ffffff;
   --card-foreground: #0a0a0a;
@@ -27,15 +27,15 @@ value: meshatlas
   --popover-foreground: #0a0a0a;
   --primary: #0a0a0a;
   --primary-foreground: #ffffff;
-  --secondary: #ededeb;
+  --secondary: #e8e8e4;
   --secondary-foreground: #262626;
-  --muted: #efefe9;
+  --muted: #eaeae5;
   --muted-foreground: #5c5c5c;
   --accent: rgba(10, 10, 10, 0.06);
   --accent-foreground: #0a0a0a;
   --destructive: #d93832;
-  --border: #d4d4d0;
-  --input: #b0b0aa;
+  --border: #d0d0ca;
+  --input: #a8a8a0;
   --ring: #0a0a0a;
 
   --chart-1: #0a0a0a;
@@ -44,38 +44,45 @@ value: meshatlas
   --chart-4: #c77d0a;
   --chart-5: #d93832;
 
-  --sidebar: #f0f0ee;
+  --sidebar: #e9e9e5;
   --sidebar-foreground: #0a0a0a;
   --sidebar-primary: #0a0a0a;
   --sidebar-primary-foreground: #ffffff;
   --sidebar-accent: rgba(10, 10, 10, 0.065);
   --sidebar-accent-foreground: #0a0a0a;
-  --sidebar-border: #d4d4d0;
+  --sidebar-border: #d0d0ca;
   --sidebar-ring: #0a0a0a;
 
   /* MeshAtlas semantic & atmosphere tokens (Light engineering blueprint) */
   --ma-mono:
     var(--font-geist-mono), "JetBrains Mono", "SF Mono", ui-monospace, Menlo,
     Consolas, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", monospace;
-  --ma-bg: #f6f6f5;
+  --ma-bg: #efefec;
   --ma-panel: #ffffff;
-  --ma-panel-2: #f0f0ee;
+  --ma-panel-2: #eeeeea;
   --ma-overlay: #ffffff;
-  --ma-drawer: #f8f8f7;
-  --ma-line: #d4d4d0;
-  --ma-line-2: #a8a8a2;
+  --ma-drawer: #f6f6f3;
+  --ma-line: #d0d0ca;
+  --ma-line-subtle: #e5e5df;
+  --ma-line-2: #a4a49c;
   --ma-fg: #0a0a0a;
   --ma-fg-2: #3f3f3c;
-  --ma-fg-3: #6e6e68;
-  --ma-fg-4: #a3a39c;
+  --ma-fg-3: #686862;
+  --ma-fg-4: #9c9c94;
   --ma-hi: #000000;
   --ma-warn: #c77d0a;
   --ma-warn-fg: #945800;
   --ma-bad: #d93832;
   --ma-bad-fg: #b91c1c;
-  --ma-corner: #737370;
-  --ma-grid: rgba(10, 10, 10, 0.045);
+  --ma-corner: #52524e;
+  --ma-grid: rgba(10, 10, 10, 0.055);
   --ma-scanline: rgba(10, 10, 10, 0.015);
+  --ma-hatch: repeating-linear-gradient(
+    -45deg,
+    transparent 0 5px,
+    rgba(10, 10, 10, 0.045) 5px 6px
+  );
+  --ma-overlay-top-hi: rgba(255, 255, 255, 0.9);
   --ma-panel-grad: linear-gradient(
     180deg,
     rgba(255, 255, 255, 0.9),
@@ -160,6 +167,7 @@ value: meshatlas
   --ma-overlay: #080808;
   --ma-drawer: #070707;
   --ma-line: #1f1f1f;
+  --ma-line-subtle: #181818;
   --ma-line-2: #2e2e2e;
   --ma-fg: #f0f0f0;
   --ma-fg-2: #b4b4b4;
@@ -173,6 +181,12 @@ value: meshatlas
   --ma-corner: #7a7a7a;
   --ma-grid: rgba(255, 255, 255, 0.018);
   --ma-scanline: rgba(255, 255, 255, 0.012);
+  --ma-hatch: repeating-linear-gradient(
+    -45deg,
+    transparent 0 5px,
+    rgba(255, 255, 255, 0.028) 5px 6px
+  );
+  --ma-overlay-top-hi: rgba(255, 255, 255, 0.08);
   --ma-panel-grad: linear-gradient(
     180deg,
     rgba(255, 255, 255, 0.022),
@@ -251,6 +265,8 @@ value: meshatlas
 :root[data-theme-preset="meshatlas"] body {
   background-color: var(--ma-bg);
   color: var(--ma-fg);
+  font-size: 13px;
+  line-height: 1.45;
   font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
 }
@@ -322,7 +338,14 @@ value: meshatlas
       [data-slot="hud-panel"],
       [data-slot="hud-filter-bar"],
       [data-slot="hud-count-badge"],
+      [data-slot="hud-live-badge"],
+      [data-slot="hud-live-dot"],
+      [data-slot="hud-empty"],
+      [data-slot="empty"],
       [data-slot="http-method-badge"],
+      [data-slot="avatar"],
+      [data-slot="avatar-image"],
+      [data-slot="avatar-fallback"],
       [data-slot="button"],
       [data-slot="popover-trigger"],
       [data-slot="tooltip-trigger"],
@@ -383,6 +406,10 @@ value: meshatlas
     ) {
     border-radius: 0 !important;
   }
+
+  :root[data-theme-preset="meshatlas"] [data-slot="avatar"]::after {
+    border-radius: 0 !important;
+  }
 }
 
 /* ==========================================================================
@@ -436,6 +463,7 @@ value: meshatlas
 }
 
 :root[data-theme-preset="meshatlas"] [data-slot="card-title"]:not([class*="text-xl"]):not([class*="text-2xl"]):not([class*="text-3xl"]):not([class*="justify-between"])::before,
+:root[data-theme-preset="meshatlas"] [data-slot="card-title"][class*="justify-between"] > span:first-child::before,
 :root[data-theme-preset="meshatlas"] [data-slot="section-title"]::before {
   content: "";
   display: inline-block;
@@ -445,9 +473,38 @@ value: meshatlas
   background-color: var(--ma-fg);
 }
 
+/* Eliminate duplicate [■ + icon] clutter on panel headers — keep the single MeshAtlas square anchor */
+:root[data-theme-preset="meshatlas"] [data-slot="card-title"]:not([class*="text-xl"]):not([class*="text-2xl"]):not([class*="text-3xl"]) > svg,
+:root[data-theme-preset="meshatlas"] [data-slot="card-title"][class*="justify-between"] > span:first-child > svg,
+:root[data-theme-preset="meshatlas"] [data-slot="section-title"] > svg {
+  display: none;
+}
+
+/* Precision instrument header hairline divider on non-KPI panel cards & custom sections */
+:root[data-theme-preset="meshatlas"] [data-slot="card"]:not(:has([class*="text-2xl"])):not(:has([class*="text-3xl"])):has(> [data-slot="card-content"]) > [data-slot="card-header"] {
+  border-bottom: 1px solid var(--ma-line-subtle);
+  padding-bottom: 0.75rem;
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="section-header"] {
+  border-bottom: 1px solid var(--ma-line-subtle);
+  padding-bottom: 0.55rem;
+}
+
 :root[data-theme-preset="meshatlas"] [data-slot="card-footer"] {
   background-color: transparent;
   border-top: 1px solid var(--ma-line);
+}
+
+/* Square terminal avatar frame (sidebar user chip & dropdowns) */
+:root[data-theme-preset="meshatlas"] [data-slot="avatar"]::after {
+  border-color: var(--ma-line-2);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="avatar-fallback"] {
+  background-color: var(--ma-panel-2);
+  color: var(--ma-fg);
+  font-weight: 600;
 }
 
 /* ==========================================================================
@@ -513,6 +570,21 @@ value: meshatlas
   font-size: 9.5px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+/* Desaturate bright green NEW badge & round amber counter in sidebar */
+:root[data-theme-preset="meshatlas"] [data-slot="sidebar-menu-badge"][data-badge="new"] {
+  border-color: var(--ma-line-2);
+  background-color: var(--ma-hover);
+  color: var(--ma-fg-2);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="sidebar-menu-badge"][data-badge="pending"] {
+  border: 1px solid color-mix(in srgb, var(--ma-warn) 58%, transparent);
+  background-color: color-mix(in srgb, var(--ma-warn) 16%, transparent);
+  color: var(--ma-warn-fg);
+  box-shadow: none;
+  --tw-ring-shadow: 0 0 #0000;
 }
 
 /* ==========================================================================
@@ -604,6 +676,22 @@ value: meshatlas
   background-color: var(--ma-overlay);
   border-color: var(--ma-line-2);
   color: var(--ma-fg);
+}
+
+/* Strip native OS dropdown caret on <select> so only the custom Chevron renders */
+:root[data-theme-preset="meshatlas"] [data-slot="native-select"] {
+  -webkit-appearance: none !important;
+  appearance: none !important;
+  background-image: none !important;
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="native-select"]::picker-icon {
+  display: none;
+}
+
+/* Subtle 45° diagonal hatch on disabled action buttons */
+:root[data-theme-preset="meshatlas"] [data-slot="button"]:disabled:not([data-variant="ghost"]):not([data-variant="link"]) {
+  background-image: var(--ma-hatch);
 }
 
 :root[data-theme-preset="meshatlas"] [data-slot="input"]:focus-visible,
@@ -816,6 +904,44 @@ value: meshatlas
   font-weight: 600;
 }
 
+/* Monochrome live/recording badges (normal operational state = crisp white + glow) */
+:root[data-theme-preset="meshatlas"] [data-slot="hud-live-badge"] {
+  border: 1px solid var(--ma-line-2);
+  background-color: transparent;
+  color: var(--ma-fg-3);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="hud-live-badge"][data-live="true"] {
+  border-color: var(--ma-fg-3);
+  background-color: var(--ma-hover);
+  color: var(--ma-fg);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="hud-live-dot"] {
+  width: 5px;
+  height: 5px;
+  background-color: transparent;
+  border: 1px solid var(--ma-fg-3);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="hud-live-dot"][data-live="true"] {
+  border: 0;
+  background-color: var(--ma-fg);
+  box-shadow: var(--ma-glow-ok);
+  animation: ma-pulse 2s ease-in-out infinite;
+}
+
+/* 45° diagonal engineering hatch for empty states & unpopulated telemetry frames */
+:root[data-theme-preset="meshatlas"] [data-slot="empty"],
+:root[data-theme-preset="meshatlas"] [data-slot="hud-empty"] {
+  background-color: transparent;
+  background-image: var(--ma-hatch);
+  border-color: var(--ma-line);
+}
+
 /* ==========================================================================
    Chat / Transcript / Session Panels (Eliminates White/Grey Bubble Glare)
    ========================================================================== */
@@ -957,14 +1083,22 @@ value: meshatlas
    Tables (Dense Monochrome Matrix Chrome)
    ========================================================================== */
 
+:root[data-theme-preset="meshatlas"] [data-slot="table"] {
+  font-size: 12.5px;
+}
+
 :root[data-theme-preset="meshatlas"] [data-slot="table-head"] {
-  height: 2.1rem;
+  height: 2.05rem;
   background-color: var(--ma-panel);
   color: var(--ma-fg-2);
   font-size: 10.5px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   border-bottom: 1px solid var(--ma-line-2);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="table-cell"] {
+  padding-block: 0.45rem;
 }
 
 :root[data-theme-preset="meshatlas"] [data-slot="table-row"] {
@@ -975,6 +1109,24 @@ value: meshatlas
   background-color: var(--ma-hover);
 }
 
+/* Recharts monochrome telemetry grid & sharp tooltip styling */
+:root[data-theme-preset="meshatlas"] [data-slot="chart"] .recharts-cartesian-grid line {
+  stroke: var(--ma-line);
+  stroke-dasharray: 2 3;
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="chart"] .recharts-cartesian-axis-tick text {
+  fill: var(--ma-fg-3);
+  font-size: 10px;
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="chart"] .recharts-tooltip-wrapper > div {
+  border-radius: 0;
+  background-color: var(--ma-overlay);
+  border-color: var(--ma-line-2);
+  box-shadow: var(--shadow-md);
+}
+
 /* ==========================================================================
    Overlays: Dialog, Sheet/Drawer, Popover, Dropdown, Command Palette
    ========================================================================== */
@@ -983,11 +1135,9 @@ value: meshatlas
 :root[data-theme-preset="meshatlas"] [data-slot="alert-dialog-overlay"],
 :root[data-theme-preset="meshatlas"] [data-slot="sheet-overlay"],
 :root[data-theme-preset="meshatlas"] [data-slot="drawer-overlay"] {
-  background-color: rgba(0, 0, 0, 0.58);
+  background-color: rgba(0, 0, 0, 0.62);
 }
 
-:root[data-theme-preset="meshatlas"] [data-slot="dialog-content"],
-:root[data-theme-preset="meshatlas"] [data-slot="alert-dialog-content"],
 :root[data-theme-preset="meshatlas"] [data-slot="popover-content"],
 :root[data-theme-preset="meshatlas"] [data-slot="dropdown-menu-content"],
 :root[data-theme-preset="meshatlas"] [data-slot="dropdown-menu-sub-content"],
@@ -995,8 +1145,43 @@ value: meshatlas
 :root[data-theme-preset="meshatlas"] [data-slot="hover-card-content"] {
   background-color: var(--ma-overlay);
   border: 1px solid var(--ma-line-2);
-  box-shadow: var(--shadow-xl);
+  box-shadow: inset 0 1px 0 var(--ma-overlay-top-hi), var(--shadow-xl);
   --tw-ring-shadow: 0 0 #0000;
+}
+
+/* Modal dialogs & command palette: unified border + pixel-aligned 10px corner brackets */
+:root[data-theme-preset="meshatlas"] [data-slot="dialog-content"],
+:root[data-theme-preset="meshatlas"] [data-slot="alert-dialog-content"] {
+  background-color: var(--ma-overlay);
+  border: 0;
+  box-shadow: inset 0 0 0 1px var(--ma-line-2), var(--shadow-xl);
+  --tw-ring-shadow: 0 0 #0000;
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="dialog-content"]::before,
+:root[data-theme-preset="meshatlas"] [data-slot="alert-dialog-content"]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 20;
+  background:
+    /* Top layer: 10px corner L-brackets overlapping flush on outer border pixels */
+    linear-gradient(var(--ma-corner), var(--ma-corner)) top left / 10px 1px no-repeat,
+    linear-gradient(var(--ma-corner), var(--ma-corner)) top left / 1px 10px no-repeat,
+    linear-gradient(var(--ma-corner), var(--ma-corner)) top right / 10px 1px no-repeat,
+    linear-gradient(var(--ma-corner), var(--ma-corner)) top right / 1px 10px no-repeat,
+    linear-gradient(var(--ma-corner), var(--ma-corner)) bottom left / 10px 1px no-repeat,
+    linear-gradient(var(--ma-corner), var(--ma-corner)) bottom left / 1px 10px no-repeat,
+    linear-gradient(var(--ma-corner), var(--ma-corner)) bottom right / 10px 1px no-repeat,
+    linear-gradient(var(--ma-corner), var(--ma-corner)) bottom right / 1px 10px no-repeat,
+    /* Inner 1px top specular highlight */
+    linear-gradient(var(--ma-overlay-top-hi), var(--ma-overlay-top-hi)) 1px 1px / calc(100% - 2px) 1px no-repeat,
+    /* Base layer: 1px perimeter border on the exact same outer pixels */
+    linear-gradient(var(--ma-line-2), var(--ma-line-2)) top left / 100% 1px no-repeat,
+    linear-gradient(var(--ma-line-2), var(--ma-line-2)) bottom left / 100% 1px no-repeat,
+    linear-gradient(var(--ma-line-2), var(--ma-line-2)) top left / 1px 100% no-repeat,
+    linear-gradient(var(--ma-line-2), var(--ma-line-2)) top right / 1px 100% no-repeat;
 }
 
 :root[data-theme-preset="meshatlas"] [data-slot="sheet-content"],
