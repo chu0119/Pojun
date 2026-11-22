@@ -24,6 +24,8 @@ export function StatusBadge({
   const meta = statusMeta(domain, value);
   return (
     <span
+      data-slot="status-badge"
+      data-tone={meta.tone}
       title={title}
       className={cn(
         "inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border px-2 py-0.5 font-medium text-xs",
@@ -32,7 +34,11 @@ export function StatusBadge({
       )}
     >
       {dot && (
-        <span className={cn("size-1.5 rounded-full", toneDot[meta.tone])} />
+        <span
+          data-slot="status-badge-dot"
+          data-tone={meta.tone}
+          className={cn("size-1.5 rounded-full", toneDot[meta.tone])}
+        />
       )}
       {meta.label}
     </span>
@@ -40,5 +46,5 @@ export function StatusBadge({
 }
 
 export function ToneDot({ tone }: { tone: Tone }) {
-  return <span className={cn("size-2 rounded-full", toneDot[tone])} />;
+  return <span data-slot="tone-dot" data-tone={tone} className={cn("size-2 rounded-full", toneDot[tone])} />;
 }

@@ -20,7 +20,9 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { meshAtlasLatencyColor } from "@/components/hud/hud-primitives";
 import { Badge } from "@/components/ui/badge";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -67,6 +69,7 @@ type CheckRow = {
 // 保存即热应用(upstream 钩子按请求选代理);连败 5 次自动熔断 10 分钟,
 // 另有主动健康检查定时验证、不通即熔断。
 export default function ProxyPoolPage() {
+  const isMeshAtlas = usePreferencesStore((s) => s.themePreset === "meshatlas");
   const [entries, setEntries] = React.useState<ProxyPoolEntry[]>([]);
   const [strategy, setStrategy] = React.useState("round_robin");
   // 严格出口（默认关，公开版保持旧行为；UI 可开）：池已配置但全部不可用时，
@@ -923,7 +926,12 @@ export default function ProxyPoolPage() {
                           </span>
                         )}
                       </td>
-                      <td className="py-2 pr-4 tabular-nums">{r.latency_ms} ms</td>
+                      <td
+                        className="py-2 pr-4 font-mono tabular-nums"
+                        style={isMeshAtlas ? { color: meshAtlasLatencyColor(r.ok ? r.latency_ms : 0) } : undefined}
+                      >
+                        {r.latency_ms} ms
+                      </td>
                       <td className="py-2 pr-4 font-mono text-xs">{r.exit_ip ?? "—"}</td>
                       <td className="py-2 pr-4 text-destructive text-xs">{r.error ?? "—"}</td>
                     </tr>

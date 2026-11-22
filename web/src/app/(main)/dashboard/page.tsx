@@ -16,12 +16,14 @@ import {
 } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 
+import { BlinkingCursor, SegmentedMeter } from "@/components/hud/hud-primitives";
 import { StatusBadge } from "@/components/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, } from "@/components/ui/card";
 import { type ChartConfig, ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 import { Progress } from "@/components/ui/progress";
 import { api } from "@/lib/api";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import type {
   Activity,
   Agent,
@@ -48,6 +50,12 @@ const dailyTrendConfig = {
   input: { label: "输入", color: "hsl(217 91% 60%)" },
   output: { label: "输出", color: "hsl(263 70% 60%)" },
   cacheRead: { label: "缓存读", color: "hsl(160 60% 45%)" },
+} satisfies ChartConfig;
+
+const meshAtlasTrendConfig = {
+  input: { label: "输入", color: "var(--chart-1)" },
+  output: { label: "输出", color: "var(--chart-2)" },
+  cacheRead: { label: "缓存读", color: "var(--chart-3)" },
 } satisfies ChartConfig;
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -104,8 +112,18 @@ function statusBg(code: number): string {
 
 // ── sub-components ────────────────────────────────────────────────────────────
 
-function LiveDot({ className }: { className?: string }) {
-  return <span className={cn("inline-block size-1.5 shrink-0 animate-pulse rounded-full bg-blue-400", className)} />;
+function LiveDot({ className, isMeshAtlas }: { className?: string; isMeshAtlas?: boolean }) {
+  return (
+    <span
+      className={cn(
+        "inline-block size-1.5 shrink-0 animate-pulse",
+        isMeshAtlas
+          ? "rounded-none bg-foreground [box-shadow:var(--ma-glow-ok)]"
+          : "rounded-full bg-blue-400",
+        className,
+      )}
+    />
+  );
 }
 
 function SectionTitle({
@@ -119,7 +137,7 @@ function SectionTitle({
 }) {
   return (
     <div className="mb-3 flex items-center justify-between">
-      <div className="flex items-center gap-1.5 font-semibold text-xs">
+      <div data-slot="section-title" className="flex items-center gap-1.5 font-semibold text-xs">
         <Icon className="size-3.5 text-muted-foreground" />
         {children}
       </div>
@@ -131,6 +149,8 @@ function SectionTitle({
 // ── page ─────────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
+  const isMeshAtlas = usePreferencesStore((s) => s.themePreset === "meshatlas");
+  const trendConfig = isMeshAtlas ? meshAtlasTrendConfig : dailyTrendConfig;
   // data state
   const [tasks, setTasks] = React.useState<Task[]>([]);
   // 发现不再全量拉（体检 O4：此前 findings 无上限，发现多了首屏明显变慢）——
@@ -492,6 +512,11 @@ export default function DashboardPage() {
   }
 
   function workerBg(w: string): string {
+    if (isMeshAtlas) {
+      if (w === "planner") return "bg-foreground/10 text-foreground border-foreground/40";
+      if (w === "mainagent") return "bg-transparent text-foreground/90 border-border";
+      return "bg-transparent text-muted-foreground border-border";
+    }
     if (w === "planner") return "bg-violet-500/10 text-violet-400 border-violet-500/20";
     if (w === "mainagent") return "bg-cyan-500/10 text-cyan-400 border-cyan-500/20";
     return "bg-blue-500/10 text-blue-400 border-blue-500/20";
@@ -568,7 +593,7 @@ export default function DashboardPage() {
           <CardContent className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
             {settings?.traffic_capture ? (
               <>
-                <LiveDot />
+                <LiveDot isMeshAtlas={isMeshAtlas} />
                 <span>录制中</span>
               </>
             ) : (
@@ -599,10 +624,12 @@ export default function DashboardPage() {
         {/* Header */}
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-1.5 font-semibold text-xs">
-            <ZapIcon className="size-3.5 text-muted-foreground" />
-            LLM Token 消耗
+            <span data-slot="section-title" className="inline-flex items-center gap-1.5">
+              <ZapIcon className="size-3.5 text-muted-foreground" />
+              LLM Token 消耗
+            </span>
             {/* 数据源开关：旧版=activity 统计（含历史任务），新版=llm_usage 计量账本（更准，仅覆盖启用后） */}
-            <div className="ml-1 flex gap-0.5 rounded-md border bg-muted/30 p-0.5">
+            <div className={cn("ml-1 flex gap-0.5 border bg-muted/30 p-0.5", isMeshAtlas ? "rounded-none bg-transparent p-0 gap-0" : "rounded-md")}>
               {(
                 [
                   { v: "old", label: "旧版" },
@@ -619,9 +646,12 @@ export default function DashboardPage() {
                       : "旧版：来自 activity 统计（含历史任务），中断消耗不计、无法精确到模型"
                   }
                   className={cn(
-                    "rounded px-2 py-0.5 font-medium text-[9px] transition-colors",
+                    "px-2 py-0.5 font-medium text-[9px] transition-colors",
+                    isMeshAtlas ? "rounded-none" : "rounded",
                     tokenVersion === v
-                      ? "bg-background text-foreground shadow-sm"
+                      ? isMeshAtlas
+                        ? "bg-[var(--ma-active-tab)] text-[var(--ma-hi)] [box-shadow:inset_0_-2px_0_0_var(--ma-fg)]"
+                        : "bg-background text-foreground shadow-sm"
                       : "text-muted-foreground hover:text-foreground",
                   )}
                 >
@@ -639,9 +669,12 @@ export default function DashboardPage() {
               type="button"
               onClick={() => setTokenTab("all")}
               className={cn(
-                "rounded-md px-2.5 py-1 font-medium text-[10px] transition-colors",
+                "px-2.5 py-1 font-medium text-[10px] transition-colors",
+                isMeshAtlas ? "rounded-none border border-border" : "rounded-md",
                 tokenTab === "all"
-                  ? "bg-foreground text-background"
+                  ? isMeshAtlas
+                    ? "border-[var(--ma-fg-3)] bg-[var(--ma-active-tab)] text-[var(--ma-hi)] [box-shadow:inset_0_-2px_0_0_var(--ma-fg)]"
+                    : "bg-foreground text-background"
                   : "bg-muted/30 text-muted-foreground hover:text-foreground",
               )}
             >
@@ -657,9 +690,12 @@ export default function DashboardPage() {
                   key={p.id}
                   onClick={() => setTokenTab(resolvedKey)}
                   className={cn(
-                    "flex items-center gap-1 rounded-md px-2.5 py-1 font-medium text-[10px] transition-colors",
+                    "flex items-center gap-1 px-2.5 py-1 font-medium text-[10px] transition-colors",
+                    isMeshAtlas ? "rounded-none border border-border" : "rounded-md",
                     tokenTab === resolvedKey
-                      ? "bg-foreground text-background"
+                      ? isMeshAtlas
+                        ? "border-[var(--ma-fg-3)] bg-[var(--ma-active-tab)] text-[var(--ma-hi)] [box-shadow:inset_0_-2px_0_0_var(--ma-fg)]"
+                        : "bg-foreground text-background"
                       : "bg-muted/30 text-muted-foreground hover:text-foreground",
                     !hasData && "opacity-40",
                   )}
@@ -668,10 +704,15 @@ export default function DashboardPage() {
                   {p.is_default && (
                     <span
                       className={cn(
-                        "rounded px-1 py-0 text-[8px]",
+                        "px-1 py-0 text-[8px]",
+                        isMeshAtlas ? "rounded-none" : "rounded",
                         tokenTab === resolvedKey
-                          ? "bg-background/20 text-background"
-                          : "bg-emerald-500/20 text-emerald-400",
+                          ? isMeshAtlas
+                            ? "border border-[var(--ma-fg-3)] text-[var(--ma-hi)]"
+                            : "bg-background/20 text-background"
+                          : isMeshAtlas
+                            ? "border border-border text-foreground"
+                            : "bg-emerald-500/20 text-emerald-400",
                       )}
                     >
                       默认
@@ -705,20 +746,20 @@ export default function DashboardPage() {
                   {
                     label: "输入(未命中)",
                     value: displayedTokens.input - displayedTokens.cacheRead,
-                    barColor: dailyTrendConfig.input.color!,
-                    text: "text-blue-400",
+                    barColor: trendConfig.input.color!,
+                    text: isMeshAtlas ? "text-foreground" : "text-blue-400",
                   },
                   {
                     label: "缓存命中",
                     value: displayedTokens.cacheRead,
-                    barColor: dailyTrendConfig.cacheRead.color!,
-                    text: "text-emerald-400",
+                    barColor: trendConfig.cacheRead.color!,
+                    text: isMeshAtlas ? "text-muted-foreground" : "text-emerald-400",
                   },
                   {
                     label: "输出",
                     value: displayedTokens.output,
-                    barColor: dailyTrendConfig.output.color!,
-                    text: "text-violet-400",
+                    barColor: trendConfig.output.color!,
+                    text: isMeshAtlas ? "text-foreground/80" : "text-violet-400",
                   },
                 ].map(({ label, value, barColor, text }) => {
                   const pct = total > 0 ? (value / total) * 100 : 0;
@@ -728,12 +769,16 @@ export default function DashboardPage() {
                         <span className="text-muted-foreground">{label}</span>
                         <span className={cn("font-mono font-semibold tabular-nums", text)}>{fmtTokens(value)}</span>
                       </div>
-                      <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-                        <div
-                          className="h-full rounded-full transition-all duration-500"
-                          style={{ width: `${pct}%`, background: barColor }}
-                        />
-                      </div>
+                      {isMeshAtlas ? (
+                        <SegmentedMeter value={pct} segments={24} color={barColor} />
+                      ) : (
+                        <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                          <div
+                            className="h-full rounded-full transition-all duration-500"
+                            style={{ width: `${pct}%`, background: barColor }}
+                          />
+                        </div>
+                      )}
                     </div>
                   );
                 });
@@ -746,10 +791,17 @@ export default function DashboardPage() {
               const denominator = displayedTokens.input;
               const hitPct = denominator > 0 ? Math.round((displayedTokens.cacheRead / denominator) * 100) : 0;
               return (
-                <div className="flex items-center justify-between rounded-lg border bg-muted/20 px-3 py-2 text-[10px]">
+                <div className={cn("flex items-center justify-between border bg-muted/20 px-3 py-2 text-[10px]", isMeshAtlas ? "rounded-none bg-transparent" : "rounded-lg")}>
                   <span className="text-muted-foreground">缓存命中率</span>
                   <span
-                    className={cn("font-semibold tabular-nums", hitPct > 50 ? "text-emerald-400" : "text-amber-400")}
+                    className={cn(
+                      "font-semibold tabular-nums",
+                      hitPct > 50
+                        ? isMeshAtlas
+                          ? "text-foreground"
+                          : "text-emerald-400"
+                        : "text-amber-400",
+                    )}
                   >
                     {hitPct}%
                   </span>
@@ -765,14 +817,14 @@ export default function DashboardPage() {
                 {(["input", "output", "cacheRead"] as const).map((k) => (
                   <span key={k} className="flex items-center gap-1">
                     <span
-                      className="inline-block size-2 rounded-sm"
-                      style={{ background: dailyTrendConfig[k].color }}
+                      className={cn("inline-block size-2", isMeshAtlas ? "rounded-none" : "rounded-sm")}
+                      style={{ background: trendConfig[k].color }}
                     />
-                    {dailyTrendConfig[k].label}
+                    {trendConfig[k].label}
                   </span>
                 ))}
               </div>
-              <div className="flex gap-0.5 rounded-md border bg-muted/30 p-0.5">
+              <div className={cn("flex gap-0.5 border bg-muted/30 p-0.5", isMeshAtlas ? "rounded-none bg-transparent p-0 gap-0" : "rounded-md")}>
                 {(
                   [
                     { days: 7, label: "7天" },
@@ -787,9 +839,12 @@ export default function DashboardPage() {
                     key={days}
                     onClick={() => setTokenDays(days)}
                     className={cn(
-                      "rounded px-2.5 py-0.5 font-medium text-[9px] transition-colors",
+                      "px-2.5 py-0.5 font-medium text-[9px] transition-colors",
+                      isMeshAtlas ? "rounded-none" : "rounded",
                       tokenDays === days
-                        ? "bg-background text-foreground shadow-sm"
+                        ? isMeshAtlas
+                          ? "bg-[var(--ma-active-tab)] text-[var(--ma-hi)] [box-shadow:inset_0_-2px_0_0_var(--ma-fg)]"
+                          : "bg-background text-foreground shadow-sm"
                         : "text-muted-foreground hover:text-foreground",
                     )}
                   >
@@ -801,13 +856,13 @@ export default function DashboardPage() {
 
             {dailyTokenData.length === 0 ? (
               <div
-                className="flex flex-1 items-center justify-center rounded-lg border bg-muted/10 text-muted-foreground text-xs"
+                className={cn("flex flex-1 items-center justify-center border bg-muted/10 text-muted-foreground text-xs", isMeshAtlas ? "rounded-none bg-transparent" : "rounded-lg")}
                 style={{ minHeight: 180 }}
               >
                 暂无数据
               </div>
             ) : (
-              <ChartContainer config={dailyTrendConfig} className="h-[200px] w-full">
+              <ChartContainer config={trendConfig} className="h-[200px] w-full">
                 <BarChart data={dailyTokenData} margin={{ top: 4, right: 4, bottom: 0, left: 0 }} maxBarSize={40}>
                   <CartesianGrid vertical={false} />
                   <XAxis
@@ -833,7 +888,7 @@ export default function DashboardPage() {
                         formatter={(value, name) => (
                           <div className="flex w-full items-center justify-between gap-4">
                             <span>
-                              {(dailyTrendConfig as Record<string, { label: string }>)[String(name)]?.label ??
+                              {(trendConfig as Record<string, { label: string }>)[String(name)]?.label ??
                                 String(name)}
                             </span>
                             <span className="font-mono font-semibold tabular-nums">{fmtTokens(Number(value))}</span>
@@ -844,7 +899,12 @@ export default function DashboardPage() {
                   />
                   <Bar dataKey="input" stackId="1" fill="var(--color-input)" radius={[0, 0, 0, 0]} />
                   <Bar dataKey="output" stackId="1" fill="var(--color-output)" radius={[0, 0, 0, 0]} />
-                  <Bar dataKey="cacheRead" stackId="1" fill="var(--color-cacheRead)" radius={[4, 4, 0, 0]} />
+                  <Bar
+                    dataKey="cacheRead"
+                    stackId="1"
+                    fill="var(--color-cacheRead)"
+                    radius={isMeshAtlas ? [0, 0, 0, 0] : [4, 4, 0, 0]}
+                  />
                 </BarChart>
               </ChartContainer>
             )}
@@ -857,7 +917,7 @@ export default function DashboardPage() {
         {/* 活动流 */}
         <Card className="p-4">
           <div className="mb-3 flex items-center justify-between">
-            <div className="flex items-center gap-1.5 font-semibold text-xs">
+            <div data-slot="section-title" className="flex items-center gap-1.5 font-semibold text-xs">
               <ActivityIcon className="size-3.5 text-muted-foreground" />
               活动流
             </div>
@@ -879,7 +939,7 @@ export default function DashboardPage() {
               const count = activity.filter((a) => a.kind === kind).length;
               if (count === 0) return null;
               return (
-                <span key={kind} className="rounded border bg-muted/20 px-1.5 py-0.5 text-[9px] text-muted-foreground">
+                <span key={kind} className={cn("border bg-muted/20 px-1.5 py-0.5 text-[9px] text-muted-foreground", isMeshAtlas ? "rounded-none bg-transparent" : "rounded")}>
                   {kind} <strong className="text-foreground/70">{count}</strong>
                 </span>
               );
@@ -894,7 +954,8 @@ export default function DashboardPage() {
                 <div key={a.seq} className="flex gap-2.5 py-2">
                   <span
                     className={cn(
-                      "shrink-0 self-start rounded border px-1.5 py-0.5 font-mono text-[9px]",
+                      "shrink-0 self-start border px-1.5 py-0.5 font-mono text-[9px]",
+                      isMeshAtlas ? "rounded-none" : "rounded",
                       workerBg(a.worker),
                     )}
                   >
@@ -914,12 +975,18 @@ export default function DashboardPage() {
               ))
             )}
           </div>
+          {isMeshAtlas && (
+            <div className="mt-2 flex items-center gap-1.5 border-t pt-2 font-mono text-[10px] text-muted-foreground">
+              <span>STREAM // LIVE</span>
+              <BlinkingCursor />
+            </div>
+          )}
         </Card>
 
         {/* 发现 */}
         <Card className="p-4">
           <div className="mb-3 flex items-center justify-between">
-            <div className="flex items-center gap-1.5 font-semibold text-xs">
+            <div data-slot="section-title" className="flex items-center gap-1.5 font-semibold text-xs">
               <BugIcon className="size-3.5 text-muted-foreground" />
               发现
             </div>
@@ -964,7 +1031,7 @@ export default function DashboardPage() {
       {/* ── Row 4: 任务表格 ── */}
       <Card className="overflow-hidden p-0">
         <div className="flex items-center justify-between border-b px-4 py-3">
-          <div className="flex items-center gap-1.5 font-semibold text-xs">
+          <div data-slot="section-title" className="flex items-center gap-1.5 font-semibold text-xs">
             <ClockIcon className="size-3.5 text-muted-foreground" />
             任务
           </div>
@@ -1066,12 +1133,16 @@ export default function DashboardPage() {
                   <span className="w-8 shrink-0 text-right text-[10px] text-muted-foreground">
                     {ASSET_TYPE_LABELS[type] ?? type}
                   </span>
-                  <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
-                    <div
-                      className={cn("h-full rounded-full", ASSET_COLORS[type] ?? "bg-slate-400")}
-                      style={{ width: `${(count / assetMax) * 100}%` }}
-                    />
-                  </div>
+                  {isMeshAtlas ? (
+                    <SegmentedMeter value={(count / assetMax) * 100} segments={20} color="var(--ma-fg)" className="flex-1" />
+                  ) : (
+                    <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+                      <div
+                        className={cn("h-full rounded-full", ASSET_COLORS[type] ?? "bg-slate-400")}
+                        style={{ width: `${(count / assetMax) * 100}%` }}
+                      />
+                    </div>
+                  )}
                   <span className="w-4 text-right tabular-nums">{count}</span>
                 </div>
               ))}
@@ -1138,14 +1209,16 @@ export default function DashboardPage() {
           <SectionTitle icon={ShieldCheckIcon}>系统状态</SectionTitle>
 
           <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between rounded-lg border bg-muted/20 px-3 py-2">
+            <div className={cn("flex items-center justify-between border bg-muted/20 px-3 py-2", isMeshAtlas ? "rounded-none bg-transparent" : "rounded-lg")}>
               <div className="text-[10px] text-muted-foreground">LLM 配置</div>
               <Badge
                 variant="outline"
                 className={cn(
                   "text-[10px]",
                   stats?.llm_configured
-                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+                    ? isMeshAtlas
+                      ? "border-foreground/50 bg-foreground/5 text-foreground"
+                      : "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
                     : "border-red-500/30 bg-red-500/10 text-red-400",
                 )}
               >
@@ -1153,14 +1226,16 @@ export default function DashboardPage() {
               </Badge>
             </div>
 
-            <div className="flex items-center justify-between rounded-lg border bg-muted/20 px-3 py-2">
+            <div className={cn("flex items-center justify-between border bg-muted/20 px-3 py-2", isMeshAtlas ? "rounded-none bg-transparent" : "rounded-lg")}>
               <div className="text-[10px] text-muted-foreground">流量捕获</div>
               <Badge
                 variant="outline"
                 className={cn(
                   "text-[10px]",
                   settings?.traffic_capture
-                    ? "border-violet-500/30 bg-violet-500/10 text-violet-400"
+                    ? isMeshAtlas
+                      ? "border-foreground/50 bg-foreground/5 text-foreground"
+                      : "border-violet-500/30 bg-violet-500/10 text-violet-400"
                     : "text-muted-foreground",
                 )}
               >
@@ -1169,7 +1244,7 @@ export default function DashboardPage() {
             </div>
 
             {activeProfile && (
-              <div className="flex items-center justify-between rounded-lg border bg-muted/20 px-3 py-2">
+              <div className={cn("flex items-center justify-between border bg-muted/20 px-3 py-2", isMeshAtlas ? "rounded-none bg-transparent" : "rounded-lg")}>
                 <div className="text-[10px] text-muted-foreground">激活模型</div>
                 <span className="font-mono text-[10px]">{activeProfile.model}</span>
               </div>
@@ -1185,7 +1260,7 @@ export default function DashboardPage() {
                   <Link
                     key={p.id}
                     href="/system/intercept/approvals"
-                    className="flex items-center justify-between rounded-lg border border-amber-500/20 bg-amber-500/5 px-2.5 py-2 hover:bg-amber-500/10"
+                    className={cn("flex items-center justify-between border border-amber-500/20 bg-amber-500/5 px-2.5 py-2 hover:bg-amber-500/10", isMeshAtlas ? "rounded-none border-[#f2a93b]/50" : "rounded-lg")}
                   >
                     <div className="min-w-0">
                       <div className="font-medium text-[10px]">{p.tool_name}</div>
@@ -1207,8 +1282,8 @@ export default function DashboardPage() {
           )}
 
           {pendingCount === 0 && (
-            <div className="mt-3 rounded-lg border bg-muted/10 px-3 py-3 text-center text-[10px] text-muted-foreground">
-              <ShieldCheckIcon className="mx-auto mb-1 size-4 text-emerald-500/50" />
+            <div className={cn("mt-3 border bg-muted/10 px-3 py-3 text-center text-[10px] text-muted-foreground", isMeshAtlas ? "rounded-none bg-transparent" : "rounded-lg")}>
+              <ShieldCheckIcon className={cn("mx-auto mb-1 size-4", isMeshAtlas ? "text-muted-foreground" : "text-emerald-500/50")} />
               无待审批拦截
             </div>
           )}

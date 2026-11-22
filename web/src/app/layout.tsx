@@ -18,13 +18,22 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
-  const { theme_mode, theme_preset, content_layout, navbar_style, sidebar_variant, sidebar_collapsible, font } =
-    PREFERENCE_DEFAULTS;
+  const {
+    theme_mode,
+    theme_preset,
+    hud_effects,
+    content_layout,
+    navbar_style,
+    sidebar_variant,
+    sidebar_collapsible,
+    font,
+  } = PREFERENCE_DEFAULTS;
   return (
     <html
       lang="en"
       data-theme-mode={theme_mode}
       data-theme-preset={theme_preset}
+      data-hud-effects={hud_effects}
       data-content-layout={content_layout}
       data-navbar-style={navbar_style}
       data-sidebar-variant={sidebar_variant}
@@ -41,6 +50,7 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
           <PreferencesStoreProvider
             themeMode={theme_mode}
             themePreset={theme_preset}
+            hudEffects={hud_effects}
             contentLayout={content_layout}
             navbarStyle={navbar_style}
             font={font}

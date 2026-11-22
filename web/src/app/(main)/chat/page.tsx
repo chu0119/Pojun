@@ -1352,7 +1352,7 @@ export default function ChatPage() {
     >
       <div className="grid min-h-0 min-w-0 flex-1 grid-cols-1 grid-rows-[minmax(10rem,15rem)_minmax(0,1fr)] gap-3 md:grid-cols-[18rem_minmax(0,1fr)] md:grid-rows-[minmax(0,1fr)] md:gap-4">
         {/* left: conversation list */}
-        <div className="flex flex-col overflow-hidden rounded-lg border bg-card">
+        <div data-slot="hud-panel" className="flex flex-col overflow-hidden rounded-lg border bg-card">
           <div className="flex flex-col gap-2 border-b p-2">
             <Button size="sm" className="w-full" onClick={() => selectConversation(null)}>
               <PlusIcon /> 新建对话
@@ -1504,7 +1504,7 @@ export default function ChatPage() {
         </div>
 
         {/* right: chat view */}
-        <div className="flex min-w-0 flex-col overflow-hidden rounded-lg border bg-card">
+        <div data-slot="hud-panel" className="flex min-w-0 flex-col overflow-hidden rounded-lg border bg-card">
           {selected ? (
             <ChatView
               key={selected.id}

@@ -8,6 +8,13 @@ export const THEME_MODE_VALUES = THEME_MODE_OPTIONS.map((o) => o.value);
 export type ThemeMode = (typeof THEME_MODE_VALUES)[number];
 export type ResolvedThemeMode = "light" | "dark";
 
+export const HUD_EFFECTS_OPTIONS = [
+  { label: "On", value: "on" },
+  { label: "Off", value: "off" },
+] as const;
+export const HUD_EFFECTS_VALUES = HUD_EFFECTS_OPTIONS.map((o) => o.value);
+export type HudEffects = (typeof HUD_EFFECTS_VALUES)[number];
+
 // --- generated:themePresets:start ---
 
 export const THEME_PRESET_OPTIONS = [
@@ -25,6 +32,14 @@ export const THEME_PRESET_OPTIONS = [
     primary: {
       light: "oklch(0.6489 0.237 26.9728)",
       dark: "oklch(0.7044 0.1872 23.1858)",
+    },
+  },
+  {
+    label: "MeshAtlas",
+    value: "meshatlas",
+    primary: {
+      light: "#0a0a0a",
+      dark: "#f0f0f0",
     },
   },
   {

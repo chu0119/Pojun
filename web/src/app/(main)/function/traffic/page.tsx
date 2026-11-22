@@ -75,7 +75,11 @@ function statusTone(status: number) {
 }
 
 function MethodBadge({ method }: { method: string }) {
-  return <Badge className="shrink-0 font-mono">{method}</Badge>;
+  return (
+    <Badge data-slot="http-method-badge" data-method={method.toUpperCase()} className="shrink-0 font-mono">
+      {method}
+    </Badge>
+  );
 }
 
 // Older captures may predate Host persistence because net/http keeps Host
@@ -489,7 +493,7 @@ export default function TrafficPage() {
           />
         </div>
         <Select value={method} onValueChange={setMethod}>
-          <SelectTrigger size="sm" className="w-full sm:w-32">
+          <SelectTrigger className="h-8 w-full sm:w-32">
             <SelectValue placeholder="方法" />
           </SelectTrigger>
           <SelectContent>
@@ -502,7 +506,7 @@ export default function TrafficPage() {
           </SelectContent>
         </Select>
         <Select value={String(size)} onValueChange={(v) => setSize(Number(v))}>
-          <SelectTrigger size="sm" className="w-full sm:w-28">
+          <SelectTrigger className="h-8 w-full sm:w-28">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -543,7 +547,10 @@ export default function TrafficPage() {
       </div>
 
       {/* Advanced filters (issue #177): narrow 660k+ exchanges down to the one packet. */}
-      <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-2 py-1.5">
+      <div
+        data-slot="hud-filter-bar"
+        className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-2 py-1.5"
+      >
         <span className="pl-1 font-medium text-muted-foreground text-xs">高级筛选</span>
         <div className="relative w-full sm:w-56">
           <Input
@@ -562,7 +569,7 @@ export default function TrafficPage() {
           />
         </div>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger size="sm" className="w-28">
+          <SelectTrigger className="h-8 w-28">
             <SelectValue placeholder="状态码" />
           </SelectTrigger>
           <SelectContent>

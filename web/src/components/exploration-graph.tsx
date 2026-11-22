@@ -43,6 +43,7 @@ import {
 } from "@/components/ui/sheet";
 import { toneClasses, type Tone } from "@/lib/status";
 import type { Edge, ExploreKind, TaskNode } from "@/lib/types";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
 export const relLabel: Record<string, string> = {
   spawns: "派生",
@@ -56,6 +57,42 @@ export const relColor: Record<string, string> = {
   derived_from: "#6366f1",
   yields: "#f59e0b",
   proves: "#ef4444",
+};
+
+const meshAtlasRelColorDark: Record<string, string> = {
+  spawns: "#b4b4b4",
+  derived_from: "#f0f0f0",
+  yields: "#f2a93b",
+  proves: "#ff5a52",
+};
+
+const meshAtlasRelColorLight: Record<string, string> = {
+  spawns: "#525252",
+  derived_from: "#0a0a0a",
+  yields: "#c77d0a",
+  proves: "#d93832",
+};
+
+const meshAtlasNodeHexDark: Record<ExploreKind, string> = {
+  task: "#7a7a7a",
+  begin: "#7a7a7a",
+  goal: "#f0f0f0",
+  hint: "#b4b4b4",
+  intent: "#d4d4d4",
+  fact: "#f2a93b",
+  finding: "#ff5a52",
+  digest: "#8a8a8a",
+};
+
+const meshAtlasNodeHexLight: Record<ExploreKind, string> = {
+  task: "#737373",
+  begin: "#737373",
+  goal: "#0a0a0a",
+  hint: "#525252",
+  intent: "#262626",
+  fact: "#c77d0a",
+  finding: "#d93832",
+  digest: "#6e6e68",
 };
 
 type TypeMeta = {
@@ -292,8 +329,9 @@ function computeLayout(
   return pos;
 }
 
-// Dify-style node card.
+// Dify-style node card (auto-switches to sharp monochrome HUD card in MeshAtlas theme).
 function ExploreNode({ data, selected }: NodeProps<ExploreRFNode>) {
+  const isMeshAtlas = usePreferencesStore((s) => s.themePreset === "meshatlas");
   const n = data.node;
   const kind = viewKind(n);
   const meta = typeMeta[kind] ?? typeMeta.intent;
@@ -302,39 +340,89 @@ function ExploreNode({ data, selected }: NodeProps<ExploreRFNode>) {
   const showPriority = (n.type === "goal" || n.type === "intent") && n.priority > 0;
   const isLive = !n.inherited && n.type === "intent" && n.state === "running";
 
+  const hudIconClass =
+    kind === "finding"
+      ? "bg-[var(--ma-bad)] text-[#050505]"
+      : kind === "fact"
+        ? "bg-[var(--ma-warn)] text-[#050505]"
+        : "border border-[var(--ma-line-2)] bg-[var(--ma-panel-2)] text-[var(--ma-fg)]";
+
   return (
     <div
       className={cn(
-        "w-[240px] cursor-pointer rounded-2xl border-2 transition-colors",
-        selected ? "border-blue-500" : isLive ? "border-blue-400/70" : "border-transparent",
+        "w-[240px] cursor-pointer border-2 transition-colors",
+        isMeshAtlas ? "rounded-none" : "rounded-2xl",
+        isMeshAtlas
+          ? selected
+            ? "border-foreground"
+            : isLive
+              ? "border-foreground/70"
+              : "border-transparent"
+          : selected
+            ? "border-blue-500"
+            : isLive
+              ? "border-blue-400/70"
+              : "border-transparent",
       )}
     >
-      <div className="group relative rounded-[14px] border border-black/[0.06] bg-white shadow-sm transition-shadow hover:shadow-lg dark:border-white/10 dark:bg-neutral-900">
+      <div
+        className={cn(
+          "group relative border transition-shadow",
+          isMeshAtlas
+            ? "rounded-none border-[var(--ma-line-2)] bg-[var(--ma-panel)] [background-image:var(--ma-panel-grad)]"
+            : "rounded-[14px] border-black/[0.06] bg-white shadow-sm hover:shadow-lg dark:border-white/10 dark:bg-neutral-900",
+        )}
+      >
         <Handle
           type="target"
           position={Position.Left}
-          className="!size-2 !border-2 !border-neutral-300 !bg-white dark:!border-neutral-600 dark:!bg-neutral-800 opacity-0 transition-opacity group-hover:opacity-100"
+          className={cn(
+            "!size-2 !border-2 opacity-0 transition-opacity group-hover:opacity-100",
+            isMeshAtlas
+              ? "!rounded-none !border-foreground !bg-background"
+              : "!border-neutral-300 !bg-white dark:!border-neutral-600 dark:!bg-neutral-800",
+          )}
         />
         <div className="flex items-center gap-2 px-3 pt-3 pb-1.5">
-          <span className={cn("flex size-6 shrink-0 items-center justify-center rounded-lg shadow-sm", meta.iconBg)}>
-            <Icon className="size-3.5 text-white" />
+          <span
+            className={cn(
+              "flex size-6 shrink-0 items-center justify-center",
+              isMeshAtlas ? cn("rounded-none", hudIconClass) : cn("rounded-lg shadow-sm", meta.iconBg),
+            )}
+          >
+            <Icon className={cn("size-3.5", isMeshAtlas ? "text-current" : "text-white")} />
           </span>
-          <span className="grow truncate font-semibold text-[13px] text-neutral-700 dark:text-neutral-100">
+          <span
+            className={cn(
+              "grow truncate font-semibold text-[13px]",
+              isMeshAtlas
+                ? "text-[11.5px] uppercase tracking-[0.1em] text-foreground"
+                : "text-neutral-700 dark:text-neutral-100",
+            )}
+          >
             {meta.label}
           </span>
-          {isLive && (
-            <span className="relative flex size-2 shrink-0">
-              <span className="absolute inline-flex size-full animate-ping rounded-full bg-blue-400 opacity-70" />
-              <span className="relative inline-flex size-2 rounded-full bg-blue-500" />
-            </span>
-          )}
+          {isLive &&
+            (isMeshAtlas ? (
+              <span className="inline-block size-2 shrink-0 animate-pulse bg-foreground [box-shadow:var(--ma-glow-ok)]" />
+            ) : (
+              <span className="relative flex size-2 shrink-0">
+                <span className="absolute inline-flex size-full animate-ping rounded-full bg-blue-400 opacity-70" />
+                <span className="relative inline-flex size-2 rounded-full bg-blue-500" />
+              </span>
+            ))}
           {showPriority && (
-            <span className={cn("shrink-0 rounded-md px-1.5 py-0.5 font-semibold text-[10px] tabular-nums", toneClasses[prioTone(n.priority)])}>
+            <span
+              className={cn(
+                "shrink-0 px-1.5 py-0.5 font-semibold text-[10px] tabular-nums",
+                isMeshAtlas ? "rounded-none border border-[var(--ma-line-2)] text-foreground" : cn("rounded-md", toneClasses[prioTone(n.priority)]),
+              )}
+            >
               P{n.priority}
             </span>
           )}
         </div>
-        <div className="line-clamp-3 px-3 pb-2 text-[13px] text-neutral-500 leading-snug dark:text-neutral-400">
+        <div className={cn("line-clamp-3 px-3 pb-2 text-[13px] leading-snug", isMeshAtlas ? "text-xs text-muted-foreground" : "text-neutral-500 dark:text-neutral-400")}>
           {nodeSummary(n) || meta.label}
         </div>
         <div className="flex items-center justify-between gap-2 px-3 pb-2.5">
@@ -351,14 +439,19 @@ function ExploreNode({ data, selected }: NodeProps<ExploreRFNode>) {
               title={n.blocked_reason}
             />
           ) : (
-            <span className="text-[10px] text-neutral-400 dark:text-neutral-500">{meta.label}</span>
+            <span className="text-[10px] text-muted-foreground">{meta.label}</span>
           )}
-          <span className="shrink-0 font-mono text-[10px] text-neutral-400 dark:text-neutral-500">#{n.id}</span>
+          <span className="shrink-0 font-mono text-[10px] text-muted-foreground">#{n.id}</span>
         </div>
         <Handle
           type="source"
           position={Position.Right}
-          className="!size-2 !border-2 !border-neutral-300 !bg-white dark:!border-neutral-600 dark:!bg-neutral-800 opacity-0 transition-opacity group-hover:opacity-100"
+          className={cn(
+            "!size-2 !border-2 opacity-0 transition-opacity group-hover:opacity-100",
+            isMeshAtlas
+              ? "!rounded-none !border-foreground !bg-background"
+              : "!border-neutral-300 !bg-white dark:!border-neutral-600 dark:!bg-neutral-800",
+          )}
         />
       </div>
     </div>
@@ -535,6 +628,19 @@ function ExplorationGraphInner({
   edges: Edge[];
   emptyHint?: string;
 }) {
+  const isMeshAtlas = usePreferencesStore((s) => s.themePreset === "meshatlas");
+  const isDark = usePreferencesStore((s) => s.resolvedThemeMode === "dark");
+  const activeRelColor = isMeshAtlas
+    ? isDark
+      ? meshAtlasRelColorDark
+      : meshAtlasRelColorLight
+    : relColor;
+  const activeNodeHex = isMeshAtlas
+    ? isDark
+      ? meshAtlasNodeHexDark
+      : meshAtlasNodeHexLight
+    : null;
+
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState<ExploreRFNode>([]);
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState<RFEdge>([]);
   const [selected, setSelected] = React.useState<TaskNode | null>(null);
@@ -564,7 +670,7 @@ function ExplorationGraphInner({
     });
     setRfEdges(
       viewEdges.map((e, i) => {
-        const color = relColor[e.rel] ?? "#94a3b8";
+        const color = activeRelColor[e.rel] ?? (isMeshAtlas ? "#7a7a7a" : "#94a3b8");
         const animated = liveTargets.has(e.dst);
         return {
           id: `e${i}-${e.src}-${e.dst}`,
@@ -573,14 +679,24 @@ function ExplorationGraphInner({
           label: relLabel[e.rel] ?? e.rel,
           type: "default",
           animated,
-          labelShowBg: false,
+          labelShowBg: isMeshAtlas,
+          labelBgStyle: isMeshAtlas
+            ? { fill: isDark ? "#050505" : "#f6f6f5", stroke: isDark ? "#3a3a3a" : "#c8c8c2", strokeWidth: 1 }
+            : undefined,
+          labelBgPadding: isMeshAtlas ? [4, 2] : undefined,
+          labelBgBorderRadius: isMeshAtlas ? 0 : undefined,
           labelStyle: { fontSize: 10, fontWeight: 600, fill: color },
-          style: { stroke: color, strokeWidth: 2, strokeOpacity: animated ? 0.9 : 0.55 },
+          style: {
+            stroke: color,
+            strokeWidth: isMeshAtlas ? 1.5 : 2,
+            strokeOpacity: animated ? 0.95 : isMeshAtlas ? 0.7 : 0.55,
+            strokeDasharray: isMeshAtlas && e.rel === "spawns" ? "5 4" : undefined,
+          },
           markerEnd: { type: MarkerType.ArrowClosed, color, width: 14, height: 14 },
         } satisfies RFEdge;
       }),
     );
-  }, [viewNodes, viewEdges, nodesById, setRfNodes, setRfEdges]);
+  }, [viewNodes, viewEdges, nodesById, setRfNodes, setRfEdges, activeRelColor, isMeshAtlas, isDark]);
 
   return (
     <>
@@ -596,25 +712,56 @@ function ExplorationGraphInner({
         proOptions={{ hideAttribution: true }}
         onlyRenderVisibleElements
         minZoom={0.1}
-        className="!bg-[#f0f2f7] dark:!bg-neutral-950"
+        className={
+          isMeshAtlas
+            ? isDark
+              ? "!bg-[#050505]"
+              : "!bg-[#f6f6f5]"
+            : "!bg-[#f0f2f7] dark:!bg-neutral-950"
+        }
       >
-        <Background variant={BackgroundVariant.Dots} gap={16} size={1} className="text-neutral-400/50 dark:text-neutral-700/60" />
-        <Controls showInteractive={false} className="!rounded-lg !border !shadow-sm [&>button]:!border-border [&>button]:!bg-card [&>button:hover]:!bg-accent [&_svg]:!fill-foreground" />
+        <Background
+          variant={BackgroundVariant.Dots}
+          gap={isMeshAtlas ? 20 : 16}
+          size={1}
+          color={isMeshAtlas ? (isDark ? "#2a2a2a" : "#c8c8c2") : undefined}
+          className={isMeshAtlas ? undefined : "text-neutral-400/50 dark:text-neutral-700/60"}
+        />
+        <Controls
+          showInteractive={false}
+          className={cn(
+            "!border [&>button]:!border-border [&>button]:!bg-card [&>button:hover]:!bg-accent [&_svg]:!fill-foreground",
+            isMeshAtlas ? "!rounded-none !shadow-none" : "!rounded-lg !shadow-sm",
+          )}
+        />
         <MiniMap
           pannable
           zoomable
-          className="!bg-card !rounded-lg !border !shadow-sm"
-          maskColor="rgb(148 163 184 / 0.18)"
+          className={cn("!bg-card !border", isMeshAtlas ? "!rounded-none !shadow-none" : "!rounded-lg !shadow-sm")}
+          maskColor={
+            isMeshAtlas
+              ? isDark
+                ? "rgba(0, 0, 0, 0.65)"
+                : "rgba(0, 0, 0, 0.12)"
+              : "rgb(148 163 184 / 0.18)"
+          }
           nodeColor={(node) => {
             const data = node.data as ExploreNodeData | undefined;
             const k = data?.node ? viewKind(data.node) : "intent";
-            return typeMeta[k]?.hex ?? "#94a3b8";
+            return activeNodeHex ? (activeNodeHex[k] ?? "#7a7a7a") : (typeMeta[k]?.hex ?? "#94a3b8");
           }}
           nodeStrokeWidth={0}
-          nodeBorderRadius={4}
+          nodeBorderRadius={isMeshAtlas ? 0 : 4}
         />
         <Panel position="top-left">
-          <div className="flex flex-col gap-2.5 rounded-lg border bg-card/95 p-3 text-xs shadow-sm backdrop-blur">
+          <div
+            className={cn(
+              "flex flex-col gap-2.5 border p-3 text-xs",
+              isMeshAtlas
+                ? "rounded-none border-[var(--ma-line-2)] bg-[var(--ma-overlay)]"
+                : "rounded-lg bg-card/95 shadow-sm backdrop-blur",
+            )}
+          >
             {isEmpty && <span className="text-muted-foreground">{emptyHint}</span>}
             <div className="flex flex-wrap gap-x-3 gap-y-1.5">
               {(["begin", "goal", "intent", "fact", "finding", "hint", "digest"] as ExploreKind[]).map((k) => {
@@ -622,8 +769,18 @@ function ExplorationGraphInner({
                 const Icon = m.icon;
                 return (
                   <span key={k} className="inline-flex items-center gap-1.5 text-foreground">
-                    <span className={cn("flex size-4 items-center justify-center rounded", m.iconBg)}>
-                      <Icon className="size-2.5 text-white" />
+                    <span
+                      className={cn(
+                        "flex size-4 items-center justify-center",
+                        isMeshAtlas ? "rounded-none" : cn("rounded", m.iconBg),
+                      )}
+                      style={
+                        isMeshAtlas
+                          ? { backgroundColor: activeNodeHex?.[k] ?? "#7a7a7a" }
+                          : undefined
+                      }
+                    >
+                      <Icon className={cn("size-2.5", isMeshAtlas && (k === "goal" || k === "intent" || k === "fact" || k === "finding") ? (isDark ? "text-[#050505]" : "text-white") : "text-white")} />
                     </span>
                     {m.label}
                   </span>
@@ -633,7 +790,10 @@ function ExplorationGraphInner({
             <div className="flex flex-wrap gap-x-3 gap-y-1.5 border-border/60 border-t pt-2 text-muted-foreground">
               {Object.entries(relLabel).map(([k, v]) => (
                 <span key={k} className="inline-flex items-center gap-1.5">
-                  <span className="h-0.5 w-4 rounded-full" style={{ backgroundColor: relColor[k] }} />
+                  <span
+                    className={cn("h-0.5 w-4", isMeshAtlas ? "rounded-none" : "rounded-full")}
+                    style={{ backgroundColor: activeRelColor[k] }}
+                  />
                   {v}
                 </span>
               ))}
@@ -664,8 +824,9 @@ export function ExplorationGraph({
   className?: string;
   emptyHint?: string;
 }) {
+  const isMeshAtlas = usePreferencesStore((s) => s.themePreset === "meshatlas");
   return (
-    <div className={cn("w-full overflow-hidden rounded-xl", className)}>
+    <div className={cn("w-full overflow-hidden", isMeshAtlas ? "rounded-none border border-border" : "rounded-xl", className)}>
       <ReactFlowProvider>
         <ExplorationGraphInner nodes={nodes} edges={edges} emptyHint={emptyHint} />
       </ReactFlowProvider>

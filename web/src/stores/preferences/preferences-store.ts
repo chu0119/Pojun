@@ -3,12 +3,13 @@ import { createStore } from "zustand/vanilla";
 import type { FontKey } from "@/lib/fonts/registry";
 import type { ContentLayout, NavbarStyle, SidebarCollapsible, SidebarVariant } from "@/lib/preferences/layout";
 import { PREFERENCE_DEFAULTS } from "@/lib/preferences/preferences-config";
-import type { ResolvedThemeMode, ThemeMode, ThemePreset } from "@/lib/preferences/theme";
+import type { HudEffects, ResolvedThemeMode, ThemeMode, ThemePreset } from "@/lib/preferences/theme";
 
 export type PreferencesState = {
   themeMode: ThemeMode;
   resolvedThemeMode: ResolvedThemeMode;
   themePreset: ThemePreset;
+  hudEffects: HudEffects;
   font: FontKey;
   contentLayout: ContentLayout;
   navbarStyle: NavbarStyle;
@@ -17,6 +18,7 @@ export type PreferencesState = {
   setThemeMode: (mode: ThemeMode) => void;
   setResolvedThemeMode: (mode: ResolvedThemeMode) => void;
   setThemePreset: (preset: ThemePreset) => void;
+  setHudEffects: (val: HudEffects) => void;
   setFont: (font: FontKey) => void;
   setContentLayout: (layout: ContentLayout) => void;
   setNavbarStyle: (style: NavbarStyle) => void;
@@ -31,6 +33,7 @@ export const createPreferencesStore = (init?: Partial<PreferencesState>) =>
     themeMode: init?.themeMode ?? PREFERENCE_DEFAULTS.theme_mode,
     resolvedThemeMode: init?.resolvedThemeMode ?? "light",
     themePreset: init?.themePreset ?? PREFERENCE_DEFAULTS.theme_preset,
+    hudEffects: init?.hudEffects ?? PREFERENCE_DEFAULTS.hud_effects,
     font: init?.font ?? PREFERENCE_DEFAULTS.font,
     contentLayout: init?.contentLayout ?? PREFERENCE_DEFAULTS.content_layout,
     navbarStyle: init?.navbarStyle ?? PREFERENCE_DEFAULTS.navbar_style,
@@ -39,6 +42,7 @@ export const createPreferencesStore = (init?: Partial<PreferencesState>) =>
     setThemeMode: (mode) => set({ themeMode: mode }),
     setResolvedThemeMode: (mode) => set({ resolvedThemeMode: mode }),
     setThemePreset: (preset) => set({ themePreset: preset }),
+    setHudEffects: (val) => set({ hudEffects: val }),
     setFont: (font) => set({ font }),
     setContentLayout: (layout) => set({ contentLayout: layout }),
     setNavbarStyle: (style) => set({ navbarStyle: style }),

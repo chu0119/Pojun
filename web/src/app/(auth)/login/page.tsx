@@ -119,21 +119,24 @@ export default function LoginPage() {
           }}
         />
         <div
+          data-slot="auth-glow"
           className="absolute -top-[30%] left-1/2 h-[60vh] w-[80vw] -translate-x-1/2 rounded-full opacity-[0.07]"
           style={{ background: "radial-gradient(ellipse, hsl(35 90% 55%) 0%, transparent 70%)" }}
         />
         <div
+          data-slot="auth-glow"
           className="absolute -bottom-[20%] left-1/2 h-[50vh] w-[70vw] -translate-x-1/2 rounded-full opacity-[0.05]"
           style={{ background: "radial-gradient(ellipse, hsl(210 80% 50%) 0%, transparent 70%)" }}
         />
         <div
+          data-slot="auth-glow"
           className="absolute left-1/2 top-1/2 h-[80vh] w-[60vw] -translate-x-1/2 -translate-y-1/2 rounded-full opacity-[0.04]"
           style={{ background: "radial-gradient(ellipse, hsl(var(--primary)) 0%, transparent 70%)" }}
         />
       </div>
 
       <div className="relative w-full max-w-sm animate-in fade-in slide-in-from-bottom-6 duration-500">
-        <div className="rounded-2xl border bg-card/80 p-8 shadow-xl backdrop-blur-md">
+        <div data-slot="auth-card" className="rounded-2xl border bg-card/80 p-8 shadow-xl backdrop-blur-md">
           <div className="mb-8 flex flex-col items-center gap-4 text-center">
             <div className="relative">
               <div

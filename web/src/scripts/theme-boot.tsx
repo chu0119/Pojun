@@ -12,6 +12,7 @@ export function ThemeBootScript() {
   const persistence = JSON.stringify({
     theme_mode: PREFERENCE_PERSISTENCE.theme_mode,
     theme_preset: PREFERENCE_PERSISTENCE.theme_preset,
+    hud_effects: PREFERENCE_PERSISTENCE.hud_effects,
     font: PREFERENCE_PERSISTENCE.font,
     content_layout: PREFERENCE_PERSISTENCE.content_layout,
     navbar_style: PREFERENCE_PERSISTENCE.navbar_style,
@@ -22,6 +23,7 @@ export function ThemeBootScript() {
   const defaults = JSON.stringify({
     theme_mode: PREFERENCE_DEFAULTS.theme_mode,
     theme_preset: PREFERENCE_DEFAULTS.theme_preset,
+    hud_effects: PREFERENCE_DEFAULTS.hud_effects,
     font: PREFERENCE_DEFAULTS.font,
     content_layout: PREFERENCE_DEFAULTS.content_layout,
     navbar_style: PREFERENCE_DEFAULTS.navbar_style,
@@ -72,6 +74,7 @@ export function ThemeBootScript() {
 
         var rawMode = readPreference("theme_mode", DEFAULTS.theme_mode);
         var rawPreset = readPreference("theme_preset", DEFAULTS.theme_preset);
+        var rawHudEffects = readPreference("hud_effects", DEFAULTS.hud_effects);
         var rawFont = readPreference("font", DEFAULTS.font);
         var rawContentLayout = readPreference("content_layout", DEFAULTS.content_layout);
         var rawNavbarStyle = readPreference("navbar_style", DEFAULTS.navbar_style);
@@ -85,6 +88,7 @@ export function ThemeBootScript() {
             ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
             : mode;
         var preset = rawPreset || DEFAULTS.theme_preset;
+        var hudEffects = rawHudEffects === "off" ? "off" : "on";
         var font = rawFont || DEFAULTS.font;
         var contentLayout = rawContentLayout || DEFAULTS.content_layout;
         var navbarStyle = rawNavbarStyle || DEFAULTS.navbar_style;
@@ -94,6 +98,7 @@ export function ThemeBootScript() {
         root.classList.toggle("dark", resolvedMode === "dark");
         root.setAttribute("data-theme-mode", mode);
         root.setAttribute("data-theme-preset", preset);
+        root.setAttribute("data-hud-effects", hudEffects);
         root.setAttribute("data-font", font);
         root.setAttribute("data-content-layout", contentLayout);
         root.setAttribute("data-navbar-style", navbarStyle);

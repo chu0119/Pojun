@@ -125,7 +125,12 @@ function SidePanel({
         <div className="flex flex-col gap-5">
           {side.items.map((item) => (
             <article key={item.id} className="flex min-w-0 flex-col gap-2">
-              <div className="whitespace-pre-wrap break-words rounded-lg bg-muted p-3 text-sm">{item.question}</div>
+              <div
+                data-slot="chat-user-bubble"
+                className="whitespace-pre-wrap break-words rounded-lg bg-muted p-3 text-sm"
+              >
+                {item.question}
+              </div>
               <div className="flex flex-wrap items-center gap-2 text-muted-foreground text-xs">
                 <Badge variant="secondary">{status[item.status]}</Badge>
                 <span className="truncate">{item.model.model}</span>

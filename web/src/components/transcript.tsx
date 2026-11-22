@@ -470,13 +470,20 @@ function ToolBlock({
           {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
         </span>
         <ToolIcon className={`mt-0.5 size-3.5 shrink-0 ${running ? "text-sky-600 dark:text-sky-400" : statusTone}`} />
-        {showWorker && <span className={chip(group.worker)}>{group.worker}</span>}
+        {showWorker && (
+          <span data-slot="worker-chip" data-worker={group.worker} className={chip(group.worker)}>
+            {group.worker}
+          </span>
+        )}
         <span className="shrink-0 font-medium text-sky-600 dark:text-sky-400">{toolName}</span>
         {cmd && <span className="min-w-0 flex-1 truncate font-mono text-muted-foreground">{cmd}</span>}
         <span className={`ml-auto shrink-0 font-medium ${statusTone}`}>{statusText}</span>
       </button>
       {open && (
-        <pre className="mb-1 ml-7 max-h-72 overflow-auto whitespace-pre-wrap break-all rounded bg-muted/50 p-2 font-mono text-[11px] leading-relaxed">
+        <pre
+          data-slot="chat-code-detail"
+          className="mb-1 ml-7 max-h-72 overflow-auto whitespace-pre-wrap break-all rounded bg-muted/50 p-2 font-mono text-[11px] leading-relaxed"
+        >
           {detail ?? "加载中…"}
         </pre>
       )}
@@ -538,14 +545,21 @@ function MessageBlock({
           {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
         </span>
         <Icon className={`mt-0.5 size-3.5 shrink-0 ${tone}`} />
-        {showWorker && <span className={chip(group.worker)}>{group.worker}</span>}
+        {showWorker && (
+          <span data-slot="worker-chip" data-worker={group.worker} className={chip(group.worker)}>
+            {group.worker}
+          </span>
+        )}
         <span className={`min-w-0 flex-1 truncate ${tone}`}>
           {body}
           {hasThinking && <span className="ml-1 text-[10px] text-muted-foreground">· 含推理</span>}
         </span>
       </button>
       {open && (
-        <pre className="mb-1 ml-7 max-h-72 overflow-auto whitespace-pre-wrap break-all rounded bg-muted/50 p-2 font-mono text-[11px] leading-relaxed">
+        <pre
+          data-slot="chat-code-detail"
+          className="mb-1 ml-7 max-h-72 overflow-auto whitespace-pre-wrap break-all rounded bg-muted/50 p-2 font-mono text-[11px] leading-relaxed"
+        >
           {detail ?? "加载中…"}
         </pre>
       )}
@@ -614,6 +628,7 @@ function UserRow({ step, intent, getDetail }: { step: Activity; intent?: boolean
             {attachments.map((a) => (
               <div
                 key={a.path}
+                data-slot="chat-attachment"
                 className="flex min-w-0 max-w-full items-center gap-1.5 rounded-md border bg-card px-2 py-1 text-xs shadow-sm"
                 title={a.path}
               >
@@ -625,13 +640,19 @@ function UserRow({ step, intent, getDetail }: { step: Activity; intent?: boolean
           </div>
         )}
         {text && (
-          <div className="min-w-0 max-w-full whitespace-pre-wrap rounded-lg rounded-tr-sm bg-primary px-3 py-1.5 text-primary-foreground text-sm [overflow-wrap:anywhere]">
+          <div
+            data-slot="chat-user-bubble"
+            className="min-w-0 max-w-full whitespace-pre-wrap rounded-lg rounded-tr-sm bg-primary px-3 py-1.5 text-primary-foreground text-sm [overflow-wrap:anywhere]"
+          >
             {text}
           </div>
         )}
         <ActivityTime ts={step.ts} />
       </div>
-      <div className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10">
+      <div
+        data-slot="chat-user-avatar"
+        className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10"
+      >
         <Icon className="size-3.5 text-primary" />
       </div>
     </div>
@@ -661,6 +682,7 @@ function AnswerBlock({ step, getDetail }: { step: Activity; getDetail: (seq: num
   return (
     <div ref={ref} className="mt-1 mb-2 flex min-w-0 flex-col gap-1">
       <div
+        data-slot="chat-answer-bubble"
         className={
           "min-w-0 flex-1 break-words rounded-lg bg-muted px-3 py-2" +
           (step.is_error ? "text-red-600 text-sm dark:text-red-400" : "")

@@ -1,6 +1,6 @@
 import { listenMedia } from "@/lib/media-query";
 
-import type { ResolvedThemeMode, ThemeMode } from "./theme";
+import type { HudEffects, ResolvedThemeMode, ThemeMode } from "./theme";
 
 export function resolveThemeMode(mode: ThemeMode): ResolvedThemeMode {
   if (mode === "system") {
@@ -25,6 +25,10 @@ export function applyThemeMode(mode: ThemeMode): ResolvedThemeMode {
 
 export function applyThemePreset(value: string) {
   document.documentElement.setAttribute("data-theme-preset", value);
+}
+
+export function applyHudEffects(value: HudEffects) {
+  document.documentElement.setAttribute("data-hud-effects", value);
 }
 
 export function subscribeToSystemTheme(onChange: (mode: ResolvedThemeMode) => void): () => void {

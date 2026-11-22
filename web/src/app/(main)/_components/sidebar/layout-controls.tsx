@@ -18,8 +18,8 @@ import {
 } from "@/lib/preferences/layout-utils";
 import { PREFERENCE_DEFAULTS } from "@/lib/preferences/preferences-config";
 import { persistPreference } from "@/lib/preferences/preferences-storage";
-import { THEME_PRESET_OPTIONS, type ThemeMode, type ThemePreset } from "@/lib/preferences/theme";
-import { applyThemePreset } from "@/lib/preferences/theme-utils";
+import { type HudEffects, THEME_PRESET_OPTIONS, type ThemeMode, type ThemePreset } from "@/lib/preferences/theme";
+import { applyHudEffects, applyThemePreset } from "@/lib/preferences/theme-utils";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
 export function LayoutControls() {
@@ -28,6 +28,8 @@ export function LayoutControls() {
   const setThemeMode = usePreferencesStore((s) => s.setThemeMode);
   const themePreset = usePreferencesStore((s) => s.themePreset);
   const setThemePreset = usePreferencesStore((s) => s.setThemePreset);
+  const hudEffects = usePreferencesStore((s) => s.hudEffects);
+  const setHudEffects = usePreferencesStore((s) => s.setHudEffects);
   const contentLayout = usePreferencesStore((s) => s.contentLayout);
   const setContentLayout = usePreferencesStore((s) => s.setContentLayout);
   const navbarStyle = usePreferencesStore((s) => s.navbarStyle);
@@ -40,9 +42,22 @@ export function LayoutControls() {
   const setFont = usePreferencesStore((s) => s.setFont);
 
   const onThemePresetChange = (preset: ThemePreset) => {
+    const switchingToMeshAtlas = preset === "meshatlas" && themePreset !== "meshatlas";
     applyThemePreset(preset);
     setThemePreset(preset);
     void persistPreference("theme_preset", preset);
+    // MeshAtlas 为深色战术大屏优先设计：从浅色切入时自动切换至 Dark（仍可手动切回 Light 工程蓝图变体）。
+    if (switchingToMeshAtlas && resolvedThemeMode === "light") {
+      setThemeMode("dark");
+      void persistPreference("theme_mode", "dark");
+    }
+  };
+
+  const onHudEffectsChange = (value: HudEffects | "") => {
+    if (!value) return;
+    applyHudEffects(value);
+    setHudEffects(value);
+    void persistPreference("hud_effects", value);
   };
 
   const onThemeModeChange = (mode: ThemeMode | "") => {
@@ -88,6 +103,7 @@ export function LayoutControls() {
 
   const handleRestore = () => {
     onThemePresetChange(PREFERENCE_DEFAULTS.theme_preset);
+    onHudEffectsChange(PREFERENCE_DEFAULTS.hud_effects);
     onThemeModeChange(PREFERENCE_DEFAULTS.theme_mode);
     onContentLayoutChange(PREFERENCE_DEFAULTS.content_layout);
     onNavbarStyleChange(PREFERENCE_DEFAULTS.navbar_style);
@@ -134,6 +150,27 @@ export function LayoutControls() {
                 </SelectContent>
               </Select>
             </div>
+
+            {themePreset === "meshatlas" && (
+              <div className="space-y-1">
+                <Label className="font-medium text-xs">HUD Effects</Label>
+                <ToggleGroup
+                  size="sm"
+                  spacing={0}
+                  variant="outline"
+                  type="single"
+                  value={hudEffects}
+                  onValueChange={onHudEffectsChange}
+                >
+                  <ToggleGroupItem value="on" aria-label="Enable HUD grid and scanlines">
+                    Grid + CRT
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="off" aria-label="Disable HUD grid and scanlines">
+                    Minimal
+                  </ToggleGroupItem>
+                </ToggleGroup>
+              </div>
+            )}
 
             <div className="space-y-1">
               <Label className="font-medium text-xs">Fonts</Label>

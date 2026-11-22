@@ -14,7 +14,9 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { meshAtlasLatencyColor } from "@/components/hud/hud-primitives";
 import { Badge } from "@/components/ui/badge";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -94,12 +96,28 @@ function delayRank(delays: Record<string, DelayInfo>, name: string): number {
   return okDelay(d) ? d!.ms : Number.MAX_SAFE_INTEGER;
 }
 
-function delayBadge(info?: DelayInfo) {
+function delayBadge(info?: DelayInfo, isMeshAtlas = false) {
   if (!info) return <span className="text-xs text-muted-foreground">—</span>;
   if (info.err || info.ms <= 0) {
     return (
       <Badge variant="destructive" title={info.err || "超时"}>
         超时
+      </Badge>
+    );
+  }
+  if (isMeshAtlas) {
+    const color = meshAtlasLatencyColor(info.ms);
+    return (
+      <Badge
+        variant="outline"
+        className="tabular-nums"
+        style={{
+          color,
+          borderColor: `color-mix(in srgb, ${color} 50%, transparent)`,
+          backgroundColor: `color-mix(in srgb, ${color} 10%, transparent)`,
+        }}
+      >
+        {info.ms} ms
       </Badge>
     );
   }
@@ -109,6 +127,7 @@ function delayBadge(info?: DelayInfo) {
 }
 
 export default function ClashNodesPage() {
+  const isMeshAtlas = usePreferencesStore((s) => s.themePreset === "meshatlas");
   const [status, setStatus] = React.useState<MihomoStatus | null>(null);
   const [poolEnabled, setPoolEnabled] = React.useState(false);
   const [poolEntries, setPoolEntries] = React.useState(0);
@@ -607,7 +626,7 @@ export default function ClashNodesPage() {
                           <Badge variant="outline" className="uppercase">
                             {n.type}
                           </Badge>
-                          <span className="w-16 text-right">{delayBadge(d)}</span>
+                          <span className="w-16 text-right">{delayBadge(d, isMeshAtlas)}</span>
                           <Button
                             variant="ghost"
                             size="icon"

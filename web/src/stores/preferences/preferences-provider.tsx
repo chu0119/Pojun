@@ -11,7 +11,7 @@ import {
   SIDEBAR_COLLAPSIBLE_VALUES,
   SIDEBAR_VARIANT_VALUES,
 } from "@/lib/preferences/layout";
-import { THEME_MODE_VALUES, THEME_PRESET_VALUES } from "@/lib/preferences/theme";
+import { HUD_EFFECTS_VALUES, THEME_MODE_VALUES, THEME_PRESET_VALUES } from "@/lib/preferences/theme";
 import { applyThemeMode, subscribeToSystemTheme } from "@/lib/preferences/theme-utils";
 
 import { createPreferencesStore, type PreferencesState } from "./preferences-store";
@@ -35,6 +35,7 @@ function readDomState(): Partial<PreferencesState> {
     themeMode: themeModeAttr ?? resolvedMode,
     resolvedThemeMode: resolvedMode,
     themePreset: getSafeValue(root.getAttribute("data-theme-preset"), THEME_PRESET_VALUES),
+    hudEffects: getSafeValue(root.getAttribute("data-hud-effects"), HUD_EFFECTS_VALUES),
     font: getSafeValue(root.getAttribute("data-font"), FONT_VALUES),
     contentLayout: getSafeValue(root.getAttribute("data-content-layout"), CONTENT_LAYOUT_VALUES),
     navbarStyle: getSafeValue(root.getAttribute("data-navbar-style"), NAVBAR_STYLE_VALUES),
@@ -47,6 +48,7 @@ export const PreferencesStoreProvider = ({
   children,
   themeMode,
   themePreset,
+  hudEffects,
   font,
   contentLayout,
   navbarStyle,
@@ -54,6 +56,7 @@ export const PreferencesStoreProvider = ({
   children: React.ReactNode;
   themeMode: PreferencesState["themeMode"];
   themePreset: PreferencesState["themePreset"];
+  hudEffects?: PreferencesState["hudEffects"];
   font: PreferencesState["font"];
   contentLayout: PreferencesState["contentLayout"];
   navbarStyle: PreferencesState["navbarStyle"];
@@ -62,6 +65,7 @@ export const PreferencesStoreProvider = ({
     createPreferencesStore({
       themeMode,
       themePreset,
+      hudEffects,
       font,
       contentLayout,
       navbarStyle,

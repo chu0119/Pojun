@@ -1,0 +1,1086 @@
+/*
+label: MeshAtlas
+value: meshatlas
+*/
+
+/* ==========================================================================
+   MeshAtlas Theme Preset — Monochrome Tactical HUD / CRT Terminal Brutalism
+   Light mode: High-contrast monochrome engineering blueprint HUD
+   Dark mode:  Signature OLED-black MeshAtlas tactical HUD (#050505)
+   ========================================================================== */
+
+:root[data-theme-preset="meshatlas"] {
+  --radius: 0px;
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+  --radius-2xl: 0px;
+  --radius-3xl: 0px;
+  --radius-4xl: 0px;
+
+  --background: #f6f6f5;
+  --foreground: #0a0a0a;
+  --card: #ffffff;
+  --card-foreground: #0a0a0a;
+  --popover: #ffffff;
+  --popover-foreground: #0a0a0a;
+  --primary: #0a0a0a;
+  --primary-foreground: #ffffff;
+  --secondary: #ededeb;
+  --secondary-foreground: #262626;
+  --muted: #efefe9;
+  --muted-foreground: #5c5c5c;
+  --accent: rgba(10, 10, 10, 0.06);
+  --accent-foreground: #0a0a0a;
+  --destructive: #d93832;
+  --border: #d4d4d0;
+  --input: #b0b0aa;
+  --ring: #0a0a0a;
+
+  --chart-1: #0a0a0a;
+  --chart-2: #525252;
+  --chart-3: #8c8c8c;
+  --chart-4: #c77d0a;
+  --chart-5: #d93832;
+
+  --sidebar: #f0f0ee;
+  --sidebar-foreground: #0a0a0a;
+  --sidebar-primary: #0a0a0a;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: rgba(10, 10, 10, 0.065);
+  --sidebar-accent-foreground: #0a0a0a;
+  --sidebar-border: #d4d4d0;
+  --sidebar-ring: #0a0a0a;
+
+  /* MeshAtlas semantic & atmosphere tokens (Light engineering blueprint) */
+  --ma-mono:
+    var(--font-geist-mono), "JetBrains Mono", "SF Mono", ui-monospace, Menlo,
+    Consolas, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", monospace;
+  --ma-bg: #f6f6f5;
+  --ma-panel: #ffffff;
+  --ma-panel-2: #f0f0ee;
+  --ma-overlay: #ffffff;
+  --ma-drawer: #f8f8f7;
+  --ma-line: #d4d4d0;
+  --ma-line-2: #a8a8a2;
+  --ma-fg: #0a0a0a;
+  --ma-fg-2: #3f3f3c;
+  --ma-fg-3: #6e6e68;
+  --ma-fg-4: #a3a39c;
+  --ma-hi: #000000;
+  --ma-warn: #c77d0a;
+  --ma-warn-fg: #945800;
+  --ma-bad: #d93832;
+  --ma-bad-fg: #b91c1c;
+  --ma-corner: #737370;
+  --ma-grid: rgba(10, 10, 10, 0.045);
+  --ma-scanline: rgba(10, 10, 10, 0.015);
+  --ma-panel-grad: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.9),
+    rgba(246, 246, 245, 0.35)
+  );
+  --ma-hover: rgba(10, 10, 10, 0.04);
+  --ma-active: rgba(10, 10, 10, 0.07);
+  --ma-active-tab: rgba(10, 10, 10, 0.075);
+  --ma-user-bubble: #efefe9;
+  --ma-cta-bg: #141414;
+  --ma-cta-bg-hover: #262626;
+  --ma-cta-border: #0a0a0a;
+  --ma-cta-fg: #ffffff;
+  --ma-http-post: #0369a1;
+  --ma-http-post-bg: rgba(3, 105, 161, 0.08);
+  --ma-http-post-border: rgba(3, 105, 161, 0.38);
+  --ma-glow-ok: 0 0 5px rgba(10, 10, 10, 0.25);
+  --ma-glow-warn: 0 0 6px rgba(199, 125, 10, 0.45);
+  --ma-glow-bad: 0 0 6px rgba(217, 56, 50, 0.45);
+  --ma-seg-empty: #e2e2dc;
+  --ma-scroll-thumb: #c8c8c2;
+  --ma-scroll-thumb-hover: #9e9e98;
+
+  --shadow-2xs: none;
+  --shadow-xs: none;
+  --shadow-sm: none;
+  --shadow: none;
+  --shadow-md: 0 12px 32px rgba(0, 0, 0, 0.12);
+  --shadow-lg: 0 18px 48px rgba(0, 0, 0, 0.16);
+  --shadow-xl: 0 24px 64px rgba(0, 0, 0, 0.2);
+  --shadow-2xl: 0 24px 64px rgba(0, 0, 0, 0.24);
+}
+
+.dark:root[data-theme-preset="meshatlas"] {
+  --radius: 0px;
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+  --radius-2xl: 0px;
+  --radius-3xl: 0px;
+  --radius-4xl: 0px;
+
+  --background: #050505;
+  --foreground: #f0f0f0;
+  --card: #0a0a0a;
+  --card-foreground: #f0f0f0;
+  --popover: #080808;
+  --popover-foreground: #f0f0f0;
+  --primary: #f0f0f0;
+  --primary-foreground: #050505;
+  --secondary: #0f0f0f;
+  --secondary-foreground: #b4b4b4;
+  --muted: #0f0f0f;
+  --muted-foreground: #7a7a7a;
+  --accent: rgba(255, 255, 255, 0.06);
+  --accent-foreground: #ffffff;
+  --destructive: #ff5a52;
+  --border: #1f1f1f;
+  --input: #2e2e2e;
+  --ring: #7a7a7a;
+
+  --chart-1: #ffffff;
+  --chart-2: #b4b4b4;
+  --chart-3: #7a7a7a;
+  --chart-4: #f2a93b;
+  --chart-5: #ff5a52;
+
+  --sidebar: #070707;
+  --sidebar-foreground: #f0f0f0;
+  --sidebar-primary: #f0f0f0;
+  --sidebar-primary-foreground: #050505;
+  --sidebar-accent: rgba(255, 255, 255, 0.06);
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: #1f1f1f;
+  --sidebar-ring: #7a7a7a;
+
+  /* Exact MeshAtlas dark tokens */
+  --ma-bg: #050505;
+  --ma-panel: #0a0a0a;
+  --ma-panel-2: #0f0f0f;
+  --ma-overlay: #080808;
+  --ma-drawer: #070707;
+  --ma-line: #1f1f1f;
+  --ma-line-2: #2e2e2e;
+  --ma-fg: #f0f0f0;
+  --ma-fg-2: #b4b4b4;
+  --ma-fg-3: #7a7a7a;
+  --ma-fg-4: #4d4d4d;
+  --ma-hi: #ffffff;
+  --ma-warn: #f2a93b;
+  --ma-warn-fg: #f6c987;
+  --ma-bad: #ff5a52;
+  --ma-bad-fg: #ffb3ae;
+  --ma-corner: #7a7a7a;
+  --ma-grid: rgba(255, 255, 255, 0.018);
+  --ma-scanline: rgba(255, 255, 255, 0.012);
+  --ma-panel-grad: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.022),
+    rgba(255, 255, 255, 0.008)
+  );
+  --ma-hover: rgba(255, 255, 255, 0.035);
+  --ma-active: rgba(255, 255, 255, 0.06);
+  --ma-active-tab: rgba(255, 255, 255, 0.085);
+  --ma-user-bubble: #131313;
+  --ma-cta-bg: #1b1b1b;
+  --ma-cta-bg-hover: #262626;
+  --ma-cta-border: #c8c8c8;
+  --ma-cta-fg: #ffffff;
+  --ma-http-post: #7dd3fc;
+  --ma-http-post-bg: rgba(125, 211, 252, 0.07);
+  --ma-http-post-border: rgba(125, 211, 252, 0.36);
+  --ma-glow-ok: 0 0 6px rgba(255, 255, 255, 0.55);
+  --ma-glow-warn: 0 0 6px rgba(242, 169, 59, 0.65);
+  --ma-glow-bad: 0 0 6px rgba(255, 90, 82, 0.65);
+  --ma-seg-empty: #1c1c1c;
+  --ma-scroll-thumb: #222222;
+  --ma-scroll-thumb-hover: #333333;
+
+  --shadow-2xs: none;
+  --shadow-xs: none;
+  --shadow-sm: none;
+  --shadow: none;
+  --shadow-md: 0 12px 40px rgba(0, 0, 0, 0.6);
+  --shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.65);
+  --shadow-xl: 0 24px 80px rgba(0, 0, 0, 0.72);
+  --shadow-2xl: 0 24px 80px rgba(0, 0, 0, 0.78);
+}
+
+/* ==========================================================================
+   Keyframes (MeshAtlas Terminal & Telemetry Micro-animations)
+   ========================================================================== */
+
+@keyframes ma-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes ma-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@keyframes ma-flash {
+  0% {
+    background-color: rgba(255, 255, 255, 0.18);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+/* ==========================================================================
+   Global Typography, Atmosphere Grid/Scanlines & Scrollbars
+   ========================================================================== */
+
+:root[data-theme-preset="meshatlas"]:is(
+    [data-font="geist"],
+    [data-font="geistMono"],
+    [data-font="jetBrainsMono"]
+  )
+  body {
+  font-family: var(--ma-mono);
+}
+
+:root[data-theme-preset="meshatlas"] body {
+  background-color: var(--ma-bg);
+  color: var(--ma-fg);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 40px tactical coordinate grid overlay */
+:root[data-theme-preset="meshatlas"]:not([data-hud-effects="off"]) body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, var(--ma-grid) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--ma-grid) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* Subtle CRT scanline texture */
+:root[data-theme-preset="meshatlas"]:not([data-hud-effects="off"]) body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0 2px,
+    var(--ma-scanline) 2px 3px
+  );
+}
+
+:root[data-theme-preset="meshatlas"] ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+:root[data-theme-preset="meshatlas"] ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+:root[data-theme-preset="meshatlas"] ::-webkit-scrollbar-thumb {
+  background: var(--ma-scroll-thumb);
+  border-radius: 0;
+}
+
+:root[data-theme-preset="meshatlas"] ::-webkit-scrollbar-thumb:hover {
+  background: var(--ma-scroll-thumb-hover);
+}
+
+:root[data-theme-preset="meshatlas"] kbd {
+  border-radius: 0;
+  border-color: var(--ma-line-2);
+  background-color: var(--ma-panel);
+  color: var(--ma-fg-2);
+  font-family: var(--ma-mono);
+}
+
+/* ==========================================================================
+   Strict 0px Brutalist Corner Geometry across UI Primitives
+   Placed in @layer base with !important so CSS Cascade Layer inversion beats
+   Tailwind v4 @layer utilities `!` overrides (e.g. CommandDialog's `rounded-xl!`).
+   ========================================================================== */
+
+@layer base {
+  :root[data-theme-preset="meshatlas"] :is(
+      [data-slot="card"],
+      [data-slot="card-header"],
+      [data-slot="card-footer"],
+      [data-slot="hud-panel"],
+      [data-slot="hud-filter-bar"],
+      [data-slot="hud-count-badge"],
+      [data-slot="http-method-badge"],
+      [data-slot="button"],
+      [data-slot="popover-trigger"],
+      [data-slot="tooltip-trigger"],
+      [data-slot="dialog-trigger"],
+      [data-slot="alert-dialog-trigger"],
+      [data-slot="dropdown-menu-trigger"],
+      [data-slot="dropdown-menu-sub-trigger"],
+      [data-slot="sheet-trigger"],
+      [data-slot="drawer-trigger"],
+      [data-slot="hover-card-trigger"],
+      [data-slot="combobox-trigger"],
+      [data-slot="collapsible-trigger"],
+      [data-slot="sidebar-trigger"],
+      [data-slot="badge"],
+      [data-slot="status-badge"],
+      [data-slot="input"],
+      [data-slot="input-group"],
+      [data-slot="textarea"],
+      [data-slot="select-trigger"],
+      [data-slot="select-content"],
+      [data-slot="select-item"],
+      [data-slot="native-select"],
+      [data-slot="tabs-list"],
+      [data-slot="tabs-trigger"],
+      [data-slot="toggle"],
+      [data-slot="toggle-group"],
+      [data-slot="toggle-group-item"],
+      [data-slot="switch"],
+      [data-slot="switch-thumb"],
+      [data-slot="progress"],
+      [data-slot="progress-indicator"],
+      [data-slot="checkbox"],
+      [data-slot="alert"],
+      [data-slot="dialog-content"],
+      [data-slot="alert-dialog-content"],
+      [data-slot="sheet-content"],
+      [data-slot="drawer-content"],
+      [data-slot="popover-content"],
+      [data-slot="dropdown-menu-content"],
+      [data-slot="dropdown-menu-item"],
+      [data-slot="dropdown-menu-sub-content"],
+      [data-slot="hover-card-content"],
+      [data-slot="tooltip-content"],
+      [data-slot="command"],
+      [data-slot="command-item"],
+      [data-slot="sidebar-inner"],
+      [data-slot="sidebar-menu-button"],
+      [data-slot="sidebar-menu-sub-button"],
+      [data-slot="sidebar-menu-badge"],
+      [data-slot="session-item"],
+      [data-slot="chat-user-bubble"],
+      [data-slot="chat-user-avatar"],
+      [data-slot="chat-answer-bubble"],
+      [data-slot="chat-attachment"],
+      [data-slot="chat-code-detail"],
+      [data-slot="worker-chip"],
+      [data-slot="skeleton"]
+    ) {
+    border-radius: 0 !important;
+  }
+}
+
+/* ==========================================================================
+   Card / HUD Panel Chrome + Pixel-Aligned 12px Corner Brackets
+   ========================================================================== */
+
+:root[data-theme-preset="meshatlas"] [data-slot="card"] {
+  position: relative;
+  background-color: var(--ma-panel);
+  background-image: var(--ma-panel-grad);
+  border: 0;
+  box-shadow: none;
+  --tw-ring-shadow: 0 0 #0000;
+}
+
+/* Single overlay at inset: 0 draws the 12px HUD corner brackets directly ON TOP
+   of the 1px hairline border (exact pixel overlap, immune to overflow-hidden). */
+:root[data-theme-preset="meshatlas"] [data-slot="card"]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+  background:
+    /* Top layer: 4 corner L-brackets */
+    linear-gradient(var(--ma-corner), var(--ma-corner)) top left / 12px 1px no-repeat,
+    linear-gradient(var(--ma-corner), var(--ma-corner)) top left / 1px 12px no-repeat,
+    linear-gradient(var(--ma-corner), var(--ma-corner)) top right / 12px 1px no-repeat,
+    linear-gradient(var(--ma-corner), var(--ma-corner)) top right / 1px 12px no-repeat,
+    linear-gradient(var(--ma-corner), var(--ma-corner)) bottom left / 12px 1px no-repeat,
+    linear-gradient(var(--ma-corner), var(--ma-corner)) bottom left / 1px 12px no-repeat,
+    linear-gradient(var(--ma-corner), var(--ma-corner)) bottom right / 12px 1px no-repeat,
+    linear-gradient(var(--ma-corner), var(--ma-corner)) bottom right / 1px 12px no-repeat,
+    /* Base layer: 1px perimeter border on the exact same outer pixels */
+    linear-gradient(var(--ma-line), var(--ma-line)) top left / 100% 1px no-repeat,
+    linear-gradient(var(--ma-line), var(--ma-line)) bottom left / 100% 1px no-repeat,
+    linear-gradient(var(--ma-line), var(--ma-line)) top left / 1px 100% no-repeat,
+    linear-gradient(var(--ma-line), var(--ma-line)) top right / 1px 100% no-repeat;
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="card-title"]:not([class*="text-xl"]):not([class*="text-2xl"]):not([class*="text-3xl"]),
+:root[data-theme-preset="meshatlas"] [data-slot="section-title"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ma-fg-2);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="card-title"]:not([class*="text-xl"]):not([class*="text-2xl"]):not([class*="text-3xl"]):not([class*="justify-between"])::before,
+:root[data-theme-preset="meshatlas"] [data-slot="section-title"]::before {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  flex-shrink: 0;
+  background-color: var(--ma-fg);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="card-footer"] {
+  background-color: transparent;
+  border-top: 1px solid var(--ma-line);
+}
+
+/* ==========================================================================
+   Shell: Sidebar (NODE INDEX aesthetic) & Main Topbar
+   ========================================================================== */
+
+:root[data-theme-preset="meshatlas"] [data-slot="sidebar-inner"] {
+  background-color: var(--sidebar);
+  background-image: var(--ma-panel-grad);
+  border: 1px solid var(--ma-line);
+  box-shadow: none;
+  --tw-ring-shadow: 0 0 #0000;
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="sidebar-group-label"] {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ma-fg-3);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="sidebar-menu-button"],
+:root[data-theme-preset="meshatlas"] [data-slot="sidebar-menu-sub-button"] {
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="sidebar-menu-button"]:hover,
+:root[data-theme-preset="meshatlas"] [data-slot="sidebar-menu-sub-button"]:hover {
+  background-color: var(--ma-hover);
+  color: var(--ma-hi);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="sidebar-menu-button"][data-active="true"],
+:root[data-theme-preset="meshatlas"] [data-slot="sidebar-menu-sub-button"][data-active="true"] {
+  background-color: var(--ma-active);
+  color: var(--ma-hi);
+  font-weight: 600;
+  box-shadow: inset 2px 0 0 0 var(--ma-fg);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="main-header"] {
+  background-color: color-mix(in srgb, var(--ma-bg) 94%, transparent);
+  border-bottom: 1px solid var(--ma-line);
+  backdrop-filter: none;
+}
+
+/* MeshAtlas understated 32px toolbar square icon buttons in topbar
+   (includes Radix PopoverTrigger asChild which sets data-slot="popover-trigger") */
+:root[data-theme-preset="meshatlas"] [data-slot="main-header"] :is([data-slot="button"], [data-slot="popover-trigger"])[data-size="icon"] {
+  background-color: var(--ma-overlay);
+  border: 1px solid var(--ma-line-2);
+  color: var(--ma-fg);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="main-header"] :is([data-slot="button"], [data-slot="popover-trigger"])[data-size="icon"]:hover {
+  background-color: var(--ma-hover);
+  border-color: var(--ma-fg-3);
+  color: var(--ma-hi);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="sidebar-menu-badge"] {
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* ==========================================================================
+   Uniform 32px (2rem) Control Height & Restraint-First Button/Input Chrome
+   Ensures Input, Select, Button, Tabs, and ToggleGroup align identically in toolbars.
+   ========================================================================== */
+
+:root[data-theme-preset="meshatlas"] [data-slot="input"]:not([class*="h-6"]):not([class*="h-9"]):not([class*="h-10"]),
+:root[data-theme-preset="meshatlas"] [data-slot="input-group"]:not([class*="min-h-"]):not([class*="h-auto"]),
+:root[data-theme-preset="meshatlas"] [data-slot="native-select"]:not([class*="h-6"]),
+:root[data-theme-preset="meshatlas"] [data-slot="select-trigger"]:not([class*="border-none"]):not([class*="h-6"]) {
+  height: 2rem;
+}
+
+:root[data-theme-preset="meshatlas"] :is(
+    [data-slot="button"],
+    [data-slot="popover-trigger"],
+    [data-slot="dialog-trigger"],
+    [data-slot="alert-dialog-trigger"],
+    [data-slot="dropdown-menu-trigger"],
+    [data-slot="tooltip-trigger"]
+  ):is([data-size="default"], [data-size="sm"]):not([class*="h-6"]):not([class*="h-9"]):not([class*="h-10"]):not([class*="size-6"]):not([class*="size-7"]) {
+  height: 2rem;
+}
+
+/* Keep compact inline table-cell & pagination-bar controls aligned at 28px */
+:root[data-theme-preset="meshatlas"] [data-slot="table-cell"] [data-slot="select-trigger"],
+:root[data-theme-preset="meshatlas"] [data-slot="table-cell"] [data-slot="button"][data-size="sm"],
+:root[data-theme-preset="meshatlas"] [data-slot="table-pagination"] [data-slot="select-trigger"] {
+  height: 1.75rem;
+}
+
+:root[data-theme-preset="meshatlas"] :is([data-slot="button"], [data-slot="popover-trigger"], [data-slot="dialog-trigger"], [data-slot="alert-dialog-trigger"], [data-slot="tooltip-trigger"])[data-variant="default"] {
+  background-color: var(--ma-cta-bg);
+  color: var(--ma-cta-fg);
+  border: 1px solid var(--ma-cta-border);
+  font-weight: 600;
+}
+
+:root[data-theme-preset="meshatlas"] :is([data-slot="button"], [data-slot="popover-trigger"], [data-slot="dialog-trigger"], [data-slot="alert-dialog-trigger"], [data-slot="tooltip-trigger"])[data-variant="default"]:hover {
+  background-color: var(--ma-cta-bg-hover);
+  border-color: var(--ma-hi);
+}
+
+:root[data-theme-preset="meshatlas"] :is([data-slot="button"], [data-slot="popover-trigger"], [data-slot="dialog-trigger"], [data-slot="tooltip-trigger"])[data-variant="outline"] {
+  background-color: transparent;
+  border-color: var(--ma-line-2);
+  color: var(--ma-fg);
+}
+
+:root[data-theme-preset="meshatlas"] :is([data-slot="button"], [data-slot="popover-trigger"], [data-slot="dialog-trigger"], [data-slot="tooltip-trigger"])[data-variant="outline"]:hover {
+  background-color: var(--ma-hover);
+  border-color: var(--ma-fg-3);
+  color: var(--ma-hi);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="button"][data-variant="secondary"] {
+  background-color: var(--ma-panel-2);
+  border: 1px solid var(--ma-line-2);
+  color: var(--ma-fg);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="button"][data-variant="secondary"]:hover {
+  background-color: var(--ma-active);
+  border-color: var(--ma-fg-3);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="button"][data-variant="ghost"]:hover {
+  background-color: var(--ma-hover);
+  color: var(--ma-hi);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="button"][data-variant="destructive"] {
+  background-color: color-mix(in srgb, var(--ma-bad) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ma-bad) 55%, transparent);
+  color: var(--ma-bad-fg);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="button"][data-variant="destructive"]:hover {
+  background-color: color-mix(in srgb, var(--ma-bad) 22%, transparent);
+  border-color: var(--ma-bad);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="input"],
+:root[data-theme-preset="meshatlas"] [data-slot="textarea"],
+:root[data-theme-preset="meshatlas"] [data-slot="select-trigger"],
+:root[data-theme-preset="meshatlas"] [data-slot="native-select"],
+:root[data-theme-preset="meshatlas"] [data-slot="input-group"] {
+  background-color: var(--ma-overlay);
+  border-color: var(--ma-line-2);
+  color: var(--ma-fg);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="input"]:focus-visible,
+:root[data-theme-preset="meshatlas"] [data-slot="textarea"]:focus-visible,
+:root[data-theme-preset="meshatlas"] [data-slot="select-trigger"]:focus-visible,
+:root[data-theme-preset="meshatlas"] [data-slot="native-select"]:focus-visible {
+  border-color: var(--ma-fg);
+  box-shadow: none;
+  --tw-ring-shadow: 0 0 #0000;
+}
+
+/* ==========================================================================
+   Tabs & ToggleGroup (Restrained Dark Tactical Active Underline — No White Glare)
+   ========================================================================== */
+
+:root[data-theme-preset="meshatlas"] [data-slot="tabs-list"][data-variant="default"] {
+  height: 2rem;
+  background-color: var(--ma-panel);
+  border: 1px solid var(--ma-line);
+  padding: 0;
+  gap: 0;
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="tabs-list"][data-variant="default"] [data-slot="tabs-trigger"] {
+  height: 100%;
+  border: 0;
+  border-right: 1px solid var(--ma-line);
+  padding-inline: 0.75rem;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--ma-fg-3);
+  background-color: transparent;
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="tabs-list"][data-variant="default"] [data-slot="tabs-trigger"]:last-child {
+  border-right: 0;
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="tabs-list"][data-variant="default"] [data-slot="tabs-trigger"]:hover {
+  background-color: var(--ma-hover);
+  color: var(--ma-fg);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="tabs-list"][data-variant="default"] [data-slot="tabs-trigger"]:is([data-state="active"], [data-active]) {
+  background-color: var(--ma-active-tab);
+  color: var(--ma-hi);
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 0 var(--ma-fg);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="toggle-group-item"] {
+  border-color: var(--ma-line-2);
+  background-color: var(--ma-panel);
+  color: var(--ma-fg-3);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="toggle-group-item"]:is([data-size="default"], [data-size="sm"]) {
+  height: 2rem;
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="toggle-group-item"]:hover {
+  background-color: var(--ma-hover);
+  color: var(--ma-fg);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="toggle-group-item"]:is([data-state="on"], [aria-pressed="true"]) {
+  background-color: var(--ma-active-tab);
+  color: var(--ma-hi);
+  border-color: var(--ma-fg-3);
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 0 var(--ma-fg);
+}
+
+/* ==========================================================================
+   Switch (Square Terminal Rocker) & Progress (Segmented HUD Meter)
+   ========================================================================== */
+
+:root[data-theme-preset="meshatlas"] [data-slot="switch"] {
+  border: 1px solid var(--ma-line-2);
+  background-color: var(--ma-overlay);
+  padding: 0;
+  overflow: hidden;
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="switch"]:is([data-state="checked"], [data-checked]) {
+  border-color: var(--ma-fg);
+  background-color: var(--ma-panel-2);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="switch-thumb"] {
+  width: 12px;
+  height: 12px;
+  translate: none !important;
+  background-color: var(--ma-fg-3);
+  transform: translateX(2px);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="switch"]:is([data-state="checked"], [data-checked]) [data-slot="switch-thumb"] {
+  background-color: var(--ma-fg);
+  transform: translateX(16px);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="switch"][data-size="sm"] [data-slot="switch-thumb"] {
+  width: 9px;
+  height: 9px;
+  transform: translateX(1px);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="switch"][data-size="sm"]:is([data-state="checked"], [data-checked]) [data-slot="switch-thumb"] {
+  transform: translateX(12px);
+}
+
+/* Segmented tick mask over Progress bar */
+:root[data-theme-preset="meshatlas"] [data-slot="progress"] {
+  position: relative;
+  height: 9px;
+  background-color: var(--ma-seg-empty);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="progress"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    to right,
+    transparent 0 4px,
+    var(--ma-panel) 4px 6px
+  );
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="progress-indicator"] {
+  background-color: var(--ma-fg);
+}
+
+/* ==========================================================================
+   Badges, StatusBadge & Glowing Square Indicators
+   ========================================================================== */
+
+:root[data-theme-preset="meshatlas"] [data-slot="badge"] {
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding-inline: 0.45rem;
+}
+
+/* Restraint-first default & secondary badges (eliminates glaring white blocks in tables) */
+:root[data-theme-preset="meshatlas"] [data-slot="badge"][data-variant="default"]:not([class*="bg-emerald"]):not([class*="bg-amber"]):not([class*="bg-orange"]):not([class*="bg-red"]) {
+  background-color: var(--ma-active);
+  border: 1px solid var(--ma-line-2);
+  color: var(--ma-fg);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="badge"][data-variant="secondary"] {
+  background-color: var(--ma-panel-2);
+  border: 1px solid var(--ma-line);
+  color: var(--ma-fg-2);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="badge"][data-variant="outline"],
+:root[data-theme-preset="meshatlas"] [data-slot="tooltip-trigger"][data-variant="outline"] {
+  border-color: var(--ma-line-2);
+  color: var(--ma-fg-2);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="badge"][data-variant="destructive"] {
+  background-color: color-mix(in srgb, var(--ma-bad) 12%, transparent);
+  border-color: color-mix(in srgb, var(--ma-bad) 55%, transparent);
+  color: var(--ma-bad-fg);
+}
+
+/* Tactical HTTP method chips (/function/traffic) */
+:root[data-theme-preset="meshatlas"] [data-slot="http-method-badge"] {
+  background-color: var(--ma-hover);
+  border: 1px solid var(--ma-line-2);
+  color: var(--ma-fg-2);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="http-method-badge"][data-method="POST"] {
+  background-color: var(--ma-http-post-bg);
+  border-color: var(--ma-http-post-border);
+  color: var(--ma-http-post);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="http-method-badge"]:is([data-method="PUT"], [data-method="PATCH"]) {
+  background-color: color-mix(in srgb, var(--ma-warn) 9%, transparent);
+  border-color: color-mix(in srgb, var(--ma-warn) 48%, transparent);
+  color: var(--ma-warn-fg);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="http-method-badge"][data-method="DELETE"] {
+  background-color: color-mix(in srgb, var(--ma-bad) 10%, transparent);
+  border-color: color-mix(in srgb, var(--ma-bad) 52%, transparent);
+  color: var(--ma-bad-fg);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="http-method-badge"]:is([data-method="HEAD"], [data-method="OPTIONS"]) {
+  background-color: transparent;
+  border-color: var(--ma-line);
+  color: var(--ma-fg-3);
+}
+
+/* Pending / counter badges inside tabs & headers */
+:root[data-theme-preset="meshatlas"] [data-slot="hud-count-badge"] {
+  background-color: color-mix(in srgb, var(--ma-warn) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ma-warn) 58%, transparent);
+  color: var(--ma-warn-fg);
+  font-weight: 600;
+}
+
+/* ==========================================================================
+   Chat / Transcript / Session Panels (Eliminates White/Grey Bubble Glare)
+   ========================================================================== */
+
+:root[data-theme-preset="meshatlas"] [data-slot="hud-panel"] {
+  background-color: var(--ma-panel);
+  background-image: var(--ma-panel-grad);
+  border-color: var(--ma-line);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="hud-filter-bar"] {
+  background-color: var(--ma-panel);
+  border-color: var(--ma-line);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="session-item"]:hover {
+  background-color: var(--ma-hover);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="session-item"][data-active="true"] {
+  background-color: var(--ma-active);
+  color: var(--ma-hi);
+  box-shadow: inset 2px 0 0 0 var(--ma-fg);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="chat-user-bubble"] {
+  background-color: var(--ma-user-bubble);
+  background-image: var(--ma-panel-grad);
+  color: var(--ma-hi);
+  border: 1px solid var(--ma-line-2);
+  border-right: 2px solid var(--ma-fg);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="chat-user-avatar"] {
+  background-color: var(--ma-panel-2);
+  border: 1px solid var(--ma-line-2);
+  color: var(--ma-fg);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="chat-answer-bubble"] {
+  background-color: var(--ma-panel);
+  border: 1px solid var(--ma-line);
+  border-left: 2px solid var(--ma-fg-3);
+  color: var(--ma-fg);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="chat-attachment"],
+:root[data-theme-preset="meshatlas"] [data-slot="chat-code-detail"] {
+  background-color: var(--ma-overlay);
+  border: 1px solid var(--ma-line);
+  box-shadow: none;
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="worker-chip"] {
+  background-color: var(--ma-panel-2);
+  border: 1px solid var(--ma-line-2);
+  color: var(--ma-fg);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="worker-chip"][data-worker="planner"] {
+  background-color: color-mix(in srgb, var(--ma-warn) 12%, transparent);
+  border-color: color-mix(in srgb, var(--ma-warn) 50%, transparent);
+  color: var(--ma-warn-fg);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="status-badge"] {
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding-inline: 0.45rem;
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="status-badge"][data-tone="neutral"],
+:root[data-theme-preset="meshatlas"] [data-slot="status-badge"][data-tone="slate"],
+:root[data-theme-preset="meshatlas"] [data-slot="status-badge"][data-tone="violet"] {
+  background-color: transparent;
+  border-color: var(--ma-line-2);
+  color: var(--ma-fg-2);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="status-badge"][data-tone="green"],
+:root[data-theme-preset="meshatlas"] [data-slot="status-badge"][data-tone="blue"] {
+  background-color: var(--ma-hover);
+  border-color: var(--ma-fg-3);
+  color: var(--ma-fg);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="status-badge"][data-tone="amber"] {
+  background-color: color-mix(in srgb, var(--ma-warn) 10%, transparent);
+  border-color: color-mix(in srgb, var(--ma-warn) 55%, transparent);
+  color: var(--ma-warn-fg);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="status-badge"][data-tone="red"] {
+  background-color: color-mix(in srgb, var(--ma-bad) 11%, transparent);
+  border-color: color-mix(in srgb, var(--ma-bad) 58%, transparent);
+  color: var(--ma-bad-fg);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="status-badge"][data-tone="rose"] {
+  background-color: var(--ma-bad);
+  border-color: var(--ma-bad);
+  color: #050505;
+  font-weight: 700;
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="tone-dot"],
+:root[data-theme-preset="meshatlas"] [data-slot="status-badge-dot"] {
+  border-radius: 0;
+  width: 6px;
+  height: 6px;
+}
+
+:root[data-theme-preset="meshatlas"] :is([data-slot="tone-dot"], [data-slot="status-badge-dot"]):is([data-tone="green"], [data-tone="blue"]) {
+  background-color: var(--ma-fg);
+  box-shadow: var(--ma-glow-ok);
+}
+
+:root[data-theme-preset="meshatlas"] :is([data-slot="tone-dot"], [data-slot="status-badge-dot"])[data-tone="amber"] {
+  background-color: var(--ma-warn);
+  box-shadow: var(--ma-glow-warn);
+}
+
+:root[data-theme-preset="meshatlas"] :is([data-slot="tone-dot"], [data-slot="status-badge-dot"])[data-tone="red"] {
+  background-color: var(--ma-bad);
+  box-shadow: var(--ma-glow-bad);
+}
+
+:root[data-theme-preset="meshatlas"] :is([data-slot="tone-dot"], [data-slot="status-badge-dot"])[data-tone="rose"] {
+  background-color: #050505;
+}
+
+:root[data-theme-preset="meshatlas"] :is([data-slot="tone-dot"], [data-slot="status-badge-dot"]):is([data-tone="neutral"], [data-tone="slate"], [data-tone="violet"]) {
+  background-color: transparent;
+  border: 1px solid var(--ma-fg-3);
+}
+
+/* ==========================================================================
+   Tables (Dense Monochrome Matrix Chrome)
+   ========================================================================== */
+
+:root[data-theme-preset="meshatlas"] [data-slot="table-head"] {
+  height: 2.1rem;
+  background-color: var(--ma-panel);
+  color: var(--ma-fg-2);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--ma-line-2);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="table-row"] {
+  border-color: var(--ma-line);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="table-row"]:hover {
+  background-color: var(--ma-hover);
+}
+
+/* ==========================================================================
+   Overlays: Dialog, Sheet/Drawer, Popover, Dropdown, Command Palette
+   ========================================================================== */
+
+:root[data-theme-preset="meshatlas"] [data-slot="dialog-overlay"],
+:root[data-theme-preset="meshatlas"] [data-slot="alert-dialog-overlay"],
+:root[data-theme-preset="meshatlas"] [data-slot="sheet-overlay"],
+:root[data-theme-preset="meshatlas"] [data-slot="drawer-overlay"] {
+  background-color: rgba(0, 0, 0, 0.58);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="dialog-content"],
+:root[data-theme-preset="meshatlas"] [data-slot="alert-dialog-content"],
+:root[data-theme-preset="meshatlas"] [data-slot="popover-content"],
+:root[data-theme-preset="meshatlas"] [data-slot="dropdown-menu-content"],
+:root[data-theme-preset="meshatlas"] [data-slot="dropdown-menu-sub-content"],
+:root[data-theme-preset="meshatlas"] [data-slot="select-content"],
+:root[data-theme-preset="meshatlas"] [data-slot="hover-card-content"] {
+  background-color: var(--ma-overlay);
+  border: 1px solid var(--ma-line-2);
+  box-shadow: var(--shadow-xl);
+  --tw-ring-shadow: 0 0 #0000;
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="sheet-content"],
+:root[data-theme-preset="meshatlas"] [data-slot="drawer-content"] {
+  background-color: var(--ma-drawer);
+  border-color: var(--ma-line-2);
+  box-shadow: var(--shadow-lg);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="command"] {
+  background-color: var(--ma-overlay);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="command-item"][data-selected="true"] {
+  background-color: var(--ma-active);
+  color: var(--ma-hi);
+  box-shadow: inset 2px 0 0 0 var(--ma-fg);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="tooltip-content"] {
+  background-color: var(--ma-panel);
+  color: var(--ma-fg);
+  border: 1px solid var(--ma-line-2);
+}
+
+/* ==========================================================================
+   Auth Login Page Adaptation (Keep anti-fingerprint intact, HUD framing)
+   ========================================================================== */
+
+:root[data-theme-preset="meshatlas"] [data-slot="auth-glow"] {
+  display: none;
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="auth-card"] {
+  position: relative;
+  border-radius: 0;
+  border: 0;
+  background-color: var(--ma-panel);
+  background-image: var(--ma-panel-grad);
+  backdrop-filter: none;
+  box-shadow: var(--shadow-xl);
+}
+
+:root[data-theme-preset="meshatlas"] [data-slot="auth-card"]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+  background:
+    linear-gradient(var(--ma-corner), var(--ma-corner)) top left / 14px 1px no-repeat,
+    linear-gradient(var(--ma-corner), var(--ma-corner)) top left / 1px 14px no-repeat,
+    linear-gradient(var(--ma-corner), var(--ma-corner)) top right / 14px 1px no-repeat,
+    linear-gradient(var(--ma-corner), var(--ma-corner)) top right / 1px 14px no-repeat,
+    linear-gradient(var(--ma-corner), var(--ma-corner)) bottom left / 14px 1px no-repeat,
+    linear-gradient(var(--ma-corner), var(--ma-corner)) bottom left / 1px 14px no-repeat,
+    linear-gradient(var(--ma-corner), var(--ma-corner)) bottom right / 14px 1px no-repeat,
+    linear-gradient(var(--ma-corner), var(--ma-corner)) bottom right / 1px 14px no-repeat,
+    linear-gradient(var(--ma-line-2), var(--ma-line-2)) top left / 100% 1px no-repeat,
+    linear-gradient(var(--ma-line-2), var(--ma-line-2)) bottom left / 100% 1px no-repeat,
+    linear-gradient(var(--ma-line-2), var(--ma-line-2)) top left / 1px 100% no-repeat,
+    linear-gradient(var(--ma-line-2), var(--ma-line-2)) top right / 1px 100% no-repeat;
+}
+
+/* ==========================================================================
+   Print Isolation & Reduced Motion Compliance
+   ========================================================================== */
+
+@media print {
+  :root[data-theme-preset="meshatlas"] body::before,
+  :root[data-theme-preset="meshatlas"] body::after,
+  :root[data-theme-preset="meshatlas"] [data-slot="card"]::before {
+    display: none !important;
+  }
+
+  :root[data-theme-preset="meshatlas"] [data-slot="card"] {
+    border: 1px solid var(--ma-line);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme-preset="meshatlas"] * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -385,7 +385,10 @@ function BroadcastRow({
                 <span className="rounded bg-muted px-1.5 py-0.5 text-muted-foreground text-xs">P{node.priority}</span>
               )}
               {fresh && (
-                <span className="rounded bg-primary px-1.5 py-0.5 font-semibold text-[10px] text-primary-foreground">
+                <span
+                  data-slot="hud-count-badge"
+                  className="rounded bg-primary px-1.5 py-0.5 font-semibold text-[10px] text-primary-foreground"
+                >
                   新
                 </span>
               )}

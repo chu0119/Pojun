@@ -425,6 +425,8 @@ function SessionItem({
     (s.status === "running" || s.status === "paused" || s.status === "pending");
   return (
     <div
+      data-slot="session-item"
+      data-active={active}
       className={cn(
         "group/session flex w-full items-center rounded-md transition-colors",
         active ? "bg-accent text-accent-foreground" : "hover:bg-accent/50",
@@ -1678,7 +1680,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
         )}
       >
         {/* Left: session list */}
-        <div className="flex min-h-0 flex-col overflow-hidden rounded-lg border bg-card">
+        <div data-slot="hud-panel" className="flex min-h-0 flex-col overflow-hidden rounded-lg border bg-card">
           <div className="border-b px-3 py-2">
             <div className="flex items-center justify-between gap-2">
               <button
@@ -1909,7 +1911,7 @@ export function SessionsTab({ taskId }: { taskId: string }) {
           side={side}
           label={active.role === "worker" ? `Worker #${active.intent_id} · ${activeDisplayTitle}` : activeDisplayTitle}
         >
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border bg-card">
+          <div data-slot="hud-panel" className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border bg-card">
             <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 border-b px-3 py-2 sm:px-4 sm:py-2.5">
               {(() => {
                 const isWorker = active.role === "worker";

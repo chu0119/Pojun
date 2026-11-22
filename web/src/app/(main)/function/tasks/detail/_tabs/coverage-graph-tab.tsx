@@ -27,6 +27,7 @@ import {
 import { api } from "@/lib/api";
 import type { CoverageAssetRef, CoverageAssetRefs, CoverageGraphEdge, CoverageGraphNode } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
 // 每个父节点下、同一类型的子节点默认展示的数量；超出折叠，"展示更多"每次再拉这么多。
 const FOLD_LIMIT = 20;
@@ -241,13 +242,35 @@ function toG6Nodes(renderNodes: RenderNode[]): G6NodeDatum[] {
 const nd = (d: unknown) => d as G6NodeDatum;
 
 // 已测=实色高亮；范围内未测=灰；范围外/折叠=更淡的灰 + 虚线描边。
-function nodeFill(d: G6NodeDatum): string {
+function nodeFill(d: G6NodeDatum, isMeshAtlas = false, isDark = false): string {
+  if (isMeshAtlas) {
+    if (isDark) {
+      if (d.fold) return "#111111";
+      if (!d.inScope) return "#0d0d0d";
+      if (d.tested) return d.kind === "endpoint" ? "#2a1212" : "#222222";
+      return "#141414";
+    }
+    if (d.fold) return "#8c8c86";
+    if (!d.inScope) return "#a8a8a2";
+    if (d.tested) return "#141414";
+    return "#5c5c58";
+  }
   if (d.fold) return "#f1f5f9";
   if (!d.inScope) return "#e2e8f0";
   if (d.tested) return kindMeta[d.kind].hex;
   return "#94a3b8";
 }
-function nodeStroke(d: G6NodeDatum): string {
+function nodeStroke(d: G6NodeDatum, isMeshAtlas = false, isDark = false): string {
+  if (isMeshAtlas) {
+    if (isDark) {
+      if (d.fold || !d.inScope) return "#383838";
+      if (d.tested) return d.kind === "endpoint" ? "#ff5a52" : "#f0f0f0";
+      return "#5a5a5a";
+    }
+    if (d.fold || !d.inScope) return "#9e9e98";
+    if (d.tested) return "#0a0a0a";
+    return "#40403c";
+  }
   if (d.fold || !d.inScope) return "#94a3b8";
   if (d.tested) return "#0f766e";
   return "#64748b";
@@ -457,6 +480,8 @@ function FoldSheet({
 
 // ---------------------------------------------------------------------------
 function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; coverageEnabled?: boolean }) {
+  const isMeshAtlas = usePreferencesStore((s) => s.themePreset === "meshatlas");
+  const isDark = usePreferencesStore((s) => s.resolvedThemeMode === "dark");
   const [data, setData] = React.useState<{
     nodes: CoverageGraphNode[];
     edges: CoverageGraphEdge[];
@@ -531,24 +556,33 @@ function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; covera
     });
   }, []);
 
-  // 建图（一次）。动态 import 避开 SSR/静态导出期的 window 依赖。
+  // 建图（随主题预设或明暗模式切换重建以同步画布配色）。动态 import 避开 SSR/静态导出期的 window 依赖。
   React.useEffect(() => {
     let destroyed = false;
     let graph: G6Graph | null = null;
     void (async () => {
       const { Graph } = await import("@antv/g6");
       if (destroyed || !containerRef.current) return;
+      const bgColor = isMeshAtlas ? (isDark ? "#050505" : "#f6f6f5") : "#f0f2f7";
+      const labelFill = isMeshAtlas ? (isDark ? "#b4b4b4" : "#171717") : "#475569";
+      const labelBg = isMeshAtlas
+        ? isDark
+          ? "rgba(5,5,5,0.92)"
+          : "rgba(255,255,255,0.9)"
+        : "rgba(255,255,255,0.75)";
+      const edgeStroke = isMeshAtlas ? (isDark ? "#2e2e2e" : "#c8c8c2") : "#cbd5e1";
+
       graph = new Graph({
         container: containerRef.current,
         autoResize: true,
         autoFit: "view",
-        background: "#f0f2f7",
+        background: bgColor,
         node: {
           style: {
             size: (d: unknown) => nd(d).size,
-            fill: (d: unknown) => nodeFill(nd(d)),
-            stroke: (d: unknown) => nodeStroke(nd(d)),
-            lineWidth: (d: unknown) => (nd(d).fold || !nd(d).inScope ? 1 : 1.5),
+            fill: (d: unknown) => nodeFill(nd(d), isMeshAtlas, isDark),
+            stroke: (d: unknown) => nodeStroke(nd(d), isMeshAtlas, isDark),
+            lineWidth: (d: unknown) => (nd(d).fold || !nd(d).inScope ? 1 : isMeshAtlas && nd(d).tested ? 2 : 1.5),
             lineDash: (d: unknown) => (nd(d).fold || !nd(d).inScope ? [3, 3] : [0]),
             iconSrc: (d: unknown) => (nd(d).fold ? FOLD_ICON : KIND_ICON[nd(d).kind]),
             iconWidth: (d: unknown) => Math.max(12, nd(d).size * 0.55),
@@ -556,15 +590,15 @@ function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; covera
             labelText: (d: unknown) => nd(d).lbl,
             labelFontSize: 10,
             labelPlacement: "bottom",
-            labelFill: "#475569",
+            labelFill,
             labelBackground: true,
-            labelBackgroundFill: "rgba(255,255,255,0.75)",
-            labelBackgroundRadius: 3,
+            labelBackgroundFill: labelBg,
+            labelBackgroundRadius: isMeshAtlas ? 0 : 3,
             labelPadding: [1, 3],
           },
         },
         edge: {
-          style: { stroke: "#cbd5e1", lineWidth: 1, endArrow: false },
+          style: { stroke: edgeStroke, lineWidth: 1, endArrow: false },
         },
         layout: {
           type: "d3-force",
@@ -607,7 +641,7 @@ function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; covera
       graph?.destroy();
       graphRef.current = null;
     };
-  }, [applyData]);
+  }, [applyData, isMeshAtlas, isDark]);
 
   // 可见集合变化 → 重新灌数据 + 布局。sig 只作为重排触发器（applyData 读 gDataRef）。
   // biome-ignore lint/correctness/useExhaustiveDependencies: sig 是刻意的重排触发依赖
@@ -640,7 +674,14 @@ function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; covera
       <div ref={containerRef} className="h-full w-full" />
 
       {/* 图例 + 统计 + 刷新（叠加层） */}
-      <div className="pointer-events-auto absolute top-3 left-3 flex max-w-[340px] flex-col gap-2.5 rounded-lg border bg-card/95 p-3 text-xs shadow-sm backdrop-blur">
+      <div
+        className={cn(
+          "pointer-events-auto absolute top-3 left-3 flex max-w-[340px] flex-col gap-2.5 border p-3 text-xs",
+          isMeshAtlas
+            ? "rounded-none border-[var(--ma-line-2)] bg-[var(--ma-overlay)]"
+            : "rounded-lg bg-card/95 shadow-sm backdrop-blur",
+        )}
+      >
         <div className="flex items-center justify-between gap-3">
           {total > 0 ? (
             <span className="text-muted-foreground">
@@ -649,7 +690,14 @@ function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; covera
                 <>
                   {" "}
                   · 已测{" "}
-                  <span className="font-semibold text-emerald-600 tabular-nums dark:text-emerald-400">{tested}</span>
+                  <span
+                    className={cn(
+                      "font-semibold tabular-nums",
+                      isMeshAtlas ? "text-foreground" : "text-emerald-600 dark:text-emerald-400",
+                    )}
+                  >
+                    {tested}
+                  </span>
                 </>
               )}
             </span>
@@ -666,8 +714,15 @@ function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; covera
             const Icon = m.icon;
             return (
               <span key={k} className="inline-flex items-center gap-1.5 text-foreground">
-                <span className={cn("flex size-4 items-center justify-center rounded", m.iconBg)}>
-                  <Icon className="size-2.5 text-white" />
+                <span
+                  className={cn(
+                    "flex size-4 items-center justify-center",
+                    isMeshAtlas
+                      ? "rounded-none border border-[var(--ma-line-2)] bg-[var(--ma-panel-2)] text-foreground"
+                      : cn("rounded", m.iconBg),
+                  )}
+                >
+                  <Icon className={cn("size-2.5", isMeshAtlas ? "text-current" : "text-white")} />
                 </span>
                 {m.label}
               </span>
@@ -678,15 +733,33 @@ function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; covera
           {coverageEnabled && (
             <>
               <span className="inline-flex items-center gap-1.5">
-                <span className="size-3 rounded-full bg-emerald-500" /> 已测（高亮）
+                <span
+                  className={cn(
+                    "size-3",
+                    isMeshAtlas ? "rounded-none border border-foreground bg-foreground" : "rounded-full bg-emerald-500",
+                  )}
+                />{" "}
+                已测（高亮）
               </span>
               <span className="inline-flex items-center gap-1.5">
-                <span className="size-3 rounded-full bg-neutral-400" /> 未测
+                <span
+                  className={cn(
+                    "size-3",
+                    isMeshAtlas ? "rounded-none border border-muted-foreground bg-muted" : "rounded-full bg-neutral-400",
+                  )}
+                />{" "}
+                未测
               </span>
             </>
           )}
           <span className="inline-flex items-center gap-1.5">
-            <span className="size-3 rounded-full border border-neutral-400 border-dashed bg-neutral-200" /> 范围外
+            <span
+              className={cn(
+                "size-3 border border-dashed",
+                isMeshAtlas ? "rounded-none border-muted-foreground bg-transparent" : "rounded-full border-neutral-400 bg-neutral-200",
+              )}
+            />{" "}
+            范围外
           </span>
         </div>
         <p className="border-border/60 border-t pt-2 text-muted-foreground/80 leading-relaxed">
@@ -709,10 +782,11 @@ function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; covera
 }
 
 export function CoverageGraphTab({ taskId, coverageEnabled = true }: { taskId: string; coverageEnabled?: boolean }) {
+  const isMeshAtlas = usePreferencesStore((s) => s.themePreset === "meshatlas");
   return (
     <Card>
       <CardContent className="p-0">
-        <div className="h-[72vh] w-full overflow-hidden rounded-xl">
+        <div className={cn("h-[72vh] w-full overflow-hidden", isMeshAtlas ? "rounded-none" : "rounded-xl")}>
           <GraphInner taskId={taskId} coverageEnabled={coverageEnabled} />
         </div>
       </CardContent>
