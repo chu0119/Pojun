@@ -69,8 +69,8 @@ export default function NotifyPage() {
       .notifyMeta()
       .then((m) => {
         setMeta(m);
-        setBaseURL(m.public_base_url);
-        setDigestMin(m.digest_interval_min);
+        setBaseURL(m.public_base_url ?? "");
+        setDigestMin(m.digest_interval_min ?? "");
       })
       .catch((e) => toast.error(`读取推送配置失败：${(e as Error).message}`));
     // 渠道列表加载失败要报出来：静默失败会显示成「一个渠道都没有」，
@@ -93,7 +93,7 @@ export default function NotifyPage() {
 
   function openAdd() {
     setEditing(null);
-    setForm(emptyForm(meta?.kinds[0]?.kind ?? "dingtalk"));
+    setForm(emptyForm(meta?.kinds?.[0]?.kind ?? "dingtalk"));
     setOpen(true);
   }
 
@@ -277,8 +277,9 @@ export default function NotifyPage() {
   }
 
   const fields = CHANNEL_FIELDS[form.kind] ?? [];
-  const secretKeys = new Set(meta?.kinds.find((k) => k.kind === form.kind)?.secret_keys ?? []);
-  const defaultRate = meta?.kinds.find((k) => k.kind === form.kind)?.default_rate_per_min ?? 0;
+  const kinds = meta?.kinds ?? [];
+  const secretKeys = new Set(kinds.find((k) => k.kind === form.kind)?.secret_keys ?? []);
+  const defaultRate = kinds.find((k) => k.kind === form.kind)?.default_rate_per_min ?? 0;
 
   return (
     <div className="flex flex-1 flex-col gap-4 md:gap-6">
@@ -304,7 +305,7 @@ export default function NotifyPage() {
         )}
       </div>
 
-      {meta && (
+      {meta?.stats && (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
           <StatTile label="渠道" value={`${meta.stats.channels_on} / ${meta.stats.channels}`} hint="启用 / 总数" />
           <StatTile label="今日送达" value={String(meta.stats.sent_today)} />
@@ -366,6 +367,7 @@ export default function NotifyPage() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <button
               type="button"
+              data-slot="hud-panel"
               onClick={openAdd}
               className="flex min-h-[130px] flex-col items-center justify-center gap-2 rounded-xl border border-foreground/70 border-dashed text-foreground/70 transition hover:bg-muted/60 hover:shadow-sm"
             >

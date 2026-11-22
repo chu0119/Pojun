@@ -29,8 +29,8 @@ export function DeliveryList({ channels }: { channels: NotificationChannel[] }) 
     api
       .notifyDeliveries({ channelId: channelID, state, page, pageSize })
       .then((r) => {
-        setRows(r.deliveries);
-        setTotal(r.total);
+        setRows(r.deliveries ?? []);
+        setTotal(r.total ?? 0);
       })
       .catch((e) => toast.error(`读取投递记录失败：${(e as Error).message}`))
       .finally(() => setLoading(false));

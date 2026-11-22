@@ -88,7 +88,7 @@ export default function HostEnvPage() {
       .hostenvStatus()
       .then((s) => {
         setInv(s);
-        setProxyInput(s.installer.proxy ?? "");
+        setProxyInput(s.installer?.proxy ?? "");
       })
       .catch(() => undefined)
       .finally(() => setLoaded(true));

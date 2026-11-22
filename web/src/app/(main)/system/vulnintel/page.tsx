@@ -225,7 +225,7 @@ export default function VulnintelPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <p className="text-2xl font-semibold tabular-nums">{status.counts.cves.toLocaleString()}</p>
+                <p className="text-2xl font-semibold tabular-nums">{(status.counts?.cves ?? 0).toLocaleString()}</p>
               </CardContent>
             </Card>
             <Card>
@@ -233,7 +233,9 @@ export default function VulnintelPage() {
                 <CardTitle className="text-sm font-medium text-muted-foreground">KEV 在野利用</CardTitle>
               </CardHeader>
               <CardContent>
-                <p className="text-2xl font-semibold tabular-nums text-red-500">{status.counts.kev.toLocaleString()}</p>
+                <p className="text-2xl font-semibold tabular-nums text-red-500">
+                  {(status.counts?.kev ?? 0).toLocaleString()}
+                </p>
               </CardContent>
             </Card>
             <Card>
@@ -241,7 +243,7 @@ export default function VulnintelPage() {
                 <CardTitle className="text-sm font-medium text-muted-foreground">PoC 仓库</CardTitle>
               </CardHeader>
               <CardContent>
-                <p className="text-2xl font-semibold tabular-nums">{status.counts.pocs.toLocaleString()}</p>
+                <p className="text-2xl font-semibold tabular-nums">{(status.counts?.pocs ?? 0).toLocaleString()}</p>
               </CardContent>
             </Card>
           </div>
@@ -362,14 +364,14 @@ export default function VulnintelPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {status.sources.length === 0 && (
+                    {(status.sources ?? []).length === 0 && (
                       <tr>
                         <td colSpan={4} className="py-3 text-muted-foreground">
                           尚未开始同步（首次启动约 90 秒后开始；全量回填需数轮）
                         </td>
                       </tr>
                     )}
-                    {status.sources.map((s) => (
+                    {(status.sources ?? []).map((s) => (
                       <tr key={s.source} className="border-b align-top last:border-0">
                         <td className="py-2 pr-4">{SOURCE_LABEL[s.source] ?? s.source}</td>
                         <td className="py-2 pr-4 tabular-nums">{fmtTime(s.last_sync_at)}</td>

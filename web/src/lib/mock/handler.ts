@@ -2510,6 +2510,282 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
       daily: [],
     };
 
+  // ── 通知推送 (/notify/*)：补齐 demo 元数据、渠道与投递记录 ──
+  if (path === "/notify/meta" && m === "GET") {
+    return {
+      kinds: [
+        { kind: "dingtalk", default_rate_per_min: 20, secret_keys: ["secret"] },
+        { kind: "feishu", default_rate_per_min: 20, secret_keys: ["secret"] },
+        { kind: "wecom", default_rate_per_min: 20, secret_keys: ["webhook"] },
+        { kind: "webhook", default_rate_per_min: 60, secret_keys: ["headers"] },
+        { kind: "telegram", default_rate_per_min: 20, secret_keys: ["bot_token"] },
+        { kind: "email", default_rate_per_min: 10, secret_keys: ["password"] },
+      ],
+      enabled: true,
+      public_base_url: "https://pojun.demo.local",
+      digest_interval_min: "30",
+      defaults: { digest_interval_min: 30 },
+      stats: {
+        channels: 2,
+        channels_on: 2,
+        pending: 0,
+        failed: 1,
+        sent_today: 14,
+        backlog_age_ms: 0,
+      },
+    };
+  }
+  if (path === "/notify/channels" && m === "GET") {
+    return {
+      channels: [
+        {
+          id: 1,
+          name: "红队应急告警群",
+          kind: "dingtalk",
+          enabled: true,
+          mode: "realtime",
+          config: {
+            webhook: "https://oapi.dingtalk.com/robot/send?access_token=demo",
+            secret: "__masked__secret",
+          },
+          filter: { min_severity: "high", on_status_change: true },
+          rate_per_min: 20,
+          created_at: "2026-07-24T08:00:00Z",
+          updated_at: "2026-07-26T09:00:00Z",
+          secret_keys: ["secret"],
+        },
+        {
+          id: 2,
+          name: "飞书日常播报",
+          kind: "feishu",
+          enabled: true,
+          mode: "digest",
+          config: {
+            webhook: "https://open.feishu.cn/open-apis/bot/v2/hook/demo",
+            secret: "__masked__secret",
+          },
+          filter: { min_severity: "medium" },
+          rate_per_min: 20,
+          created_at: "2026-07-24T09:00:00Z",
+          updated_at: "2026-07-26T09:00:00Z",
+          secret_keys: ["secret"],
+        },
+      ],
+    };
+  }
+  if (path === "/notify/deliveries" && m === "GET") {
+    return {
+      deliveries: [
+        {
+          id: 101,
+          finding_id: "F-09",
+          event_kind: "finding_created",
+          channel_id: 1,
+          channel_name: "红队应急告警群",
+          channel_kind: "dingtalk",
+          state: "sent",
+          attempts: 1,
+          last_error: "",
+          created_at: "2026-07-26T08:20:05Z",
+          sent_at: "2026-07-26T08:20:06Z",
+          next_attempt_at: "2026-07-26T08:20:05Z",
+          title: "内网域控 DC01 完全控制（Domain Admin）",
+          severity: "critical",
+        },
+        {
+          id: 102,
+          finding_id: "F-08",
+          event_kind: "finding_created",
+          channel_id: 2,
+          channel_name: "飞书日常播报",
+          channel_kind: "feishu",
+          state: "failed",
+          attempts: 3,
+          last_error: "webhook timeout after 5s",
+          created_at: "2026-07-26T07:55:12Z",
+          next_attempt_at: "2026-07-26T08:30:00Z",
+          title: "shop 商城 Fastjson 反序列化 RCE",
+          severity: "critical",
+        },
+      ],
+      total: 2,
+    };
+  }
+  if (/^\/notify\/channels\/\d+\/test$/.test(path) && m === "POST") {
+    return { ok: true, latency_ms: 84 };
+  }
+
+  // ── 漏洞情报 (/vulnintel/*) ──
+  if (path === "/vulnintel/status" && m === "GET") {
+    return {
+      enabled: true,
+      nuclei_templates_dir: "/opt/pojun/nuclei-templates",
+      counts: { cves: 248310, kev: 1218, pocs: 16420 },
+      sync_running: false,
+      next_tick_hint: "每 6 小时增量同步",
+      config: {
+        enabled: true,
+        nvd_api_key: "",
+        nvd_key_set: true,
+        github_token: "",
+        github_token_set: false,
+        proxy: "",
+        poc_enabled: true,
+        backfill_days: 30,
+        max_runtime_minutes: 30,
+      },
+      sources: [
+        {
+          source: "nvd",
+          last_sync_at: "2026-07-26T06:00:00Z",
+          total_synced: 248310,
+          last_error: "",
+        },
+        {
+          source: "kev",
+          last_sync_at: "2026-07-26T06:01:12Z",
+          total_synced: 1218,
+          last_error: "",
+        },
+        {
+          source: "poc",
+          last_sync_at: "2026-07-26T06:03:40Z",
+          total_synced: 16420,
+          last_error: "",
+        },
+      ],
+      nuclei: {
+        dir: "/opt/pojun/nuclei-templates",
+        exists: true,
+        is_git: true,
+        templates: 9842,
+        updated_at: "2026-07-26T04:12:00Z",
+        hint: "模板库就绪，可被 nuclei 直接调用",
+      },
+    };
+  }
+  if (path === "/vulnintel/probe" && m === "POST") {
+    return {
+      results: [
+        { source: "nvd", target: "https://services.nvd.nist.gov", ok: true, status: 200, latency_ms: 142 },
+        { source: "kev", target: "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json", ok: true, status: 200, latency_ms: 96 },
+        { source: "poc", target: "https://api.github.com", ok: true, status: 200, latency_ms: 118 },
+      ],
+    };
+  }
+  if (path === "/vulnintel/sync" && m === "POST") return { accepted: true };
+  if (path === "/vulnintel/sync/cancel" && m === "POST") return { cancelling: true };
+
+  // ── 宿主环境 (/hostenv/*) ──
+  if (path === "/hostenv/status" && m === "GET") {
+    return {
+      deploy_mode: "host",
+      installer: {
+        available: true,
+        reason: "",
+        version: "0.7.2",
+        upgrade_required: false,
+        socket: "/run/pojun-hostd.sock",
+        proxy: "",
+        sources: { apt: "", pypi: "" },
+        sources_supported: true,
+      },
+      tools: [
+        { id: "nmap", name: "nmap", bin: "nmap", available: true, installable: true, purpose: "端口与服务指纹扫描", kind: "apt", category: "network" },
+        { id: "nuclei", name: "nuclei", bin: "nuclei", available: true, installable: true, purpose: "模板化漏洞扫描器", kind: "github", category: "web" },
+        { id: "httpx", name: "httpx", bin: "httpx", available: true, installable: true, purpose: "HTTP 探测与标题指纹", kind: "github", category: "web" },
+        { id: "subfinder", name: "subfinder", bin: "subfinder", available: true, installable: true, purpose: "被动子域名枚举", kind: "github", category: "dns" },
+        { id: "sqlmap", name: "sqlmap", bin: "sqlmap", available: false, installable: true, purpose: "自动化 SQL 注入检测与利用", kind: "pip", category: "exploit" },
+      ],
+    };
+  }
+  if (path === "/hostenv/proxy-check" && m === "POST") {
+    return { ok: true, proxy: String(b.proxy ?? ""), latency_ms: 68, status: 200, exit_ip: "203.0.113.42" };
+  }
+
+  // ── SSH 跳板 (/egress/ssh) ──
+  if (path === "/egress/ssh" && m === "GET") {
+    return {
+      providers: [
+        {
+          id: 1,
+          name: "DMZ-Jumpbox-01",
+          host: "198.51.100.14",
+          port: 22,
+          user: "ops",
+          created_at: "2026-07-24T10:00:00Z",
+          status: "running",
+          socks_addr: "socks5://127.0.0.1:1081",
+          started_at: "2026-07-26T07:30:00Z",
+        },
+      ],
+    };
+  }
+
+  // ── 监听器 / C2 (/c2/config, /listeners) ──
+  if (path === "/c2/config" && m === "GET") {
+    return { mode: "direct", host: "198.51.100.10", ssh: "", key: "", iface: "eth0", has_pass: false };
+  }
+  if (path === "/listeners" && m === "GET") {
+    return {
+      listeners: [
+        {
+          name: "rev-4444",
+          port: 4444,
+          started_at: "2026-07-26T08:00:00Z",
+          sessions: [
+            {
+              id: "sess-1",
+              remote: "10.10.10.22:51422",
+              connected_at: "2026-07-26T08:12:04Z",
+              last_active: "2026-07-26T08:25:10Z",
+              bytes_in: 1420,
+              preview: "uid=33(www-data) gid=33(www-data) groups=33(www-data)\n",
+              open: true,
+            },
+          ],
+        },
+      ],
+    };
+  }
+
+  // ── 代理池 & Clash (/proxypool*) ──
+  if (path === "/proxypool" && m === "GET") {
+    return {
+      entries: [
+        { url: "socks5://127.0.0.1:1081", name: "DMZ-Jumpbox-01", enabled: true, weight: 2 },
+        { url: "http://127.0.0.1:7890", name: "Edge-HK-01", enabled: true, weight: 1 },
+      ],
+      strategy: "round_robin",
+      enabled: true,
+      strict: false,
+      capturing: true,
+      usable: 2,
+      total: 2,
+      running: [],
+      check_target: "https://api.ipify.org?format=json",
+      health_minutes: 10,
+      last_check: { at: "2026-07-26T08:15:00Z", target: "https://api.ipify.org?format=json", count: 2, ok_count: 2 },
+    };
+  }
+  if (path === "/proxypool/mihomo" && m === "GET") {
+    return {
+      ok: true,
+      path: "/opt/pojun/bin/mihomo",
+      status: {
+        running: false,
+        installed: true,
+        port: 17890,
+        pid: 0,
+        binary: "/opt/pojun/bin/mihomo",
+        config_path: "/opt/pojun/data/mihomo.yaml",
+        log_path: "/opt/pojun/data/mihomo.log",
+        version: "v1.19.0",
+        nodes: [],
+      },
+    };
+  }
+
   // ── 旁路提问(/btw)：demo 无旁路会话 ──
   // 必须显式命中：路径以 s 结尾会被下面的读兜底判成集合返回 []，items 就成了 undefined。
   if (seg.at(-1) === "side-questions") {
