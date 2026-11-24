@@ -129,7 +129,7 @@ func DecomposeGoalsWithProvider(ctx context.Context, prov llm.Provider, dataDir,
 	// Description rides in the user message (same channel as the goal), NOT via the
 	// {{.EngagementDescription}} template var — else a prompt that references the var
 	// would inject the description twice. System prompt stays pure static instructions.
-	sys := renderSystem("goals", goalsDefaultTmpl, GoalsVars{DataDir: dataDir, Now: nowStr()})
+	sys := renderSystemWith("goals", goalsDefaultTmpl, GoalsVars{DataDir: dataDir, Now: nowStr()}, ProfilePromptFrom(ctx))
 	// 验收标准代码尾巴：即使老库的 goals 提示词只 seed 过一次、用户没重播，
 	// criteria 也必须写成“匿名读 N 条含敏感字段 / 两身份越权回读 / 自建对象写测试回读”式危害证明。
 	sys += goalsVerificationTail

@@ -728,6 +728,7 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 		}
 	}
 	wk := agent.NewWorker(workerRuntime, "task-router", s.m.dir, tx, window, s.agentMaxTurns("worker"))
+	wk.SetProfilePromptResolver(func() agent.ProfilePrompt { return s.profilePromptForTaskRole(t, "worker") })
 	wk.SetScopeFlags(scopeGuard, scopeInherit, notifyDedup)
 	wk.SetProgramProfile(programProfile)
 	wk.SetFindingRecorder(s.evidenceStore())
@@ -753,6 +754,7 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 		}
 	}
 	pl := agent.NewPlanner(plannerRuntime, "task-router", s.m.dir, tx, plannerRuntime.CompactionWindow(), s.agentMaxTurns("planner"))
+	pl.SetProfilePromptResolver(func() agent.ProfilePrompt { return s.profilePromptForTaskRole(t, "planner") })
 	pl.SetScopeFlags(scopeGuard, scopeInherit, notifyDedup)
 	pl.SetProgramProfile(programProfile)
 	pl.SetIntentQueueLimit(s.intentQueueBudget) // 派发节流（v0.4.68）：本轮新增上限
@@ -793,6 +795,7 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 	compactor.SetMaxBlockMembers(s.m.CompactionMaxMembers())
 	pl.SetCompactor(compactor)
 	main := agent.NewMainAgent(mainRuntime, "task-router", s.m.dir, tx, mainRuntime.CompactionWindow(), s.agentMaxTurns("mainagent"))
+	main.SetProfilePromptResolver(func() agent.ProfilePrompt { return s.profilePromptForTaskRole(t, "mainagent") })
 	main.SetScopeFlags(scopeGuard, scopeInherit, notifyDedup)
 	main.SetProgramProfile(programProfile)
 	main.SetFindingRecorder(s.evidenceStore())

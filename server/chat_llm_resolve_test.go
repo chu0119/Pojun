@@ -38,10 +38,19 @@ func TestChatUnavailableReasonDistinguishesStates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		_, _ = m.pg.Exec(`UPDATE llm_profiles SET is_default=false WHERE id=$1`, id)
-		_ = m.pg.DeleteProfile(id)
-	})
+	// Cleanup MUST be a defer registered after `defer m.Close()`: LIFO runs it
+	// before the pool closes. A t.Cleanup runs after the test function has fully
+	// returned (i.e. after m.Close() closed the pool), so its UPDATE+DELETE
+	// silently fail and the profile stays ACTIVE in the shared PG — later tests
+	// (core_test) then resolve a real provider and make live network calls.
+	defer func() {
+		if _, err := m.pg.Exec(`UPDATE llm_profiles SET is_default=false WHERE id=$1`, id); err != nil {
+			t.Logf("cleanup profile %d (clear active): %v", id, err)
+		}
+		if err := m.pg.DeleteProfile(id); err != nil {
+			t.Logf("cleanup profile %d: %v", id, err)
+		}
+	}()
 
 	// Profile exists but is not activated.
 	if reason := s.chatUnavailableReason(); !strings.Contains(reason, "没有已激活") {
@@ -81,7 +90,13 @@ func TestResolveChatAgentHonoursConversationProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = m.pg.DeleteProfile(id) })
+	// Same LIFO rule as above: a defer runs before `defer m.Close()`, a t.Cleanup
+	// after it (and then the pool is already closed).
+	defer func() {
+		if err := m.pg.DeleteProfile(id); err != nil {
+			t.Logf("cleanup profile %d: %v", id, err)
+		}
+	}()
 
 	// A conversation that pinned this profile resolves a chat agent despite the
 	// nil global fallback; without the fix the send precheck rejected it outright.

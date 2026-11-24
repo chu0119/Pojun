@@ -2,8 +2,11 @@ package agent
 
 import (
 	"bytes"
+	"context"
+	"fmt"
 	"text/template"
 	"time"
+	"unicode/utf8"
 )
 
 // PromptOverride, if set, returns the stored system-prompt template for an agent
@@ -42,25 +45,141 @@ func nowStr() string { return time.Now().Format("2006-01-02 15:04:05 MST") }
 // 返回空串 = 该 agent 没绑技能，不加块。
 var SkillIndexBlock func(agentKey string) string
 
+// ProfilePrompt is the LLM-profile-scoped prompt segment applied to an agent's
+// system prompt when that profile is in effect for the agent. Text is plain text
+// (never rendered as a Go template); Mode is "prepend", "append" or "replace".
+type ProfilePrompt struct {
+	Text      string
+	Mode      string
+	ProfileID int64
+	// Source reports why this overlay is active: agent_binding | conversation_pin |
+	// task_chain | global_profile | preview_override. Empty = no overlay.
+	Source string
+}
+
+// Active reports whether this overlay should be injected.
+func (p ProfilePrompt) Active() bool {
+	if p.Text == "" {
+		return false
+	}
+	switch p.Mode {
+	case "prepend", "append", "replace":
+		return true
+	}
+	return false
+}
+
+type profilePromptCtxKey struct{}
+
+// WithProfilePrompt attaches a per-run overlay to ctx. Chat and goals read it
+// back; planner/worker/mainagent use per-instance resolvers because they are
+// long-lived task objects, while a chat turn belongs to one conversation.
+func WithProfilePrompt(ctx context.Context, p ProfilePrompt) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, profilePromptCtxKey{}, p)
+}
+
+// ProfilePromptFrom returns the overlay attached to ctx, or the zero value.
+func ProfilePromptFrom(ctx context.Context) ProfilePrompt {
+	if ctx == nil {
+		return ProfilePrompt{}
+	}
+	if p, ok := ctx.Value(profilePromptCtxKey{}).(ProfilePrompt); ok {
+		return p
+	}
+	return ProfilePrompt{}
+}
+
 func renderSystem(agentKey, def string, vars any) string {
+	return renderSystemWith(agentKey, def, vars, ProfilePrompt{})
+}
+
+// renderSystemWith renders the editable body, the host-injected skill index and
+// the optional profile-scoped prompt. Ordering:
+//
+//	prepend: [P] + body + skills
+//	append:  body + skills + [P]
+//	replace: [P] + skills        (the original body is dropped, skills/tails kept)
+//
+// Without an active overlay the output is byte-for-byte identical to before.
+func renderSystemWith(agentKey, def string, vars any, pp ProfilePrompt) string {
+	segs, _ := renderSystemSegments(agentKey, def, vars, pp)
+	return JoinPromptSegments(segs)
+}
+
+// renderSystemSegments is renderSystemWith's segment form. It also reports a
+// non-empty warning when the selected template failed to render and the built-in
+// default was used instead. The runtime text is unchanged by the warning.
+func renderSystemSegments(agentKey, def string, vars any, pp ProfilePrompt) ([]PromptSegment, string) {
 	tmpl := def
+	bodySource := "builtin_default"
 	if PromptOverride != nil {
 		if t, ok := PromptOverride(agentKey); ok && t != "" {
 			tmpl = t
+			bodySource = "db_template"
 		}
 	}
-	body := def
+	rendered := def
+	warning := ""
 	if out, err := renderTmpl(tmpl, vars); err == nil {
-		body = out
-	} else if out, err := renderTmpl(def, vars); err == nil {
-		body = out
+		rendered = out
+	} else if bodySource == "db_template" {
+		if alt, altErr := renderTmpl(def, vars); altErr == nil {
+			rendered = alt
+			warning = "DB 提示词模板渲染失败，已回退内置默认正文"
+		} else {
+			warning = "DB 提示词模板与内置默认均渲染失败，已回退内置默认原文"
+		}
+		bodySource = "builtin_default"
+	} else {
+		warning = "内置默认提示词模板渲染失败，已回退原文"
 	}
+
+	skill := ""
 	if SkillIndexBlock != nil {
-		if blk := SkillIndexBlock(agentKey); blk != "" {
-			body += "\n\n" + blk
+		skill = SkillIndexBlock(agentKey)
+	}
+
+	var out []PromptSegment
+	appendProfile := func(text string) {
+		out = append(out, PromptSegment{
+			Key: "profile_prompt", Title: "独立提示词（LLM 配置）", Source: "profile_prompt",
+			Present: true, Available: true, Text: text,
+		})
+	}
+	bodySeg := PromptSegment{
+		Key: "body", Title: "提示词正文", Source: bodySource, Editable: true,
+		Present: true, Available: true, Text: rendered,
+	}
+	skillSeg := PromptSegment{
+		Key: "skill_index", Title: "技能速查（宿主注入）", Source: "host",
+		Gate: "该 Agent 绑定了 Skill", Present: skill != "", Available: true,
+	}
+	if skill != "" {
+		skillSeg.Text = "\n\n" + skill
+	} else {
+		skillSeg.Reason = "该 Agent 未绑定 Skill"
+	}
+
+	switch {
+	case pp.Active() && pp.Mode == "replace":
+		appendProfile(pp.Text)
+		bodySeg.Present = false
+		bodySeg.Text = ""
+		bodySeg.Reason = fmt.Sprintf("已被独立提示词替换（原正文 %d 字符；技能索引与代码硬尾巴仍保留）", utf8.RuneCountInString(rendered))
+		out = append(out, bodySeg, skillSeg)
+	case pp.Active() && pp.Mode == "prepend":
+		appendProfile(pp.Text + "\n\n")
+		out = append(out, bodySeg, skillSeg)
+	default:
+		out = append(out, bodySeg, skillSeg)
+		if pp.Active() && pp.Mode == "append" {
+			appendProfile("\n\n" + pp.Text)
 		}
 	}
-	return body
+	return out, warning
 }
 
 func renderTmpl(tmpl string, vars any) (string, error) {

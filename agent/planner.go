@@ -49,6 +49,11 @@ type Planner struct {
 	maxTokensFn          func() int                             // resolver: per-reply output cap (nil/0 = send no cap)
 	programProfile       *db.ProgramProfile                     // SRC/众测 profile（nil = 不渲染）
 	compactor            *Compactor                             // cold-node compaction (§7); nil = disabled
+	// profilePrompt resolves the LLM-profile-scoped overlay for this run (nil =
+	// none). Wired by the task bundle; read once per round, so a task-chain
+	// profile change takes effect on the next run (the system prompt is fixed
+	// for the duration of one run).
+	profilePrompt func() ProfilePrompt
 
 	// todos keeps ONE plan-scratchpad per task (keyed by exploration id) so the
 	// planner's multi-step plan survives across wake-ups — each Plan() is a fresh
@@ -66,6 +71,17 @@ func (p *Planner) SetScopeFlags(scopeGuard, scopeInheritWrites, crossTaskNotifyD
 	p.scopeGuard = scopeGuard
 	p.scopeInheritWrites = scopeInheritWrites
 	p.crossTaskNotifyDedup = crossTaskNotifyDedup
+}
+
+// SetProfilePromptResolver wires the per-run LLM-profile overlay. nil = no
+// overlay. Called once per planning round.
+func (p *Planner) SetProfilePromptResolver(fn func() ProfilePrompt) { p.profilePrompt = fn }
+
+func (p *Planner) promptOverlay() ProfilePrompt {
+	if p.profilePrompt != nil {
+		return p.profilePrompt()
+	}
+	return ProfilePrompt{}
 }
 
 // SetProgramProfile 注入任务级 SRC/众测 profile（v0.4.112）；nil=不渲染、零行为变化。
@@ -439,7 +455,11 @@ const plannerDefaultTmpl = `你是一个网络安全平台授权渗透测试系�
 不重复、不硬凑；但目标未达成、又有未覆盖且更深的打法时，该派就派。简洁、聚焦、高效。`
 
 func plannerSystem(goal, dataDir, workDir string) string {
-	body := renderSystem("planner", plannerDefaultTmpl, PlannerVars{Goal: goal, DataDir: dataDir, Now: nowStr()})
+	return plannerSystemWith(goal, dataDir, workDir, ProfilePrompt{})
+}
+
+func plannerSystemWith(goal, dataDir, workDir string, pp ProfilePrompt) string {
+	body := renderSystemWith("planner", plannerDefaultTmpl, PlannerVars{Goal: goal, DataDir: dataDir, Now: nowStr()}, pp)
 	// 作业硬尾巴（v0.4.63）：漏洞覆盖矩阵/纵深优先 + 授权边界复核。
 	return body + artifactSpec(workDir) + coverageMatrixPlannerGuidance + scopeVerifyPlannerGuidance + execFacePlannerGuidance +
 		engagementFraming + impactOrchestrationGuidance + blackboardPlannerGuidance + untrustedOutputGuidance
@@ -519,7 +539,7 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	// （worker 有注入所以从不报错，问题只在规划者/主 Agent 侧复现）。
 	tsx.SetRunDir(taskDir)
 	ctx = intercept.WithReviewContext(ctx, taskDir, intercept.ReviewBackground{})
-	sysBody := plannerSystem(goal, p.workDir, taskDir)
+	sysBody := plannerSystemWith(goal, p.workDir, taskDir, p.promptOverlay())
 	if p.wantConstraints() {
 		sysBody += constraintBlock(ts) // 操作约束(若有)注入系统提示,框定探索边界
 	}
