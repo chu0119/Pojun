@@ -2,6 +2,29 @@
 
 本项目的重要变更记录在此文件中，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [Unreleased]
+### 新增：LLM 配置独立提示词与 Agent 装配链只读视图
+
+- **独立提示词**：`llm_profiles` 新增 `prompt` / `prompt_mode` /
+  `prompt_apply_inherited`（幂等迁移，默认空/关闭）。支持 `prepend`（正文最前）、
+  `append`（正文与技能索引之后、代码硬尾巴之前）、`replace`（替换正文，保留技能索引与
+  代码硬尾巴）三种位置；纯文本，不做模板变量渲染；上限 8000 字符。
+- **生效规则**：Agent 显式绑定与会话 pin 始终生效；任务链/全局配置仅在该配置
+  勾选“继承时也生效”（`prompt_apply_inherited`）时生效。未配置时提示词逐字节不变。
+- **装配链 API**：`GET /api/agents/{key}/prompt/chain`（可选 `profile_id` 预览）返回
+  当前 LLM 解析、各段来源/可编辑/门控/字符数、代码尾段、运行时段注入点，以及
+  工具/MCP/Skill 静态清单。只读：不建 provider、不连接 MCP、不返回凭据。
+- **前端**：装配链改为独立的「全链路」页（独立路由，可从 Agent 页头部、Agent 卡片与
+  编辑器头部进入），页面内可切换查看任意 Agent，并提供跳转到该 Agent 配置页的入口。
+  视图采用门控信号流（Gate Flow）只读渲染：纵向主干 + 工位行，左侧 LLM 解析梯与 Skill 轨，
+  右侧 Tools/MCP 轨；行状态用实线/门控虚线/运行时点线区分，代码尾段前画 TERMINAL
+  硬边界，排除项常驻隔离架；顶部态势带显示 PROFILE/OVERLAY/SCALE/INTEGRITY/RUNTIME
+  与指示灯（`LAMP TEST` 一次性自检，缺失写“未采集”）。LLM 配置抽屉新增可折叠的独立
+  提示词编辑区（位置三选、继承开关、字符/token 估算、绑定 Agent 反查）；配置列表显示
+  “独立提示词”徽章。
+- **测试**：装配顺序（三模式 + 代码尾段 + 技能索引）、未配置逐字节不变、静态尾段与
+  运行时一致、数据库幂等迁移/约束/往返、保存三态与继承解析、链 API 处理器。
+
 ## [0.4.120] - 2026-11-25
 
 ### 修复：附件配额与落盘清理闭环（#59）
