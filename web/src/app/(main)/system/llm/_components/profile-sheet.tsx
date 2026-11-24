@@ -45,6 +45,7 @@ import {
 } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
 import type { LLMCheckResult, LLMPreset, LLMProfile, LLMRetryOverride } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -133,6 +134,12 @@ export function ProfileSheet({
   const [userAgent, setUserAgent] = React.useState("");
   const [retry, setRetry] = React.useState<LLMRetryOverride>(ZERO_OVERRIDE);
   const [advOpen, setAdvOpen] = React.useState(false);
+  // ── 独立提示词（本配置） ──
+  const [prompt, setPrompt] = React.useState("");
+  const [promptMode, setPromptMode] = React.useState("prepend");
+  const [promptApplyInherited, setPromptApplyInherited] = React.useState(false);
+  const [promptOpen, setPromptOpen] = React.useState(false);
+  const [boundAgents, setBoundAgents] = React.useState<string[]>([]);
   // ── 模型列表 ──
   const [models, setModels] = React.useState<string[]>([]);
   const [modelsSource, setModelsSource] = React.useState<"" | "fetched" | "preset">("");
@@ -155,9 +162,11 @@ export function ProfileSheet({
     JSON.stringify({
       name, format, model, baseUrl, proxy, apiKey, cw, rps, rpm, thinkingType, effort,
       priority, poolExclude, streaming, maxTokens, maxTokensField, sessionHeaderKey, userAgent,
-      retry, presetId: presetIdStore,
+      retry, presetId: presetIdStore, prompt, promptMode, promptApplyInherited,
     });
   const dirty = open && coreSnapshot() !== initialRef.current;
+  const promptChars = Array.from(prompt).length;
+  const promptTooLong = promptChars > 8000;
 
   // 每次打开重灌表单；新建重置向导到第 1 步并拉预设。
   React.useEffect(() => {
@@ -188,6 +197,18 @@ export function ProfileSheet({
     setRetry(p?.retry ?? ZERO_OVERRIDE);
     setApiKey("");
     setKeyHint(p?.api_key_hint ?? "");
+    setPrompt(p?.prompt ?? "");
+    setPromptMode(p?.prompt_mode || "prepend");
+    setPromptApplyInherited(!!p?.prompt_apply_inherited);
+    setPromptOpen(!!p?.prompt?.trim());
+    setBoundAgents([]);
+    if (p) {
+      const pid = Number(p.id);
+      api
+        .agents()
+        .then((as) => setBoundAgents(as.filter((a) => a.llm_profile_id === pid).map((a) => a.key)))
+        .catch(() => {});
+    }
     setModels([]);
     setModelsSource("");
     setModelsOpen(false);
@@ -310,6 +331,10 @@ export function ProfileSheet({
       toast.error("请填写名称与模型");
       return;
     }
+    if (promptTooLong) {
+      toast.error("独立提示词过长（上限 8000 字符）");
+      return;
+    }
     if (saving) return;
     setSaving(true);
     try {
@@ -337,6 +362,9 @@ export function ProfileSheet({
         user_agent: userAgent.trim(),
         retry,
         preset_id: presetIdStore,
+        prompt,
+        prompt_mode: prompt.trim() ? promptMode : "",
+        prompt_apply_inherited: prompt.trim() ? promptApplyInherited : false,
       });
       if (andActivate && isNew) {
         try {
@@ -585,6 +613,78 @@ export function ProfileSheet({
       </div>
     );
   })();
+
+  // 独立提示词：只在该配置被显式绑定（或开启继承时也生效）时进入 Agent 的 system prompt。
+  const promptSection = (
+    <Collapsible open={promptOpen} onOpenChange={setPromptOpen} className="rounded-lg border">
+      <CollapsibleTrigger className="group flex w-full items-center gap-2 px-3 py-2 text-sm font-medium">
+        独立提示词（装载到 Agent 时生效）
+        <span className="ml-auto text-muted-foreground text-xs">
+          {prompt.trim() ? `已设置 · ${promptChars} 字符` : "未设置"}
+        </span>
+        <ChevronDownIcon className="size-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
+      </CollapsibleTrigger>
+      <CollapsibleContent className="grid gap-3 border-t px-3 py-3">
+        <p className="text-muted-foreground text-xs leading-relaxed">
+          只在本配置被<b>显式绑定</b>到 Agent 时注入；未绑定 Agent 的运行时选路（任务链/全局）只有在下方开启「继承时也生效」后才会注入。留空 = 不追加。
+        </p>
+        <div className="grid gap-1.5">
+          <Label htmlFor="p-prompt-mode" className="text-xs">装配位置</Label>
+          <Select value={promptMode} onValueChange={setPromptMode}>
+            <SelectTrigger id="p-prompt-mode" className="h-8">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="prepend">置于正文之前（prepend）</SelectItem>
+              <SelectItem value="append">追加到正文之后（append）</SelectItem>
+              <SelectItem value="replace">替换正文（replace）</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-muted-foreground text-[11px]">
+            append 位于正文 + 技能索引之后、代码硬尾巴之前；replace 只替换正文，技能索引与代码硬尾巴仍保留。
+          </p>
+        </div>
+        <Textarea
+          id="p-prompt"
+          className={cn("font-mono text-xs", promptTooLong && "border-destructive")}
+          rows={8}
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          placeholder="留空则不追加独立提示词"
+        />
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+          <span className={cn("tabular-nums", promptTooLong ? "text-destructive" : "text-muted-foreground")}>
+            {promptChars} / 8000 字符 · 约 {Math.ceil(promptChars / 2)} tokens（估算）
+          </span>
+          <span className="text-muted-foreground">纯文本：{"{{.Now}}"} 等变量原样发送，不会被替换</span>
+        </div>
+        <div className="flex items-start gap-2 border-t pt-2">
+          <Switch
+            id="p-prompt-inherited"
+            checked={promptApplyInherited}
+            onCheckedChange={setPromptApplyInherited}
+          />
+          <div className="grid gap-0.5">
+            <Label htmlFor="p-prompt-inherited" className="text-sm">继承时也生效</Label>
+            <span className="text-muted-foreground text-xs">
+              开启后，本配置作为全局默认或任务链激活项被选中时也注入；会话 pin 与 Agent 显式绑定始终生效。
+            </span>
+          </div>
+        </div>
+        {promptMode === "replace" && (
+          <div className="rounded-md border border-amber-500/40 bg-amber-500/5 px-2 py-1.5 text-xs">
+            替换会移除该 Agent 的现有正文（技能索引、代码硬尾巴仍保留）。
+            {boundAgents.length > 0
+              ? `当前被 ${boundAgents.length} 个 Agent 绑定：${boundAgents.join("、")}。`
+              : "当前没有被 Agent 显式绑定。"}
+          </div>
+        )}
+        <p className="text-muted-foreground text-[11px]">
+          当前被以下 Agent 显式绑定：{boundAgents.length > 0 ? boundAgents.join("、") : "（无）"}；改动对下一轮运行生效。
+        </p>
+      </CollapsibleContent>
+    </Collapsible>
+  );
 
   // 高级设置折叠区（极客参数都收进来；两模式共用）
   const advancedSection = (
@@ -914,6 +1014,7 @@ export function ProfileSheet({
                 <>
                   {modelField}
                   {cwField}
+                  {promptSection}
                   {advancedSection}
                 </>
               )}
@@ -927,6 +1028,7 @@ export function ProfileSheet({
               {baseUrlField}
               {keyField}
               {proxyField}
+              {promptSection}
               {advancedSection}
             </>
           )}
