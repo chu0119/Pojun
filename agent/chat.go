@@ -84,7 +84,11 @@ func chatWorkDirSpec(workDir string) string {
 // chatSystem renders the DB-managed prompt body for agentKey. Custom agents have
 // no per-key in-code default, so DefaultAssistantPrompt is the render fallback.
 func chatSystem(agentKey, dataDir, workDir string) string {
-	out := renderSystem(agentKey, DefaultAssistantPrompt, chatVars{DataDir: dataDir, Now: nowStr()}) + chatWorkDirSpec(workDir)
+	return chatSystemWith(agentKey, dataDir, workDir, ProfilePrompt{})
+}
+
+func chatSystemWith(agentKey, dataDir, workDir string, pp ProfilePrompt) string {
+	out := renderSystemWith(agentKey, DefaultAssistantPrompt, chatVars{DataDir: dataDir, Now: nowStr()}, pp) + chatWorkDirSpec(workDir)
 	// 执行/报告类对话 agent 也要看到全量验证口径——它们不走 planner/worker 的
 	// system 装配，只在 chat 路径运行。
 	switch agentKey {
@@ -134,7 +138,7 @@ func (c *ChatAgent) Chat(ctx context.Context, agentKey, sessionID, message strin
 	tools, def, cleanup := AugmentTools(ctx, agentKey, base)
 	defer cleanup()
 
-	system, boundary := deferredSystem(chatSystem(agentKey, c.workDir, sessionWorkDir), def)
+	system, boundary := deferredSystem(chatSystemWith(agentKey, c.workDir, sessionWorkDir, ProfilePromptFrom(ctx)), def)
 	opts := agentcore.Options{
 		Provider:        c.prov,
 		SystemPrompt:    system,

@@ -491,6 +491,29 @@ ALTER TABLE llm_profiles ADD  CONSTRAINT llm_profiles_retry_check CHECK (
 -- 预设。仅展示/向导关联用途，不参与 provider 构建；'' = 手动配置或旧数据。
 ALTER TABLE llm_profiles ADD COLUMN IF NOT EXISTS preset_id TEXT NOT NULL DEFAULT '';
 
+-- LLM 配置级独立提示词（v0.4.114）：本配置被 Agent 显式绑定（或开启「继承时
+-- 也生效」后实际被选中）时，作为一段纯文本附加到该 Agent 的 system prompt。
+-- '' = 未配置，历史行为逐字节不变。纯文本：不做 Go 模板渲染，{{.Var}} 原样保留。
+ALTER TABLE llm_profiles ADD COLUMN IF NOT EXISTS prompt TEXT NOT NULL DEFAULT '';
+-- 装配位置：'' = 未配置（必须与 prompt='' 同时出现）；prepend/append/replace 三选。
+--   prepend = 正文最前；append = 正文+技能索引之后、代码硬尾巴之前；replace = 替换正文
+--   （技能索引与代码硬尾巴仍保留）。
+ALTER TABLE llm_profiles ADD COLUMN IF NOT EXISTS prompt_mode TEXT NOT NULL DEFAULT '';
+-- 继承时也生效：false（默认）= 仅当本配置被 agents.llm_profile_id 显式绑定时注入；
+-- true = 当本配置作为任务链/全局默认被实际选中时也注入（会话 pin 始终视为显式）。
+ALTER TABLE llm_profiles ADD COLUMN IF NOT EXISTS prompt_apply_inherited BOOLEAN NOT NULL DEFAULT false;
+-- 同 format：先删再建，保证每次启动幂等。
+ALTER TABLE llm_profiles DROP CONSTRAINT IF EXISTS llm_profiles_prompt_mode_check;
+ALTER TABLE llm_profiles ADD  CONSTRAINT llm_profiles_prompt_mode_check
+    CHECK (prompt_mode IN ('','prepend','append','replace'));
+ALTER TABLE llm_profiles DROP CONSTRAINT IF EXISTS llm_profiles_prompt_len_check;
+ALTER TABLE llm_profiles ADD  CONSTRAINT llm_profiles_prompt_len_check
+    CHECK (char_length(prompt) <= 8000);
+-- 二值等价：有正文必有模式，无正文必无模式，杜绝「存了字却不生效」的死状态。
+ALTER TABLE llm_profiles DROP CONSTRAINT IF EXISTS llm_profiles_prompt_pair_check;
+ALTER TABLE llm_profiles ADD  CONSTRAINT llm_profiles_prompt_pair_check
+    CHECK ((prompt = '') = (prompt_mode = ''));
+
 -- 资产 URL 结构指纹（v0.4.94 经验层）：64-bit simhash（路径段归一+参数名+title/长度
 -- 分桶），同 root_domain 下汉明距离近的 endpoint 归同簇，供变体分析找同类端点。
 ALTER TABLE assets ADD COLUMN IF NOT EXISTS simhash BIGINT NOT NULL DEFAULT 0;

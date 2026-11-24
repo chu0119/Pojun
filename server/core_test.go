@@ -72,11 +72,16 @@ func TestCoreTaskLifecyclePG(t *testing.T) {
 		t.Fatalf("bad task payload: %v", out)
 	}
 
-	// the exploration owns goal node(s) — goal seeding is async, poll briefly
+	// the exploration owns goal node(s) — goal seeding is async. When a global
+	// LLM profile is active (shared PG can carry one over from an earlier test),
+	// seeding performs a REAL decomposition call, so a 3s window is too tight:
+	// a failing upstream round-trip can take 6s+. Bound the wait strictly but
+	// generously; a hung upstream still fails the test instead of stalling it.
 	var goals []*db.Node
-	for i := 0; i < 30; i++ {
+	deadline := time.Now().Add(20 * time.Second)
+	for {
 		goals, err = m.pg.Exploration(expID).ListByKind("goal", 10)
-		if err != nil || len(goals) > 0 {
+		if err != nil || len(goals) > 0 || time.Now().After(deadline) {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)

@@ -102,6 +102,9 @@ type Worker struct {
 	maxTokensFn func() int
 	// programProfile 是任务级 SRC/众测 profile（v0.4.112）；nil=不渲染，零行为变化。
 	programProfile *db.ProgramProfile
+	// profilePrompt resolves the LLM-profile-scoped overlay for this run (nil =
+	// none). Wired by the task bundle; read per run.
+	profilePrompt func() ProfilePrompt
 }
 
 // WorkerSessionID returns the stable transcript key used by a worker intent.
@@ -400,7 +403,11 @@ func workerEgressBlock(proxyAddr string) string {
 }
 
 func workerSystem(proxyAddr, caCert, dataDir, runDir string) string {
-	body := renderSystem("worker", workerDefaultTmpl, WorkerVars{ProxyAddr: proxyAddr, DataDir: dataDir, Now: nowStr()})
+	return workerSystemWith(proxyAddr, caCert, dataDir, runDir, ProfilePrompt{})
+}
+
+func workerSystemWith(proxyAddr, caCert, dataDir, runDir string, pp ProfilePrompt) string {
+	body := renderSystemWith("worker", workerDefaultTmpl, WorkerVars{ProxyAddr: proxyAddr, DataDir: dataDir, Now: nowStr()}, pp)
 	// caCert is present only when the recording MITM is on, which is exactly when
 	// the traffic_* tools are registered — so it gates the traffic-tool note.
 	// Optional finding guidance is added for every role after tool resolution.
@@ -632,7 +639,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	// 血缘、意图 token 台账、coverage、related_tasks 等）不进 worker 视图，省掉每次
 	// 启动的重建计算与注入前缀。worker 只需要「别人发现了什么」做去重与联想。
 	overview := renderWorkerGraphOverview(tsx.workerOverviewData())
-	sysBody := workerSystem(w.proxyAddr, w.proxyCACert, w.workDir, runDir)
+	sysBody := workerSystemWith(w.proxyAddr, w.proxyCACert, w.workDir, runDir, w.promptOverlay())
 	if w.wantConstraints() {
 		sysBody += constraintBlock(ts) // 操作约束(若有)注入系统提示,worker 执行时严格遵守
 	}
@@ -887,3 +894,14 @@ func (w *Worker) SetScopeFlags(scopeGuard, scopeInheritWrites, crossTaskNotifyDe
 
 // SetProgramProfile 注入任务级 SRC/众测 profile（v0.4.112）；nil=不渲染。
 func (w *Worker) SetProgramProfile(profile *db.ProgramProfile) { w.programProfile = profile }
+
+// SetProfilePromptResolver wires the per-run LLM-profile overlay. nil = no
+// overlay. Called once per run.
+func (w *Worker) SetProfilePromptResolver(fn func() ProfilePrompt) { w.profilePrompt = fn }
+
+func (w *Worker) promptOverlay() ProfilePrompt {
+	if w.profilePrompt != nil {
+		return w.profilePrompt()
+	}
+	return ProfilePrompt{}
+}

@@ -560,6 +560,9 @@ func (s *Server) runConversationTurn(ctx context.Context, cancel context.CancelC
 	}
 	// On a manual stop ctx is cancelled; Chat already emits a clean "已手动停止"
 	// step, so skip the raw-error entry — only surface genuine failures.
+	// The overlay follows the conversation's effective profile: agent binding →
+	// conversation pin → global (only when the profile opted into inheritance).
+	ctx = agent.WithProfilePrompt(ctx, s.profilePromptForChat(c))
 	if _, err := ca.Chat(ctx, c.AgentKey, sessionID, msg, maxTurns, maxDuration, webSearch, emit); err != nil {
 		finishReason = err.Error()
 		if ctx.Err() == nil {

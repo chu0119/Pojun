@@ -1835,6 +1835,15 @@ func (s *Server) pgListProfiles(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
+	// Prompt bodies are fetched in one query and attached to the DTO; they are
+	// deliberately absent from profileCols so the failover chain stays lean.
+	if prompts, err := pg.ProfilePrompts(); err == nil {
+		for _, p := range ps {
+			if pi, ok := prompts[p.ID]; ok {
+				p.Prompt, p.PromptMode, p.PromptApplyInherited = pi.Text, pi.Mode, pi.ApplyInherited
+			}
+		}
+	}
 	writeJSON(w, 200, map[string]any{"profiles": llmProfileDTOs(ps)})
 }
 
@@ -1852,6 +1861,11 @@ func (s *Server) pgSaveProfile(w http.ResponseWriter, r *http.Request) {
 		db.LLMProfile
 		APIKey    string `json:"api_key"`
 		Streaming *bool  `json:"streaming"`
+		// 独立提示词三态影子指针：缺省=保留原值；""=清空；文本=写入。
+		// 沿用 Streaming *bool 的先例，避免旧客户端/旧 web bundle 一保存就清空长文。
+		Prompt               *string `json:"prompt"`
+		PromptMode           *string `json:"prompt_mode"`
+		PromptApplyInherited *bool   `json:"prompt_apply_inherited"`
 	}
 	if err := decode(r, &body); err != nil {
 		writeErr(w, 400, err.Error())
@@ -1883,8 +1897,22 @@ func (s *Server) pgSaveProfile(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "user_agent 不能包含换行")
 		return
 	}
+	// 独立提示词：读旧值回填三态，再做纯文本归一与长度/枚举校验。
+	oldPrompt := db.PromptInfo{}
+	if p.ID != 0 {
+		oldPrompt, _ = pg.ProfilePrompt(p.ID)
+	}
+	prompt, promptErr := normalizeProfilePromptRequest(oldPrompt, body.Prompt, body.PromptMode, body.PromptApplyInherited)
+	if promptErr != "" {
+		writeErr(w, 400, promptErr)
+		return
+	}
 	id, err := pg.SaveProfile(&p)
 	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if err := pg.SetProfilePrompt(id, prompt.Text, prompt.Mode, prompt.ApplyInherited); err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
