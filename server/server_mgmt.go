@@ -1836,12 +1836,17 @@ func (s *Server) pgListProfiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Prompt bodies are fetched in one query and attached to the DTO; they are
-	// deliberately absent from profileCols so the failover chain stays lean.
-	if prompts, err := pg.ProfilePrompts(); err == nil {
-		for _, p := range ps {
-			if pi, ok := prompts[p.ID]; ok {
-				p.Prompt, p.PromptMode, p.PromptApplyInherited = pi.Text, pi.Mode, pi.ApplyInherited
-			}
+	// deliberately absent from profileCols so the failover chain stays lean. A
+	// failed read is fatal: returning profiles with blank prompts would let the
+	// editor save an explicit empty prompt and silently wipe long text.
+	prompts, err := pg.ProfilePrompts()
+	if err != nil {
+		writeErr(w, 500, "读取独立提示词失败")
+		return
+	}
+	for _, p := range ps {
+		if pi, ok := prompts[p.ID]; ok {
+			p.Prompt, p.PromptMode, p.PromptApplyInherited = pi.Text, pi.Mode, pi.ApplyInherited
 		}
 	}
 	writeJSON(w, 200, map[string]any{"profiles": llmProfileDTOs(ps)})
@@ -1897,10 +1902,16 @@ func (s *Server) pgSaveProfile(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "user_agent 不能包含换行")
 		return
 	}
-	// 独立提示词：读旧值回填三态，再做纯文本归一与长度/枚举校验。
+	// 独立提示词：读旧值回填三态，再做纯文本归一与长度/枚举校验。读取失败必须
+	// 拒绝保存，否则会以零值回填并静默清空用户长文。
 	oldPrompt := db.PromptInfo{}
 	if p.ID != 0 {
-		oldPrompt, _ = pg.ProfilePrompt(p.ID)
+		var err error
+		oldPrompt, err = pg.ProfilePrompt(p.ID)
+		if err != nil {
+			writeErr(w, 500, "读取原有独立提示词失败，已拒绝保存以免清空")
+			return
+		}
 	}
 	prompt, promptErr := normalizeProfilePromptRequest(oldPrompt, body.Prompt, body.PromptMode, body.PromptApplyInherited)
 	if promptErr != "" {

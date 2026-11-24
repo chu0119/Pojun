@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -134,6 +135,19 @@ func TestAgentPromptChainHandler(t *testing.T) {
 	}
 	if chain.AgentKey != "worker" || !chain.StaticOnly {
 		t.Fatalf("chain meta mismatch: %+v", chain)
+	}
+	if chain.Warnings == nil || chain.Segments == nil || chain.MCP == nil || chain.Skills == nil {
+		t.Fatalf("chain arrays must not be null: warnings=%v segments=%v mcp=%v skills=%v", chain.Warnings, chain.Segments, chain.MCP, chain.Skills)
+	}
+	if chain.Tools.Builtin == nil || chain.Tools.Custom == nil || chain.Tools.Traffic == nil || chain.Tools.Shell == nil || chain.Tools.DeferredNames == nil || chain.Tools.Excluded == nil {
+		t.Fatalf("tool arrays must not be null: %+v", chain.Tools)
+	}
+	badReq := httptest.NewRequest(http.MethodGet, "/api/agents/worker/prompt/chain?profile_id=abc", nil)
+	badReq.SetPathValue("key", "worker")
+	badRR := httptest.NewRecorder()
+	s.pgAgentPromptChain(badRR, badReq)
+	if badRR.Code != http.StatusBadRequest {
+		t.Fatalf("invalid profile_id status=%d body=%s", badRR.Code, badRR.Body.String())
 	}
 	if !chain.LLM.PromptActive || chain.LLM.Source != "agent_binding" || chain.LLM.PromptChars == 0 {
 		t.Fatalf("llm overlay mismatch: %+v", chain.LLM)
@@ -278,6 +292,128 @@ func TestAgentPromptChainInactiveProfileExposesText(t *testing.T) {
 	}
 	if counted != chain.Totals.Chars {
 		t.Fatalf("totals %d != counted segments %d", chain.Totals.Chars, counted)
+	}
+}
+
+func TestProxyDisplayAddrMasksCredentials(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"", ""},
+		{"http://127.0.0.1:8080", "http://127.0.0.1:8080"},
+		{"not a proxy", "<出口代理已配置（地址不可展示）>"},
+	}
+	for _, c := range cases {
+		if got := proxyDisplayAddr(c.in); got != c.want {
+			t.Fatalf("proxyDisplayAddr(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+
+	// The masked value is a serialized URL, so "*" may be percent-encoded.
+	// Assert the semantics (userinfo replaced, host preserved) instead of the
+	// exact escaping, and require the real credentials to be absent.
+	got := proxyDisplayAddr("http://user:pass@127.0.0.1:8080")
+	if strings.Contains(got, "user") || strings.Contains(got, "pass") {
+		t.Fatalf("credentials leaked into %q", got)
+	}
+	u, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("masked value is not a URL: %q (%v)", got, err)
+	}
+	if u.User == nil || u.User.Username() != "***" {
+		t.Fatalf("userinfo = %v, want masked username", u.User)
+	}
+	if _, hasPassword := u.User.Password(); hasPassword {
+		t.Fatalf("masked URL must not keep a password: %q", got)
+	}
+	if u.Host != "127.0.0.1:8080" {
+		t.Fatalf("host = %q, want 127.0.0.1:8080", u.Host)
+	}
+}
+
+func TestProfilePromptForTaskRole(t *testing.T) {
+	m, err := NewManager(t.TempDir(), "")
+	if err != nil {
+		t.Skipf("postgres unavailable (%v)", err)
+	}
+	t.Cleanup(func() { m.Close() })
+	s := New(context.Background(), m, "../skills", t.TempDir(), t.TempDir())
+	t.Cleanup(func() { s.Close() })
+
+	prev, _ := s.m.pg.ActiveProfile()
+	name := "prompt-task-role-" + time.Now().Format("150405.000000")
+	keyed, err := s.m.pg.SaveProfile(&db.LLMProfile{Name: name, Format: "openai", Model: "m", APIKey: "sk-test"})
+	if err != nil {
+		t.Fatalf("SaveProfile(keyed): %v", err)
+	}
+	noKey, err := s.m.pg.SaveProfile(&db.LLMProfile{Name: name + "-nokey", Format: "openai", Model: "m"})
+	if err != nil {
+		t.Fatalf("SaveProfile(noKey): %v", err)
+	}
+	t.Cleanup(func() {
+		if prev != nil {
+			_ = s.m.pg.SetActiveProfile(prev.ID)
+		} else {
+			_, _ = s.m.pg.Exec(`UPDATE llm_profiles SET is_default=false`)
+		}
+		_, _ = s.m.pg.Exec(`UPDATE llm_profiles SET is_default=false WHERE id=$1`, keyed)
+		_, _ = s.m.pg.Exec(`UPDATE llm_profiles SET is_default=false WHERE id=$1`, noKey)
+		_ = s.m.pg.DeleteProfile(keyed)
+		_ = s.m.pg.DeleteProfile(noKey)
+	})
+	if err := s.m.pg.SetProfilePrompt(keyed, "TASK ROLE PROMPT", "prepend", true); err != nil {
+		t.Fatalf("SetProfilePrompt(keyed): %v", err)
+	}
+	if err := s.m.pg.SetProfilePrompt(noKey, "NO KEY PROMPT", "prepend", true); err != nil {
+		t.Fatalf("SetProfilePrompt(noKey): %v", err)
+	}
+	if err := s.m.pg.SetAgentLLMProfile("worker", nil); err != nil {
+		t.Fatalf("clear worker binding: %v", err)
+	}
+	t.Cleanup(func() { _ = s.m.pg.SetAgentLLMProfile("worker", nil) })
+	if err := s.m.pg.SetActiveProfile(keyed); err != nil {
+		t.Fatalf("SetActiveProfile(keyed): %v", err)
+	}
+
+	t0 := &Task{}
+	pp := s.profilePromptForTaskRole(t0, "worker")
+	if pp.Text != "TASK ROLE PROMPT" || pp.Source != "global_profile" {
+		t.Fatalf("global inherited overlay mismatch: %+v", pp)
+	}
+	tChain := &Task{LLMProfileIDs: []int64{keyed}, ActiveLLMProfileID: &keyed}
+	pp = s.profilePromptForTaskRole(tChain, "worker")
+	if pp.Text != "TASK ROLE PROMPT" || pp.Source != "task_chain" {
+		t.Fatalf("task-chain overlay mismatch: %+v", pp)
+	}
+
+	if err := s.m.pg.SetProfilePrompt(keyed, "TASK ROLE PROMPT", "prepend", false); err != nil {
+		t.Fatalf("disable inheritance: %v", err)
+	}
+	if pp = s.profilePromptForTaskRole(t0, "worker"); pp.Active() {
+		t.Fatalf("global inheritance off must not inject: %+v", pp)
+	}
+	if pp = s.profilePromptForTaskRole(tChain, "worker"); pp.Active() {
+		t.Fatalf("task-chain inheritance off must not inject: %+v", pp)
+	}
+
+	if err := s.m.pg.SetAgentLLMProfile("worker", &keyed); err != nil {
+		t.Fatalf("bind worker: %v", err)
+	}
+	pp = s.profilePromptForTaskRole(tChain, "worker")
+	if pp.Text != "TASK ROLE PROMPT" || pp.Source != "agent_binding" {
+		t.Fatalf("explicit binding must outrank the task chain: %+v", pp)
+	}
+	if err := s.m.pg.SetAgentLLMProfile("worker", nil); err != nil {
+		t.Fatalf("clear worker binding: %v", err)
+	}
+
+	if err := s.m.pg.SetActiveProfile(noKey); err != nil {
+		t.Fatalf("SetActiveProfile(noKey): %v", err)
+	}
+	if pp = s.profilePromptForTaskRole(t0, "worker"); pp.Active() {
+		t.Fatalf("global profile without API key must not inject: %+v", pp)
+	}
+	tChainNoKey := &Task{LLMProfileIDs: []int64{noKey}, ActiveLLMProfileID: &noKey}
+	if pp = s.profilePromptForTaskRole(tChainNoKey, "worker"); pp.Active() {
+		t.Fatalf("task-chain profile without API key must not inject: %+v", pp)
 	}
 }
 

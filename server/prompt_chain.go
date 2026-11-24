@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -18,6 +19,10 @@ import (
 // The read-only prompt assembly view. It deliberately projects configuration +
 // cached MCP metadata only: no provider is built, no MCP server is dialed, and
 // runtime-only segments are listed by name/gate with no fabricated body.
+
+// errInvalidPromptProfileID is returned for a malformed ?profile_id= value, so
+// the handler can answer 400 instead of a server error.
+var errInvalidPromptProfileID = errors.New("profile_id 格式错误")
 
 type promptChainSegment struct {
 	Key         string `json:"key"`
@@ -120,6 +125,10 @@ func (s *Server) pgAgentPromptChain(w http.ResponseWriter, r *http.Request) {
 	}
 	chain, err := s.buildAgentPromptChain(pg, a, r.URL.Query().Get("profile_id"))
 	if err != nil {
+		if errors.Is(err, errInvalidPromptProfileID) {
+			writeErr(w, 400, err.Error())
+			return
+		}
 		writeErr(w, 500, err.Error())
 		return
 	}
@@ -127,14 +136,25 @@ func (s *Server) pgAgentPromptChain(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) buildAgentPromptChain(pg *db.DB, a *db.Agent, profileParam string) (*agentPromptChain, error) {
-	var warnings []string
+	warnings := []string{}
 	var previewID *int64
 	if strings.TrimSpace(profileParam) != "" {
 		id, err := strconv.ParseInt(strings.TrimSpace(profileParam), 10, 64)
 		if err != nil || id <= 0 {
-			return nil, fmt.Errorf("profile_id 格式错误")
+			return nil, errInvalidPromptProfileID
 		}
 		previewID = &id
+	}
+
+	// A failed prompt read must not look like "no prompt configured": keep the
+	// view usable but say the overlay state is untrustworthy.
+	readPrompt := func(id int64) db.PromptInfo {
+		pi, err := pg.ProfilePrompt(id)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("读取 LLM 配置 #%d 的独立提示词失败，相关状态不可信", id))
+			return db.PromptInfo{}
+		}
+		return pi
 	}
 
 	// Resolve the profile the configuration page can honestly show: an explicit
@@ -156,7 +176,7 @@ func (s *Server) buildAgentPromptChain(pg *db.DB, a *db.Agent, profileParam stri
 			break
 		}
 		profile, source, profileID = p, "preview_override", previewID
-		stored, _ = pg.ProfilePrompt(p.ID)
+		stored = readPrompt(p.ID)
 		if stored.Text != "" && validProfilePromptMode(stored.Mode) {
 			active = previewID
 		}
@@ -168,14 +188,14 @@ func (s *Server) buildAgentPromptChain(pg *db.DB, a *db.Agent, profileParam stri
 			break
 		}
 		profile, source, profileID = p, "agent_binding", a.LLMProfileID
-		stored, _ = pg.ProfilePrompt(p.ID)
+		stored = readPrompt(p.ID)
 		if stored.Text != "" && validProfilePromptMode(stored.Mode) {
 			active = a.LLMProfileID
 		}
 	default:
 		if p, err := pg.ActiveProfile(); err == nil && p != nil {
 			profile, profileID = p, &p.ID
-			stored, _ = pg.ProfilePrompt(p.ID)
+			stored = readPrompt(p.ID)
 			// A global profile without an API key cannot serve a run, so
 			// inheritedProfileID() will not load its prompt either. Report it as
 			// inactive instead of claiming an overlay the runtime never applies.
@@ -242,11 +262,19 @@ func (s *Server) buildAgentPromptChain(pg *db.DB, a *db.Agent, profileParam stri
 	if a.Role == "assistant" {
 		workDir, runDir = "<会话工作目录>", "<会话工作目录>"
 	}
+	// The static view must not advance proxy-pool selection or echo credentials.
+	proxyAddr := ""
+	if a.Key == "worker" {
+		proxyAddr = s.m.ProxyDisplayAddr()
+	}
 	segments = append(segments, agent.StaticTailSegments(a.Key, agent.TailOptions{
 		WorkDir: workDir, RunDir: runDir,
-		ProxyAddr: s.m.ProxyAddr(), CAEnabled: s.m.TrafficEnabled(),
+		ProxyAddr: proxyAddr, CAEnabled: s.m.TrafficEnabled(),
 		IncludeHostTools: true, GoalScope: false,
 	})...)
+	if proxyAddr != "" {
+		warnings = append(warnings, "静态视图中的出口代理地址可能已脱敏或为运行时占位；实际出口以运行为准")
+	}
 	segments = append(segments, promptChainRuntimeSegments(a.Key)...)
 	if a.Key != "goals" {
 		segments = append(segments, promptChainTailRuntimeSegments()...)
@@ -286,7 +314,7 @@ func (s *Server) buildAgentPromptChain(pg *db.DB, a *db.Agent, profileParam stri
 	if a.LLMProfileID == nil {
 		warnings = append(warnings, "该 Agent 未绑定 LLM 配置：运行时按任务链/全局解析；只有开启「继承时也生效」的配置会注入独立提示词")
 	}
-	if profile != nil && profile.APIKeyHint == "" {
+	if profile != nil && profile.APIKey == "" {
 		warnings = append(warnings, "该 LLM 配置未设置 API Key，运行时可能回落到其他配置")
 	}
 	if a.LLMProfileID != nil && s.m.LLMPoolBindFallback() {
@@ -429,8 +457,8 @@ func promptChainRuntimeSegments(agentKey string) []agent.PromptSegment {
 			mk("runtime_constraints", "任务操作约束", "任务配置了操作约束"),
 			mk("runtime_program_profile", "Program Profile", "任务配置了 SRC/众测 profile"),
 			mk("runtime_task_auth", "任务登录凭据", "任务配置了登录凭据（正文永不在此展示）"),
-			mk("runtime_artifact_guidance", "产物附件纪律", "工具集包含产物附件工具"),
-			mk("runtime_sqlmap", "sqlmap 专项提示", "工具集包含 sqlmap"),
+			mk("runtime_artifact_guidance", "产物附件纪律", "每次 worker run 注入"),
+			mk("runtime_sqlmap", "sqlmap 专项提示", "每次 worker run 注入"),
 			mk("runtime_intent", "意图与资产快照", "每次 worker run 按领取的意图注入"),
 			mk("runtime_facts", "既有事实", "图上已有相关 fact"),
 			mk("runtime_lessons", "终态经验", "匹配到同资产/同维度的终态经验"),
@@ -565,7 +593,7 @@ func (s *Server) promptChainMCP(pg *db.DB, a *db.Agent) ([]promptChainMCP, error
 		}
 		item.LastError = srv.LastError
 		if mode != "excluded" {
-			if tools, err := pg.MCPToolsDetailed(srv.ID); err == nil {
+			if tools, err := pg.MCPToolsDetailed(srv.ID); err == nil && tools != nil {
 				item.Tools = tools
 			}
 			item.CacheStale = item.Health == "failed" && len(item.Tools) > 0
@@ -595,7 +623,7 @@ func (s *Server) promptChainSkills(pg *db.DB, a *db.Agent) []promptChainSkill {
 	}
 	for _, name := range names {
 		desc := ""
-		var mcps []string
+		mcps := []string{}
 		if sk, ok := byDir[name]; ok {
 			desc = strings.TrimSpace(sk.Description)
 			if i := strings.IndexAny(desc, "。；;\n"); i > 0 {
@@ -604,7 +632,9 @@ func (s *Server) promptChainSkills(pg *db.DB, a *db.Agent) []promptChainSkill {
 			if r := []rune(desc); len(r) > 120 {
 				desc = string(r[:120]) + "…"
 			}
-			mcps = sk.MCPs
+			if sk.MCPs != nil {
+				mcps = sk.MCPs
+			}
 		}
 		out = append(out, promptChainSkill{
 			Name: name, Description: desc, MCPGated: mcps,
