@@ -339,7 +339,7 @@ function buildLayout(chain: AgentPromptChainData): Layout {
       id: "body",
       tag: "正文",
       title: "提示词正文",
-      sub: body.present ? "DB 模板正文 · 在配置中编辑" : "被独立提示词替换",
+      sub: body.present ? `${body.source_label || "提示词正文"} · 在配置中编辑` : "被独立提示词替换",
       chars: body.present ? body.chars : 0,
       color: "body",
       present: body.present,
@@ -654,11 +654,11 @@ function SituationStrip({
   const llm = chain.llm;
   const excluded = chain.tools.excluded.length;
   const outOfIndex = chain.skills.filter((s) => !s.in_index).length;
-  const enabledMCP = chain.mcp.filter((m) => m.enabled);
-  const mcpOk = enabledMCP.filter((m) => m.health === "ok").length;
-  const mcpFailed = enabledMCP.filter((m) => m.health === "failed").length;
-  const mcpNever = enabledMCP.filter((m) => m.health === "never_checked").length;
-  const mcpStale = chain.mcp.filter((m) => m.cache_stale).length;
+  const activeMCP = chain.mcp.filter((m) => m.enabled && m.mode !== "excluded");
+  const mcpOk = activeMCP.filter((m) => m.health === "ok").length;
+  const mcpFailed = activeMCP.filter((m) => m.health === "failed").length;
+  const mcpNever = activeMCP.filter((m) => m.health === "never_checked").length;
+  const mcpStale = activeMCP.filter((m) => m.cache_stale).length;
   const runtimeCount = chain.segments.filter((s) => !s.available).length;
   const overlayValue = llm.prompt_active
     ? `${modeLabel(llm.prompt_mode)} · ${llm.prompt_chars}c · 生效`
@@ -668,7 +668,7 @@ function SituationStrip({
   const profileValue = llm.name
     ? `${llm.name}${llm.profile_id ? ` #${llm.profile_id}` : ""} · ${llm.source_label}`
     : "未解析";
-  const firstFailedMCP = chain.mcp.find((m) => m.health === "failed") ?? chain.mcp[0];
+  const firstFailedMCP = activeMCP.find((m) => m.health === "failed") ?? chain.mcp[0];
   const mcpTone: LampTone = mcpFailed > 0 ? "danger" : mcpStale > 0 ? "stale" : mcpNever > 0 ? "hollow" : "quiet";
 
   return (
@@ -696,7 +696,7 @@ function SituationStrip({
         <SituationUnit label="SCALE" value={`${chain.totals.segments} 段 · ${fmt(chain.totals.chars)}c · ≈${fmt(chain.totals.est_tokens)} tok`} onClick={() => onOpen({ kind: "model" })} />
         <SituationUnit
           label="INTEGRITY"
-          value={`${chain.warnings.length} 告警 · ${excluded} 排除 · MCP ${mcpOk}/${enabledMCP.length} 正常`}
+          value={`${chain.warnings.length} 告警 · ${excluded} 排除 · MCP ${mcpOk}/${activeMCP.length} 正常`}
           onClick={() => onOpen({ kind: "excluded" })}
         />
         <SituationUnit
@@ -733,6 +733,37 @@ function SituationStrip({
   );
 }
 
+function normalizeChain(data: AgentPromptChainData): AgentPromptChainData {
+  // Go nil slices serialize as null. Normalize once so every downstream
+  // .map/.length/filter sees an array, including older cached payloads.
+  const tools = data.tools ?? {
+    builtin: [],
+    custom: [],
+    traffic: [],
+    shell: [],
+    deferred_names: [],
+    excluded: [],
+    total: 0,
+  };
+  return {
+    ...data,
+    segments: data.segments ?? [],
+    mcp: (data.mcp ?? []).map((m) => ({ ...m, tools: m.tools ?? [] })),
+    skills: (data.skills ?? []).map((s) => ({ ...s, mcp_gated: s.mcp_gated ?? [] })),
+    warnings: data.warnings ?? [],
+    tools: {
+      ...tools,
+      builtin: tools.builtin ?? [],
+      custom: tools.custom ?? [],
+      traffic: tools.traffic ?? [],
+      shell: tools.shell ?? [],
+      deferred_names: tools.deferred_names ?? [],
+      excluded: tools.excluded ?? [],
+      total: tools.total ?? 0,
+    },
+  };
+}
+
 export function AgentPromptChain({
   agentKey,
   active,
@@ -762,7 +793,7 @@ export function AgentPromptChain({
     try {
       const data = await api.agentPromptChain(agentKey);
       if (reqRef.current === seq) {
-        setChain(data);
+        setChain(normalizeChain(data));
         setPath([]);
       }
     } catch (e) {
@@ -1652,7 +1683,7 @@ function MCPRail({
         const y = mcpY + i * 38 + 10;
         const id = `mcp:${m.id}`;
         const active = anchor === id;
-        const tone = !m.enabled
+        const tone = !m.enabled || m.mode === "excluded"
           ? "fill-transparent stroke-muted-foreground/60"
           : m.health === "ok"
             ? "fill-emerald-500 stroke-emerald-500"
@@ -1661,14 +1692,18 @@ function MCPRail({
               : "fill-transparent stroke-muted-foreground";
         const status = !m.enabled
           ? "未启用 · 不进入请求"
-          : m.mode === "skill_gated"
-            ? `由 Skill「${m.skill}」解锁`
-            : m.health === "failed"
-              ? "上次失败 · 缓存可能过期"
-              : m.health === "never_checked"
-                ? "未检查"
-                : "全局可见";
-        const cached = !m.enabled ? "未缓存" : `已缓存 ${m.tools.length} / 共 ${m.tool_count}`;
+          : m.mode === "excluded"
+            ? "不进入本 Agent"
+            : m.mode === "skill_gated"
+              ? `由 Skill「${m.skill}」解锁`
+              : m.health === "failed"
+                ? "上次失败 · 缓存可能过期"
+                : m.health === "never_checked"
+                  ? "未检查"
+                  : "全局可见";
+        const cached = !m.enabled || m.mode === "excluded"
+          ? "未进入本 Agent"
+          : `已缓存 ${m.tools.length} / 共 ${m.tool_count}`;
         return (
           <g
             key={m.id}
@@ -1872,7 +1907,7 @@ function SegmentDetail({
       ? "这是用户在 LLM 配置里自写的纯文本，不是平台的固定字段。平台不解析变量，也没有优先级概念；是否生效只看绑定与注入模式。"
       : seg.kind === "body"
         ? seg.present
-          ? "Agent 的 DB 模板正文，可在 Agent 设置中编辑。"
+          ? `提示词正文；来源：${sourceLabel(seg)}，可在 Agent 设置中编辑。`
           : "已被独立提示词替换；技能索引与代码硬尾巴仍然保留。"
         : seg.kind === "skill_index"
           ? "宿主从已绑定 Skill 生成的速查块；只列名称与描述，正文按需加载。"
