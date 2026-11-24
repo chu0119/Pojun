@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -156,5 +157,27 @@ func TestProfilePromptContextRoundTrip(t *testing.T) {
 	}
 	if got := ProfilePromptFrom(nil); got.Active() {
 		t.Fatalf("nil ctx must yield zero overlay: %+v", got)
+	}
+}
+
+func TestChatFallbackUsesAgentDefault(t *testing.T) {
+	oldOverride, oldSkill := PromptOverride, SkillIndexBlock
+	t.Cleanup(func() { PromptOverride, SkillIndexBlock = oldOverride, oldSkill })
+	PromptOverride = func(key string) (string, bool) {
+		if key == "auto" {
+			return "{{.Goal}}", true // undefined in chatVars → render fallback
+		}
+		return "", false
+	}
+	SkillIndexBlock = nil
+
+	vars := chatVars{DataDir: "/data", Now: nowStr()}
+	want := renderSystemWith("auto", DefaultPromptFor("auto"), vars, ProfilePrompt{}) + chatWorkDirSpec("/work")
+	got := chatSystemWith("auto", "/data", "/work", ProfilePrompt{})
+	normalize := func(s string) string {
+		return regexp.MustCompile(`\d{4}-\d\d-\d\d \d\d:\d\d:\d\d \S+`).ReplaceAllString(s, "<NOW>")
+	}
+	if normalize(got) != normalize(want) {
+		t.Fatalf("chat fallback drifted from DefaultPromptFor\n got=%q\nwant=%q", got, want)
 	}
 }
