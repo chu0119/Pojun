@@ -20,6 +20,10 @@ type PromptSegment struct {
 	Available bool   `json:"available"`
 	Reason    string `json:"reason,omitempty"`
 	Text      string `json:"text"`
+	// OriginalChars is the content length when Text was dropped from the request
+	// (replace mode). Zero when Text is the content. The read-only chain projects
+	// it so a removed body reports its original size instead of 0.
+	OriginalChars int `json:"-"`
 }
 
 // JoinPromptSegments concatenates segment texts without inserting separators:

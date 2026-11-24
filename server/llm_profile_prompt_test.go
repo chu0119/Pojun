@@ -56,6 +56,12 @@ func TestNormalizeProfilePromptRequest(t *testing.T) {
 
 func strPtr(s string) *string { return &s }
 
+func TestPromptInactiveReasonNoProfile(t *testing.T) {
+	if got := promptInactiveReason(nil, db.PromptInfo{}, "none", nil); got != "当前没有解析到 LLM 配置" {
+		t.Fatalf("no-profile reason = %q", got)
+	}
+}
+
 func TestProfilePromptChatResolution(t *testing.T) {
 	m, err := NewManager(t.TempDir(), "")
 	if err != nil {
@@ -132,6 +138,9 @@ func TestAgentPromptChainHandler(t *testing.T) {
 	if !chain.LLM.PromptActive || chain.LLM.Source != "agent_binding" || chain.LLM.PromptChars == 0 {
 		t.Fatalf("llm overlay mismatch: %+v", chain.LLM)
 	}
+	if chain.LLM.ProfileID == nil || *chain.LLM.ProfileID != id {
+		t.Fatalf("llm profile id = %v, want %d", chain.LLM.ProfileID, id)
+	}
 	find := func(key string) (promptChainSegment, bool) {
 		for _, seg := range chain.Segments {
 			if seg.Key == key {
@@ -162,6 +171,113 @@ func TestAgentPromptChainHandler(t *testing.T) {
 	}
 	if chain.Totals.Chars == 0 || chain.Totals.EstTokens == 0 {
 		t.Fatalf("totals empty: %+v", chain.Totals)
+	}
+
+	// replace: the body leaves the request, but the chain still reports how much
+	// text was dropped instead of showing 0.
+	if err := s.m.pg.SetProfilePrompt(id, "PROFILE CHAIN PROMPT", "replace", true); err != nil {
+		t.Fatalf("SetProfilePrompt(replace): %v", err)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/agents/worker/prompt/chain", nil)
+	req.SetPathValue("key", "worker")
+	rr = httptest.NewRecorder()
+	s.pgAgentPromptChain(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("replace status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	chain = agentPromptChain{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &chain); err != nil {
+		t.Fatalf("decode replace chain: %v", err)
+	}
+	profile, ok = find("profile_prompt")
+	if !ok || !profile.Present || !strings.Contains(profile.Text, "PROFILE CHAIN PROMPT") {
+		t.Fatalf("replace profile segment mismatch: %+v", profile)
+	}
+	body, ok = find("body")
+	if !ok || body.Present || body.Text != "" || body.Chars == 0 || !strings.Contains(body.Reason, "原正文") {
+		t.Fatalf("replace body must keep its original size: %+v", body)
+	}
+}
+
+func TestAgentPromptChainInactiveProfileExposesText(t *testing.T) {
+	m, err := NewManager(t.TempDir(), "")
+	if err != nil {
+		t.Skipf("postgres unavailable (%v)", err)
+	}
+	t.Cleanup(func() { m.Close() })
+	s := New(context.Background(), m, "../skills", t.TempDir(), t.TempDir())
+	t.Cleanup(func() { s.Close() })
+
+	prev, _ := s.m.pg.ActiveProfile()
+	name := "prompt-chain-inactive-" + time.Now().Format("150405.000000")
+	id, err := s.m.pg.SaveProfile(&db.LLMProfile{Name: name, Format: "openai", Model: "m", APIKey: "sk-test"})
+	if err != nil {
+		t.Fatalf("SaveProfile: %v", err)
+	}
+	t.Cleanup(func() {
+		if prev != nil {
+			_ = s.m.pg.SetActiveProfile(prev.ID)
+		} else {
+			_, _ = s.m.pg.Exec(`UPDATE llm_profiles SET is_default=false`)
+		}
+		_, _ = s.m.pg.Exec(`UPDATE llm_profiles SET is_default=false WHERE id=$1`, id)
+		_ = s.m.pg.DeleteProfile(id)
+	})
+	if err := s.m.pg.SetProfilePrompt(id, "INACTIVE PROFILE TEXT", "append", false); err != nil {
+		t.Fatalf("SetProfilePrompt: %v", err)
+	}
+	if err := s.m.pg.SetActiveProfile(id); err != nil {
+		t.Fatalf("SetActiveProfile: %v", err)
+	}
+	if err := s.m.pg.SetAgentLLMProfile("worker", nil); err != nil {
+		t.Fatalf("clear worker binding: %v", err)
+	}
+	a, err := s.m.pg.GetAgentByKey("worker")
+	if err != nil || a == nil {
+		t.Fatalf("GetAgentByKey(worker): %v", err)
+	}
+	chain, err := s.buildAgentPromptChain(s.m.pg, a, "")
+	if err != nil {
+		t.Fatalf("buildAgentPromptChain: %v", err)
+	}
+	if chain.LLM.Source != "global_profile_inactive" || chain.LLM.PromptActive {
+		t.Fatalf("global inactive overlay mismatch: %+v", chain.LLM)
+	}
+	if chain.LLM.SourceLabel != "全局激活配置 · 未生效" {
+		t.Fatalf("inactive source label must stay neutral: %q", chain.LLM.SourceLabel)
+	}
+	if chain.LLM.ProfileID == nil || *chain.LLM.ProfileID != id {
+		t.Fatalf("llm profile id = %v, want %d", chain.LLM.ProfileID, id)
+	}
+	var profile, body *promptChainSegment
+	for i := range chain.Segments {
+		switch chain.Segments[i].Key {
+		case "profile_prompt":
+			profile = &chain.Segments[i]
+		case "body":
+			body = &chain.Segments[i]
+		}
+	}
+	if profile == nil || profile.Present || !profile.Available || profile.Order != 1 {
+		t.Fatalf("inactive profile segment state mismatch: %+v", profile)
+	}
+	if !strings.Contains(profile.Text, "INACTIVE PROFILE TEXT") || profile.Chars == 0 {
+		t.Fatalf("inactive profile segment must expose the configured text: %+v", profile)
+	}
+	if !strings.Contains(profile.Reason, "继承") {
+		t.Fatalf("inactive reason must explain the inheritance gate: %q", profile.Reason)
+	}
+	if body == nil || !body.Present || body.Text == "" {
+		t.Fatalf("body must remain assembled: %+v", body)
+	}
+	counted := 0
+	for _, seg := range chain.Segments {
+		if seg.Present && seg.Available {
+			counted += seg.Chars
+		}
+	}
+	if counted != chain.Totals.Chars {
+		t.Fatalf("totals %d != counted segments %d", chain.Totals.Chars, counted)
 	}
 }
 

@@ -45,6 +45,36 @@ func TestProfilePromptModes(t *testing.T) {
 	}
 }
 
+func TestReplaceSegmentKeepsOriginalBodyChars(t *testing.T) {
+	oldOverride, oldSkill := PromptOverride, SkillIndexBlock
+	t.Cleanup(func() { PromptOverride, SkillIndexBlock = oldOverride, oldSkill })
+	PromptOverride = nil
+	SkillIndexBlock = nil
+
+	segs, _ := renderSystemSegments("worker", "BODY", WorkerVars{}, ProfilePrompt{Text: "P", Mode: "replace"})
+	var body, profile *PromptSegment
+	for i := range segs {
+		switch segs[i].Key {
+		case "body":
+			body = &segs[i]
+		case "profile_prompt":
+			profile = &segs[i]
+		}
+	}
+	if profile == nil || !profile.Present || profile.Text != "P" {
+		t.Fatalf("replace profile segment mismatch: %+v", profile)
+	}
+	if body == nil || body.Present || body.Text != "" {
+		t.Fatalf("replaced body must have no text: %+v", body)
+	}
+	if body.OriginalChars != 4 {
+		t.Fatalf("original chars = %d, want 4", body.OriginalChars)
+	}
+	if !strings.Contains(body.Reason, "原正文 4 字符") {
+		t.Fatalf("reason must state the original size: %q", body.Reason)
+	}
+}
+
 func TestProfilePromptSitsBeforeCodeTails(t *testing.T) {
 	oldOverride, oldSkill := PromptOverride, SkillIndexBlock
 	t.Cleanup(func() { PromptOverride, SkillIndexBlock = oldOverride, oldSkill })

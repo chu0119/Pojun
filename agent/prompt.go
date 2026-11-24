@@ -168,7 +168,8 @@ func renderSystemSegments(agentKey, def string, vars any, pp ProfilePrompt) ([]P
 		appendProfile(pp.Text)
 		bodySeg.Present = false
 		bodySeg.Text = ""
-		bodySeg.Reason = fmt.Sprintf("已被独立提示词替换（原正文 %d 字符；技能索引与代码硬尾巴仍保留）", utf8.RuneCountInString(rendered))
+		bodySeg.OriginalChars = utf8.RuneCountInString(rendered)
+		bodySeg.Reason = fmt.Sprintf("已被独立提示词替换（原正文 %d 字符；技能索引与代码硬尾巴仍保留）", bodySeg.OriginalChars)
 		out = append(out, bodySeg, skillSeg)
 	case pp.Active() && pp.Mode == "prepend":
 		appendProfile(pp.Text + "\n\n")
