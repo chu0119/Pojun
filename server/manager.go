@@ -1095,6 +1095,39 @@ func (m *Manager) ProxyAddr() string {
 	return m.globalProxy
 }
 
+// ProxyDisplayAddr returns a read-only proxy address for static previews.
+// It never calls ProxyPoolPick, so opening a preview cannot advance round-robin
+// or pin a sticky host. Credentials are masked; a pool-only setup returns a
+// placeholder because the actual upstream is chosen per run.
+func (m *Manager) ProxyDisplayAddr() string {
+	if m == nil {
+		return ""
+	}
+	if m.traffic != nil && m.TrafficEnabled() {
+		return proxyDisplayAddr(m.traffic.ProxyAddr())
+	}
+	if m.traffic != nil && m.traffic.ProxyPoolConfigured() {
+		return "<运行时按代理池选择>"
+	}
+	m.mu.RLock()
+	g := m.globalProxy
+	m.mu.RUnlock()
+	return proxyDisplayAddr(g)
+}
+
+// proxyDisplayAddr masks proxy credentials for a read-only view. Invalid values
+// are replaced instead of echoed, so a malformed URL cannot leak userinfo.
+func proxyDisplayAddr(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if _, err := traffic.ValidateProxyURL(raw); err != nil {
+		return "<出口代理已配置（地址不可展示）>"
+	}
+	return maskProxyURL(raw)
+}
+
 // strictEgressBlockProxy 是严格出口的哨兵地址（连接必然失败）：宁可请求失败，
 // 也不让目标流量从真实 IP 直连出去。语义同 traffic.strictBlockProxy。
 const strictEgressBlockProxy = "http://127.0.0.1:1"

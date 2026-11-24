@@ -41,8 +41,10 @@ func JoinPromptSegments(parts []PromptSegment) string {
 // interpolate. Empty strings become visible placeholders, so a preview never
 // claims a path that the production run does not use.
 type TailOptions struct {
-	WorkDir          string
-	RunDir           string
+	WorkDir string
+	RunDir  string
+	// ProxyAddr may be a masked/placeholder value in read-only previews; the
+	// runtime passes the real egress address.
 	ProxyAddr        string
 	CAEnabled        bool
 	IncludeHostTools bool
