@@ -36,6 +36,8 @@ type promptChainSegment struct {
 }
 
 type promptChainLLM struct {
+	// ProfileID is the resolved profile (preview/binding/global), even when its
+	// prompt is inactive; PromptActive reports the overlay separately.
 	ProfileID            *int64 `json:"profile_id"`
 	Name                 string `json:"name"`
 	Model                string `json:"model"`
@@ -139,10 +141,11 @@ func (s *Server) buildAgentPromptChain(pg *db.DB, a *db.Agent, profileParam stri
 	// preview override, the agent's binding, or the global active profile. Task
 	// chain selection only exists at run time and is reported as such.
 	var (
-		profile *db.LLMProfile
-		stored  db.PromptInfo
-		active  *int64
-		source  = "none"
+		profile   *db.LLMProfile
+		stored    db.PromptInfo
+		active    *int64
+		profileID *int64
+		source    = "none"
 	)
 	switch {
 	case previewID != nil:
@@ -152,7 +155,7 @@ func (s *Server) buildAgentPromptChain(pg *db.DB, a *db.Agent, profileParam stri
 			warnings = append(warnings, "预览指定的 LLM 配置不存在")
 			break
 		}
-		profile, source = p, "preview_override"
+		profile, source, profileID = p, "preview_override", previewID
 		stored, _ = pg.ProfilePrompt(p.ID)
 		if stored.Text != "" && validProfilePromptMode(stored.Mode) {
 			active = previewID
@@ -164,16 +167,19 @@ func (s *Server) buildAgentPromptChain(pg *db.DB, a *db.Agent, profileParam stri
 			warnings = append(warnings, "Agent 绑定的 LLM 配置不存在")
 			break
 		}
-		profile, source = p, "agent_binding"
+		profile, source, profileID = p, "agent_binding", a.LLMProfileID
 		stored, _ = pg.ProfilePrompt(p.ID)
 		if stored.Text != "" && validProfilePromptMode(stored.Mode) {
 			active = a.LLMProfileID
 		}
 	default:
 		if p, err := pg.ActiveProfile(); err == nil && p != nil {
-			profile = p
+			profile, profileID = p, &p.ID
 			stored, _ = pg.ProfilePrompt(p.ID)
-			if stored.ApplyInherited && stored.Text != "" && validProfilePromptMode(stored.Mode) {
+			// A global profile without an API key cannot serve a run, so
+			// inheritedProfileID() will not load its prompt either. Report it as
+			// inactive instead of claiming an overlay the runtime never applies.
+			if p.APIKey != "" && stored.ApplyInherited && stored.Text != "" && validProfilePromptMode(stored.Mode) {
 				active = &p.ID
 				source = "global_profile"
 			} else {
@@ -188,7 +194,7 @@ func (s *Server) buildAgentPromptChain(pg *db.DB, a *db.Agent, profileParam stri
 	}
 
 	llm := promptChainLLM{
-		ProfileID:            active,
+		ProfileID:            profileID,
 		Source:               source,
 		SourceLabel:          promptChainSourceLabel(source),
 		PromptMode:           stored.Mode,
@@ -206,10 +212,16 @@ func (s *Server) buildAgentPromptChain(pg *db.DB, a *db.Agent, profileParam stri
 		warnings = append(warnings, renderWarning)
 	}
 	if !pp.Active() {
-		segments = append([]agent.PromptSegment{{
+		synthetic := agent.PromptSegment{
 			Key: "profile_prompt", Title: "独立提示词（LLM 配置）", Source: "profile_prompt",
 			Available: true, Present: false, Reason: promptInactiveReason(profile, stored, source, previewID),
-		}}, segments...)
+		}
+		// Keep the configured text in the read-only projection so the detail can
+		// show what the user wrote. It stays out of totals: Present is false.
+		if stored.Text != "" {
+			synthetic.Text = stored.Text
+		}
+		segments = append([]agent.PromptSegment{synthetic}, segments...)
 	}
 
 	// Body source label (DB template version vs built-in fallback).
@@ -245,7 +257,9 @@ func (s *Server) buildAgentPromptChain(pg *db.DB, a *db.Agent, profileParam stri
 	for i, seg := range segments {
 		label := promptChainSegmentLabel(seg, pp, bodyLabel)
 		chars := utf8.RuneCountInString(seg.Text)
-		if strings.HasPrefix(seg.Text, "\n\n") {
+		if seg.OriginalChars > 0 {
+			chars = seg.OriginalChars
+		} else if strings.HasPrefix(seg.Text, "\n\n") {
 			chars = utf8.RuneCountInString(strings.TrimPrefix(seg.Text, "\n\n"))
 		}
 		if seg.Present && seg.Available {
@@ -306,7 +320,7 @@ func promptChainSourceLabel(source string) string {
 	case "global_profile":
 		return "全局激活配置 · 继承生效"
 	case "global_profile_inactive":
-		return "全局激活配置 · 继承未开启"
+		return "全局激活配置 · 未生效"
 	case "preview_override":
 		return "预览指定配置"
 	default:
@@ -321,10 +335,21 @@ func promptInactiveReason(profile *db.LLMProfile, stored db.PromptInfo, source s
 	case source == "agent_binding" && profile == nil:
 		return "Agent 绑定的 LLM 配置不存在"
 	case source == "global_profile_inactive":
-		if stored.Text != "" && !stored.ApplyInherited {
+		if profile != nil && profile.APIKey == "" {
+			return "全局激活配置没有 API Key，运行时不会装载其独立提示词"
+		}
+		if stored.Text == "" {
+			return "全局激活配置未设置独立提示词"
+		}
+		if !stored.ApplyInherited {
 			return "全局激活配置设置了独立提示词，但未开启「继承时也生效」"
 		}
-		return "全局激活配置未设置独立提示词"
+		if !validProfilePromptMode(stored.Mode) {
+			return "独立提示词模式无效，未注入"
+		}
+		return "全局激活配置的独立提示词未生效"
+	case source == "none" && profile == nil:
+		return "当前没有解析到 LLM 配置"
 	case stored.Text == "":
 		return "该 LLM 配置未设置独立提示词"
 	case !validProfilePromptMode(stored.Mode):
