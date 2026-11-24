@@ -1400,6 +1400,11 @@ export interface LLMProfile {
   retry?: LLMRetryOverride;
   // 厂商预设来源（llmpresets.ID）。空 = 手动配置或旧数据。
   preset_id?: string;
+  // 独立提示词（v0.4.114）：纯文本；只在本配置被显式绑定到 Agent，或开启
+  // prompt_apply_inherited 后被任务链/全局选路选中时注入。空 = 未配置。
+  prompt?: string;
+  prompt_mode?: "prepend" | "append" | "replace" | "";
+  prompt_apply_inherited?: boolean;
 }
 
 // ─── LLM 厂商知识层（v0.4.91 配置重构）───
@@ -1562,6 +1567,93 @@ export interface AgentDetail {
   task_timeout_wrapup_default?: string;
   task_timeout_wrapup_max_turns?: number;
   task_timeout_wrapup_max_turns_default?: number;
+}
+
+// ---- Agent 提示词全链路（只读） ----
+export interface PromptChainSegment {
+  key: string;
+  title: string;
+  kind: string;
+  source: string;
+  source_label: string;
+  editable: boolean;
+  gate?: string;
+  present: boolean;
+  available: boolean;
+  reason?: string;
+  order: number;
+  chars: number;
+  text: string;
+}
+
+export interface PromptChainLLM {
+  profile_id?: number | null;
+  name: string;
+  model: string;
+  format: string;
+  source: string;
+  source_label: string;
+  prompt_mode: string;
+  prompt_chars: number;
+  prompt_apply_inherited: boolean;
+  prompt_active: boolean;
+}
+
+export interface PromptChainTool {
+  key: string;
+  description: string;
+  deferred: boolean;
+  gate?: string;
+}
+
+export interface PromptChainExcluded {
+  key: string;
+  reason: string;
+}
+
+export interface PromptChainTools {
+  builtin: PromptChainTool[];
+  custom: PromptChainTool[];
+  traffic: PromptChainTool[];
+  shell: PromptChainTool[];
+  deferred_names: string[];
+  excluded: PromptChainExcluded[];
+  total: number;
+}
+
+export interface PromptChainMCP {
+  id: number;
+  name: string;
+  transport: string;
+  enabled: boolean;
+  mode: "global" | "skill_gated" | "excluded";
+  skill: string;
+  health: "ok" | "failed" | "never_checked";
+  last_check_at?: string;
+  last_error?: string;
+  tool_count: number;
+  cache_stale: boolean;
+  tools: { name: string; description: string }[];
+}
+
+export interface PromptChainSkill {
+  name: string;
+  description: string;
+  in_index: boolean;
+  mcp_gated: string[];
+}
+
+export interface AgentPromptChain {
+  agent_key: string;
+  agent_kind: "builtin" | "custom";
+  llm: PromptChainLLM;
+  segments: PromptChainSegment[];
+  tools: PromptChainTools;
+  mcp: PromptChainMCP[];
+  skills: PromptChainSkill[];
+  totals: { segments: number; chars: number; est_tokens: number };
+  warnings: string[];
+  static_only: boolean;
 }
 
 // ---- MCP ----

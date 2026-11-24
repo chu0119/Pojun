@@ -462,6 +462,9 @@ export default function LLMPage() {
                           <Badge variant="outline" className={cn("uppercase", FORMAT_BADGE_CLS[p.format])}>
                             {p.format}
                           </Badge>
+                          {p.prompt?.trim() && (
+                            <Badge variant="outline" className="px-1.5 py-0 text-[10px]">独立提示词</Badge>
+                          )}
                           <Badge variant="outline" className={cn("ml-auto", h.cls)} title={h.hint}>
                             {h.label}
                           </Badge>
