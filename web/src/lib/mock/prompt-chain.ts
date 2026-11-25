@@ -59,7 +59,7 @@ const seg = (
 });
 
 export function mockPromptChain(agentKey: string): AgentPromptChain {
-  const baseProfileId = 3;
+  const baseProfileId = 1;
   const codeTail = (n: number, present = true, gate = "") =>
     seg(`tail-${n}`, `硬尾巴 #${n}`, "code_tail", {
       present,
@@ -117,7 +117,7 @@ export function mockPromptChain(agentKey: string): AgentPromptChain {
     agent_key: agentKey,
     agent_kind: agentKey === "worker" || agentKey === "planner" ? "builtin" : "custom",
     llm: {
-      profile_id: 3,
+      profile_id: 1,
       name: "主模型 · 长上下文",
       model: "gpt-5.2-codex",
       format: "openai-responses",
