@@ -1,8 +1,9 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { toast } from "sonner";
-import { Bot, PlusIcon, Trash2Icon } from "lucide-react";
+import { Bot, GitBranchIcon, PlusIcon, Trash2Icon } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -92,6 +93,20 @@ function AgentGridCard({
           <span className="rounded border px-1.5 py-0.5">工具 {agent.tool_count ?? 0}</span>
         </div>
       </button>
+      <Button
+        asChild
+        variant="ghost"
+        size="icon-sm"
+        className={`absolute top-2 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 ${agent.builtin ? "right-2" : "right-10"}`}
+      >
+        <Link
+          href={`/system/agents/chain?key=${encodeURIComponent(agent.key)}`}
+          aria-label={`查看「${agent.name}」的全链路`}
+          title="全链路"
+        >
+          <GitBranchIcon className="size-3.5" />
+        </Link>
+      </Button>
       {!agent.builtin && (
         <AlertDialog>
           <AlertDialogTrigger asChild>
@@ -228,12 +243,19 @@ export default function AgentsPage() {
             内置 Agent 的提示词/配置，以及自定义会话 Agent 的创建与管理
           </p>
         </div>
-        <CreateAgentDialog
-          onCreated={(key) => {
-            reload();
-            setEditKey(key);
-          }}
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          <Button asChild variant="outline" size="sm">
+            <Link href="/system/agents/chain?key=worker">
+              <GitBranchIcon /> 全链路
+            </Link>
+          </Button>
+          <CreateAgentDialog
+            onCreated={(key) => {
+              reload();
+              setEditKey(key);
+            }}
+          />
+        </div>
       </div>
 
       <Card>

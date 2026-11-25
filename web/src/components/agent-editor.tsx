@@ -1,6 +1,8 @@
 "use client";
 
 import * as React from "react";
+
+import Link from "next/link";
 import { toast } from "sonner";
 import { EyeIcon, GitBranchIcon, GitCompareIcon, PencilIcon, RotateCcwIcon, SaveIcon, Trash2Icon, XIcon } from "lucide-react";
 
@@ -24,7 +26,6 @@ import {
 } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Markdown } from "@/components/markdown";
-import { AgentPromptChain } from "@/components/agent-prompt-chain";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { Agent, AgentDetail, AgentTrigger, MCPServer, PromptVar, PromptVersion, Settings, SkillItem, Tool } from "@/lib/types";
@@ -277,15 +278,21 @@ export function AgentEditor({ agentKey, onSaved }: { agentKey: string; onSaved?:
 
   return (
     <Tabs value={activeTab} onValueChange={setActiveTab} className="flex min-h-0 flex-1 flex-col">
-      <TabsList className="mx-4 mt-2 w-fit max-w-[calc(100%_-_2rem)] justify-start overflow-x-auto">
-        <TabsTrigger value="prompt" className="shrink-0">配置与提示词</TabsTrigger>
-        <TabsTrigger value="chain" className="shrink-0">全链路</TabsTrigger>
-        <TabsTrigger value="wrapup" className="shrink-0">收尾提示词</TabsTrigger>
-        <TabsTrigger value="mcp" className="shrink-0">MCP</TabsTrigger>
-        <TabsTrigger value="skill" className="shrink-0">Skill</TabsTrigger>
-        <TabsTrigger value="tools" className="shrink-0">Tools</TabsTrigger>
-        {isCustom && <TabsTrigger value="triggers" className="shrink-0">触发</TabsTrigger>}
-      </TabsList>
+      <div className="mx-4 mt-2 flex items-center gap-2">
+        <TabsList className="w-fit max-w-full justify-start overflow-x-auto">
+          <TabsTrigger value="prompt" className="shrink-0">配置与提示词</TabsTrigger>
+          <TabsTrigger value="wrapup" className="shrink-0">收尾提示词</TabsTrigger>
+          <TabsTrigger value="mcp" className="shrink-0">MCP</TabsTrigger>
+          <TabsTrigger value="skill" className="shrink-0">Skill</TabsTrigger>
+          <TabsTrigger value="tools" className="shrink-0">Tools</TabsTrigger>
+          {isCustom && <TabsTrigger value="triggers" className="shrink-0">触发</TabsTrigger>}
+        </TabsList>
+        <Button asChild variant="outline" size="sm" className="ml-auto shrink-0">
+          <Link href={`/system/agents/chain?key=${encodeURIComponent(agentKey)}`}>
+            <GitBranchIcon /> 全链路
+          </Link>
+        </Button>
+      </div>
 
       {/* 配置 + 提示词 */}
       <TabsContent value="prompt" className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
@@ -431,9 +438,6 @@ export function AgentEditor({ agentKey, onSaved }: { agentKey: string; onSaved?:
                 </div>
               </DialogContent>
             </Dialog>
-            <Button variant="outline" size="sm" onClick={() => setActiveTab("chain")}>
-              <GitBranchIcon /> 查看装配链
-            </Button>
             <Button size="sm" onClick={savePrompt}>
               <SaveIcon /> 保存为新版本
             </Button>
@@ -528,11 +532,6 @@ export function AgentEditor({ agentKey, onSaved }: { agentKey: string; onSaved?:
             </DialogContent>
           </Dialog>
         </div>
-      </TabsContent>
-
-      {/* 全链路（只读） */}
-      <TabsContent value="chain" className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
-        <AgentPromptChain agentKey={agentKey} active={activeTab === "chain"} reloadKey={versions.length} />
       </TabsContent>
 
       {/* 收尾提示词 */}
