@@ -832,6 +832,7 @@ export function AgentPromptChain({
   const [error, setError] = React.useState("");
   const [path, setPath] = React.useState<PathEntry[]>([]);
   const [lampTest, setLampTest] = React.useState(false);
+  const [showSituation, setShowSituation] = React.useState(true);
   const reqRef = React.useRef(0);
 
   React.useEffect(() => {
@@ -973,7 +974,15 @@ export function AgentPromptChain({
               {chain.agent_kind === "builtin" ? "内置 Agent" : "自定义 Agent"}
             </Badge>
             <Badge variant="outline" className="px-1.5 py-0 font-mono text-[10px]">只读</Badge>
-            <span className="ml-auto font-mono text-muted-foreground text-[10px]">快照时间未采集</span>
+            <button
+              type="button"
+              className="ml-auto rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted/60"
+              aria-expanded={showSituation}
+              onClick={() => setShowSituation((v) => !v)}
+            >
+              态势带 {showSituation ? "▾" : "▸"}
+            </button>
+            <span className="font-mono text-muted-foreground text-[10px]">快照时间未采集</span>
           </div>
           <CardDescription className="text-xs">
             {chain.llm.name
@@ -981,7 +990,7 @@ export function AgentPromptChain({
               : "未解析到 LLM 配置"}
           </CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-2">
+        <CardContent className={showSituation ? "grid gap-2" : "hidden"}>
           <SituationStrip
             chain={chain}
             lampTest={lampTest}
@@ -1003,16 +1012,16 @@ export function AgentPromptChain({
       </Card>
 
       {chain.warnings.length > 0 && (
-        <div className="shrink-0 rounded-md border border-amber-500/40 bg-amber-500/5 p-3">
-          <div className="mb-1 flex items-center gap-1.5 font-medium text-amber-700 text-xs dark:text-amber-400">
-            <AlertTriangleIcon className="size-3.5" /> 注意
-          </div>
-          <ul className="list-disc pl-5 text-muted-foreground text-xs">
+        <details className="shrink-0 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-1.5">
+          <summary className="flex cursor-pointer items-center gap-1.5 font-medium text-amber-700 text-xs dark:text-amber-400">
+            <AlertTriangleIcon className="size-3.5" /> 注意 · {chain.warnings.length} 条
+          </summary>
+          <ul className="mt-1 list-disc pl-5 text-muted-foreground text-xs">
             {chain.warnings.map((w, i) => (
               <li key={i}>{w}</li>
             ))}
           </ul>
-        </div>
+        </details>
       )}
 
       <ChainGraph
