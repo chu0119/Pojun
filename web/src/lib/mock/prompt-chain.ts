@@ -155,7 +155,7 @@ export function mockPromptChain(agentKey: string): AgentPromptChain {
       deferred_names: ["browser_eval", "http_request", "session_login", "proxy_rotate", "dns_lookup", "port_scan"],
       excluded: [
         { key: "kb_search", reason: "该 Agent 未绑定知识库" },
-        { key: "detect_domain", reason: "内部版专属能力" },
+        { key: "browser_eval", reason: "工具集未启用" },
       ],
       total: 27,
     },
