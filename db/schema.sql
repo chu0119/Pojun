@@ -491,7 +491,7 @@ ALTER TABLE llm_profiles ADD  CONSTRAINT llm_profiles_retry_check CHECK (
 -- 预设。仅展示/向导关联用途，不参与 provider 构建；'' = 手动配置或旧数据。
 ALTER TABLE llm_profiles ADD COLUMN IF NOT EXISTS preset_id TEXT NOT NULL DEFAULT '';
 
--- LLM 配置级独立提示词（v0.4.114）：本配置被 Agent 显式绑定（或开启「继承时
+-- LLM 配置级独立提示词（v0.4.120）：本配置被 Agent 显式绑定（或开启「继承时
 -- 也生效」后实际被选中）时，作为一段纯文本附加到该 Agent 的 system prompt。
 -- '' = 未配置，历史行为逐字节不变。纯文本：不做 Go 模板渲染，{{.Var}} 原样保留。
 ALTER TABLE llm_profiles ADD COLUMN IF NOT EXISTS prompt TEXT NOT NULL DEFAULT '';
