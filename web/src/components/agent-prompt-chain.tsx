@@ -1202,14 +1202,16 @@ function ChainGraph({
     if (!el) return;
     const measure = () => {
       const node = canvasRef.current;
-      if (!node) return;
+      if (!node || node.clientWidth < 100) return; // 布局未就绪时不要落到最小宽
       setFrameW(Math.max(320, Math.round(node.clientWidth - 16)));
     };
     measure();
+    const raf = requestAnimationFrame(measure);
     const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
     ro?.observe(el);
     window.addEventListener("resize", measure);
     return () => {
+      cancelAnimationFrame(raf);
       window.removeEventListener("resize", measure);
       ro?.disconnect();
     };
