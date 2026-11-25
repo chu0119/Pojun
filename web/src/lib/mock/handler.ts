@@ -2362,6 +2362,16 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
   if (path === "/traffic" && m === "DELETE") return { deleted: 0 };
   if (path === "/traffic/hosts" && m === "DELETE") return { deleted: (b.hosts as unknown[])?.length ?? 0 };
   if (path === "/traffic/hosts") return { hosts: D.trafficHosts };
+  if (path === "/traffic/retention") {
+    const status = {
+      days: 30, enabled: true, cutoff: Math.floor(Date.now() / 1000) - 30 * 86400,
+      total: 19, candidates: 3, protected: 2, deletable: 1,
+    };
+    if (m === "POST") {
+      return { ...status, dry_run: b.dry_run !== false, deleted: b.dry_run === false ? 1 : 0, legacy_dirs: 0, blob_reclaimed: true };
+    }
+    return status;
+  }
   if (path === "/traffic") return D.traffic;
   if (path === "/traffic/exchange") return D.trafficDetail;
   if (path === "/settings" && m === "GET") return D.settings;

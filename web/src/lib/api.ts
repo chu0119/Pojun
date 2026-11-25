@@ -119,6 +119,8 @@ import type {
   TrafficEvidenceRole,
   TrafficHost,
   TrafficResp,
+  TrafficRetentionResult,
+  TrafficRetentionStatus,
   ProxyPoolState,
   LocalProxyCandidate,
   MihomoStatus,
@@ -949,6 +951,10 @@ export const api = {
   // Purges every exchange and compacts the index; `reclaimed` is the bytes of
   // index handed back to the filesystem. Evidence bound to findings is kept.
   trafficDeleteAll: () => del<{ deleted: number; reclaimed: number }>(`/traffic/all`),
+  // 未引用流量 TTL：GET 计算 dry-run；POST 显式 dry_run=false 才删除。
+  trafficRetention: () => get<TrafficRetentionStatus>(`/traffic/retention`),
+  trafficRetentionRun: (dryRun = true) =>
+    post<TrafficRetentionResult>(`/traffic/retention`, { dry_run: dryRun }),
 
   // ---- app settings (runtime toggles) ----
   settings: () => get<Settings>(`/settings`),

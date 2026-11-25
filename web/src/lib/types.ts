@@ -1140,11 +1140,35 @@ export interface TrafficHost {
   count: number;
 }
 
+// ---- 流量保留策略（未引用流量 TTL） ----
+export interface TrafficRetentionStatus {
+  days: number;
+  enabled: boolean;
+  cutoff: number; // unix seconds；0 = 未开启
+  total: number;
+  candidates: number;
+  protected: number;
+  deletable: number;
+}
+
+export interface TrafficRetentionResult {
+  dry_run: boolean;
+  days: number;
+  cutoff: number;
+  candidates: number;
+  protected: number;
+  deletable: number;
+  deleted?: number;
+  legacy_dirs?: number;
+  blob_reclaimed?: boolean;
+}
+
 // ---- App settings (runtime toggles) ----
 export interface Settings {
   artifact_max_count?: number; // #45/#50 证据附件每任务件数上限（生效值）
   artifact_max_bytes?: number; // 证据附件每任务总字节上限（生效值）
   traffic_capture: boolean;
+  traffic_retention_days?: number; // 未引用流量 TTL；0=关闭
   agent_traffic_binding: boolean; // Agent 自动绑定流量证据，默认关闭；不影响人工绑定
   llm_record: boolean; // LLM 录制开关（默认关）；关闭时不记录任何 LLM 调用
   // Web search. brave_key_set / tavily_key_set reflect whether a key is stored

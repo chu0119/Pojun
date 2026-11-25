@@ -13,12 +13,14 @@ import {
   Loader2Icon,
   RadioTowerIcon,
   SearchIcon,
+  TimerResetIcon,
   Trash2Icon,
 } from "lucide-react";
 import { toast } from "sonner";
 
 import { HttpCodeBlock } from "@/components/http-code-block";
 import { LinkTrafficDialog } from "@/components/link-traffic-dialog";
+import { TrafficRetentionDialog } from "@/components/traffic-retention-dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -148,6 +150,7 @@ export default function TrafficPage() {
 
   const [deleteMode, setDeleteMode] = React.useState<"filter" | "selected" | "all" | null>(null); // null = dialog closed
   const [deleting, setDeleting] = React.useState(false);
+  const [retentionOpen, setRetentionOpen] = React.useState(false);
   const [reloadTick, setReloadTick] = React.useState(0); // manual refetch trigger
 
   // Debounce both filters so we don't refetch on every keystroke.
@@ -345,6 +348,9 @@ export default function TrafficPage() {
           <p className="text-muted-foreground text-sm">全局录制代理 · 所有 HTTP 往来</p>
         </div>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+          <Button variant="outline" size="sm" className="h-8" onClick={() => setRetentionOpen(true)}>
+            <TimerResetIcon className="size-3.5" /> 保留策略
+          </Button>
           <span
             className={cn(
               "inline-flex shrink-0 items-center gap-1.5 rounded-md border px-2 py-0.5 font-medium text-xs",
@@ -826,6 +832,15 @@ export default function TrafficPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <TrafficRetentionDialog
+        open={retentionOpen}
+        onOpenChange={setRetentionOpen}
+        onChanged={() => {
+          setPage(0);
+          setReloadTick((t) => t + 1);
+        }}
+      />
     </div>
   );
 }

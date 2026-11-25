@@ -82,6 +82,9 @@ type Server struct {
 	// scheduler tick and an HTTP settings change / task creation can't both count
 	// free slots off the same snapshot and over-promote past the limit.
 	concMu sync.Mutex
+	// trafficRetentionMu serializes manual/automatic TTL passes. The traffic store
+	// has its own write lock, but status→delete is a read-then-write sequence.
+	trafficRetentionMu sync.Mutex
 
 	cfgMu     sync.Mutex
 	chatAgent *agent.ChatAgent // conversational runner for the chat page; nil w/o LLM
@@ -292,6 +295,7 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		// 漏洞 IM 推送投递引擎。与 Scheduler 并列但独立：推送的实时性要求(3s)
 		// 与触发器的业务节奏不同，且两者失败互不牵连——推送卡住不该影响 agent 触发。
 		go newNotifier(s).Run(s.ctx)
+		s.startTrafficRetentionWorker()
 		// Verify every enabled MCP at startup (connection + tools/list), recording
 		// last_ok/last_error/latency for the UI. Async so it never blocks startup.
 		go s.checkMCPHealthOnStartup()
@@ -893,6 +897,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/traffic", s.deleteTraffic)
 	mux.HandleFunc("DELETE /api/traffic/hosts", s.deleteTrafficHosts)
 	mux.HandleFunc("DELETE /api/traffic/all", s.deleteAllTraffic)
+	mux.HandleFunc("GET /api/traffic/retention", s.getTrafficRetention)
+	mux.HandleFunc("POST /api/traffic/retention", s.runTrafficRetentionHandler)
 	mux.HandleFunc("GET /api/traffic/exchange", s.getTrafficExchange)
 	mux.HandleFunc("GET /api/traffic/blob", s.getTrafficBlob)
 	mux.HandleFunc("GET /api/commands", s.pgListCommands)
@@ -3629,20 +3635,21 @@ func (s *Server) settingsPayload() map[string]any {
 	ib := intentBudgetFromPG(s.m.pg)
 	tb := taskBudgetFromPG(s.m.pg)
 	return map[string]any{
-		"traffic_capture":       s.m.TrafficEnabled(),
-		"agent_traffic_binding": s.m.pg.GetBool(settingAgentTrafficBinding, false),
-		"llm_record":            s.m.LLMRecordEnabled(),
-		"web_search_enabled":    on,
-		"web_search_backend":    backend,
-		"brave_key_set":         strings.TrimSpace(braveKey) != "",
-		"tavily_key_set":        strings.TrimSpace(tavilyKey) != "",
-		"web_search_proxy":      proxy,                                                     // 独立出口代理(http/https/socks5)，空=直连
-		"global_proxy":          s.m.GlobalProxy(),                                         // 全局出口代理(http/https/socks5)，所有目标流量走它，空=直连
-		"artifact_max_count":    func() int { c, _ := s.m.pg.ArtifactQuota(); return c }(), // #45/#50 证据附件限额（生效值）
-		"artifact_max_bytes":    func() int64 { _, b := s.m.pg.ArtifactQuota(); return b }(),
-		"install_proxy":         s.installProxy(),            // 装机代理：用于宿主工具安装和程序更新等维护请求
-		"python_interpreter":    strings.TrimSpace(pyStored), // 用户/自动设的值(空=用运行时检测)
-		"workers":               s.m.Workers(),               // 并发工作 agent 数(默认3)；对之后启动的任务生效
+		"traffic_capture":        s.m.TrafficEnabled(),
+		"traffic_retention_days": s.trafficRetentionDays(),
+		"agent_traffic_binding":  s.m.pg.GetBool(settingAgentTrafficBinding, false),
+		"llm_record":             s.m.LLMRecordEnabled(),
+		"web_search_enabled":     on,
+		"web_search_backend":     backend,
+		"brave_key_set":          strings.TrimSpace(braveKey) != "",
+		"tavily_key_set":         strings.TrimSpace(tavilyKey) != "",
+		"web_search_proxy":       proxy,                                                     // 独立出口代理(http/https/socks5)，空=直连
+		"global_proxy":           s.m.GlobalProxy(),                                         // 全局出口代理(http/https/socks5)，所有目标流量走它，空=直连
+		"artifact_max_count":     func() int { c, _ := s.m.pg.ArtifactQuota(); return c }(), // #45/#50 证据附件限额（生效值）
+		"artifact_max_bytes":     func() int64 { _, b := s.m.pg.ArtifactQuota(); return b }(),
+		"install_proxy":          s.installProxy(),            // 装机代理：用于宿主工具安装和程序更新等维护请求
+		"python_interpreter":     strings.TrimSpace(pyStored), // 用户/自动设的值(空=用运行时检测)
+		"workers":                s.m.Workers(),               // 并发工作 agent 数(默认3)；对之后启动的任务生效
 		// 冷节点压缩的输出预算与墙钟上限。0 = 用默认值(32768 token / 20 分钟)。
 		"compaction_max_tokens":      s.m.CompactionTokens(),
 		"compaction_timeout_seconds": s.m.CompactionTimeout(),
@@ -3741,9 +3748,10 @@ func (s *Server) pgDetectPython(w http.ResponseWriter, r *http.Request) {
 // off, agents get no proxy config, no traffic tools, and no proxy prompt content.
 func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TrafficCapture      *bool `json:"traffic_capture"`
-		AgentTrafficBinding *bool `json:"agent_traffic_binding"`
-		LLMRecord           *bool `json:"llm_record"` // LLM 录制开关（默认关）；即时生效，无需重建 agent
+		TrafficCapture       *bool `json:"traffic_capture"`
+		TrafficRetentionDays *int  `json:"traffic_retention_days"`
+		AgentTrafficBinding  *bool `json:"agent_traffic_binding"`
+		LLMRecord            *bool `json:"llm_record"` // LLM 录制开关（默认关）；即时生效，无需重建 agent
 		// Web search. WebSearchEnabled/Backend toggle the tool + backend; BraveKey/TavilyKey
 		// are optional — omit (null) to leave a stored key untouched, send "" to clear.
 		WebSearchEnabled *bool   `json:"web_search_enabled"`
@@ -4241,6 +4249,17 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		changed = true
+	}
+	if req.TrafficRetentionDays != nil {
+		days := *req.TrafficRetentionDays
+		if days < 0 || days > maxTrafficRetentionDays {
+			writeErr(w, 400, fmt.Sprintf("traffic_retention_days 必须在 0-%d 之间", maxTrafficRetentionDays))
+			return
+		}
+		if err := s.m.pg.SetSetting(settingTrafficRetentionDays, strconv.Itoa(days)); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
 	}
 	if req.GlobalProxy != nil {
 		// Validation failure (bad scheme/host) is a client error, not a 500.
