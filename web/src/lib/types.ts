@@ -1400,7 +1400,7 @@ export interface LLMProfile {
   retry?: LLMRetryOverride;
   // 厂商预设来源（llmpresets.ID）。空 = 手动配置或旧数据。
   preset_id?: string;
-  // 独立提示词（v0.4.114）：纯文本；只在本配置被显式绑定到 Agent，或开启
+  // 独立提示词（v0.4.120）：纯文本；只在本配置被显式绑定到 Agent，或开启
   // prompt_apply_inherited 后被任务链/全局选路选中时注入。空 = 未配置。
   prompt?: string;
   prompt_mode?: "prepend" | "append" | "replace" | "";
