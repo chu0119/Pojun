@@ -21,6 +21,7 @@ import type {
   FindingTraffic,
   FindingTrafficBinding,
   IntentAsset,
+  ProgramProfile,
   RetestState,
   ScopeRow,
   Task,
@@ -35,6 +36,7 @@ import type {
   TrafficEvidenceSnapshot,
 } from "../types";
 import * as D from "./data";
+import { hostenvStatus } from "./hostenv";
 
 const delay = (ms = 120) => new Promise((r) => setTimeout(r, ms));
 
@@ -1015,6 +1017,11 @@ export async function mockHandle<T>(method: string, rawPath: string, body?: Body
 function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Record<string, unknown>): unknown {
   const task = q.get("task") ?? undefined;
 
+  // demo 顶栏展示当前版本；真实后端由 ldflags 注入。
+  if (path === "/version" && m === "GET") return { service: "pojun", version: "v0.4.119" };
+  if (path === "/hostenv/status" && m === "GET") return structuredClone(hostenvStatus);
+  if (path === "/vulnintel/status" && m === "GET") return structuredClone(D.vulnintelStatus);
+
   if (path === "/chat/mentions" && m === "GET") {
     const kind = q.get("kind") ?? "";
     const query = (q.get("q") ?? "").trim().toLowerCase();
@@ -1351,6 +1358,87 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
     if (index >= 0) mockTaskTemplates.splice(index, 1);
     return { deleted: id };
   }
+  // ── 任务总览：目标 / 操作约束 / SRC Program Profile / 出口回执 ──
+  if (seg[0] === "tasks" && seg[2] === "goals" && seg.length === 3 && m === "GET") {
+    return { goals: structuredClone(D.taskGoalsByTask[seg[1]] ?? []) };
+  }
+  if (seg[0] === "tasks" && seg[2] === "goals" && seg.length === 3 && m === "POST") {
+    const list = (D.taskGoalsByTask[seg[1]] ??= []);
+    const goal = {
+      id: `g-mock-${Date.now()}`,
+      text: String(b.text ?? "").trim(),
+      vulnclass: String(b.vulnclass ?? "").trim() || undefined,
+      state: "open",
+      origin: "operator",
+      ts: new Date().toISOString(),
+    };
+    list.push(goal);
+    return structuredClone(goal);
+  }
+  if (seg[0] === "tasks" && seg[2] === "goals" && seg.length === 4 && m === "PATCH") {
+    const list = D.taskGoalsByTask[seg[1]] ?? [];
+    const goal = list.find((item) => item.id === seg[3]);
+    if (!goal) throw new Error("目标不存在");
+    if (typeof b.text === "string") goal.text = b.text.trim();
+    if (typeof b.vulnclass === "string") goal.vulnclass = b.vulnclass.trim() || undefined;
+    return structuredClone(goal);
+  }
+  if (seg[0] === "tasks" && seg[2] === "goals" && seg.length === 4 && m === "DELETE") {
+    const list = D.taskGoalsByTask[seg[1]] ?? [];
+    const index = list.findIndex((item) => item.id === seg[3]);
+    if (index >= 0) list.splice(index, 1);
+    return { ok: true };
+  }
+  if (seg[0] === "tasks" && seg[2] === "constraints" && seg.length === 3 && m === "GET") {
+    return { constraints: structuredClone(D.taskConstraintsByTask[seg[1]] ?? []) };
+  }
+  if (seg[0] === "tasks" && seg[2] === "constraints" && seg.length === 3 && m === "POST") {
+    const list = (D.taskConstraintsByTask[seg[1]] ??= []);
+    const constraint = {
+      id: `c-mock-${Date.now()}`,
+      kind: (b.kind === "deny" ? "deny" : "allow") as "allow" | "deny",
+      text: String(b.text ?? "").trim(),
+      origin: "operator",
+      ts: new Date().toISOString(),
+    };
+    list.push(constraint);
+    return structuredClone(constraint);
+  }
+  if (seg[0] === "tasks" && seg[2] === "constraints" && seg.length === 4 && m === "PATCH") {
+    const list = D.taskConstraintsByTask[seg[1]] ?? [];
+    const constraint = list.find((item) => item.id === seg[3]);
+    if (!constraint) throw new Error("约束不存在");
+    if (typeof b.text === "string") constraint.text = b.text.trim();
+    if (b.kind === "allow" || b.kind === "deny") constraint.kind = b.kind;
+    return structuredClone(constraint);
+  }
+  if (seg[0] === "tasks" && seg[2] === "constraints" && seg.length === 4 && m === "DELETE") {
+    const list = D.taskConstraintsByTask[seg[1]] ?? [];
+    const index = list.findIndex((item) => item.id === seg[3]);
+    if (index >= 0) list.splice(index, 1);
+    return { ok: true };
+  }
+  if (seg[0] === "tasks" && seg[2] === "program-profile" && seg.length === 3 && m === "GET") {
+    return { task_id: seg[1], profile: structuredClone(D.programProfilesByTask[seg[1]] ?? null) };
+  }
+  if (seg[0] === "tasks" && seg[2] === "program-profile" && seg.length === 3 && m === "PUT") {
+    const raw = b.profile && typeof b.profile === "object" ? b.profile : b;
+    const profile = raw as ProgramProfile;
+    if (profile && Object.keys(profile).length > 0) D.programProfilesByTask[seg[1]] = structuredClone(profile);
+    else delete D.programProfilesByTask[seg[1]];
+    return { task_id: seg[1], profile: structuredClone(D.programProfilesByTask[seg[1]] ?? null) };
+  }
+  if (seg[0] === "tasks" && seg[2] === "egress" && seg.length === 3 && m === "GET") {
+    return structuredClone(
+      D.taskEgressByTask[seg[1]] ?? {
+        task_id: seg[1],
+        built: false,
+        compatible: true,
+        reason: "not_built",
+      },
+    );
+  }
+
   if (seg[0] === "tasks" && seg.length === 2 && m === "GET") {
     const task = mockTasks.find((item) => item.id === seg[1]);
     if (!task) throw new Error("任务不存在");
@@ -1877,6 +1965,28 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
       }
     }
     return { deleted: 1, assets_deleted: assetsDeleted };
+  }
+
+  // ── 确定性回归检查（v0.4.119）──
+  if (seg[0] === "findings" && seg[2] === "regression" && seg.length === 3 && m === "GET") {
+    return { finding_id: seg[1], regression: structuredClone(D.findingRegressions[seg[1]] ?? null) };
+  }
+  if (seg[0] === "findings" && seg[2] === "regression" && seg[3] === "check" && m === "POST") {
+    const regression = D.findingRegressions[seg[1]];
+    if (!regression) throw new Error("该漏洞没有可重放的回归 spec");
+    const now = new Date().toISOString();
+    regression.last_checked_at = now;
+    regression.last_verdict = "pass";
+    regression.last_note = `回放 proof 流量命中 ${regression.assertion} 断言，HTTP ${regression.expected_status}。`;
+    return {
+      finding_id: seg[1],
+      verdict: "pass",
+      note: regression.last_note,
+      status: regression.expected_status,
+      matched: true,
+      assertion: regression.assertion,
+      regression: structuredClone(regression),
+    };
   }
 
   // ── exploration ──

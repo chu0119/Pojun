@@ -32,6 +32,7 @@ const KIND_LABEL: Record<HostTool["kind"], string> = {
   apt: "系统源",
   github: "GitHub Release",
   pip: "pip",
+  script: "安装脚本",
   manual: "手工安装",
 };
 
@@ -45,6 +46,7 @@ const CATEGORY_ORDER: HostTool["category"][] = [
   "code",
   "exploit",
   "middleware",
+  "mobile",
   "pivot",
   "oob",
   "material",
@@ -60,6 +62,7 @@ const CATEGORY_LABEL: Record<HostTool["category"], string> = {
   code: "代码与密钥",
   exploit: "漏洞利用",
   middleware: "中间件协议",
+  mobile: "移动端逆向",
   pivot: "内网与隧道",
   oob: "外带与回连",
   material: "资料与字典",

@@ -295,7 +295,7 @@ export default function VulnintelPage() {
                     id="vi-proxy"
                     value={proxy}
                     onChange={(e) => setProxy(e.target.value)}
-                    placeholder={cfg?.maintenance_proxy || "http://127.0.0.1:7897"}
+                    placeholder={cfg?.maintenance_proxy || "http://proxy.example:3128"}
                   />
                   {cfg?.maintenance_proxy && (
                     <span className="text-muted-foreground text-xs">

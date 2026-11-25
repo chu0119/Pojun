@@ -2003,9 +2003,9 @@ export interface HostTool {
   installable: boolean;
   purpose: string;
   install?: string;
-  kind: "apt" | "github" | "pip" | "manual";
+  kind: "apt" | "github" | "pip" | "script" | "manual";
   /** 攻击面分类，页面按它分组。 */
-  category: "network" | "dns" | "web" | "cred" | "code" | "pivot" | "oob" | "exploit" | "material" | "runtime" | "middleware" | "";
+  category: "network" | "dns" | "web" | "cred" | "code" | "pivot" | "oob" | "exploit" | "mobile" | "material" | "runtime" | "middleware" | "";
 }
 
 export type InstallSourcePreset = "" | "tencent" | "tuna";

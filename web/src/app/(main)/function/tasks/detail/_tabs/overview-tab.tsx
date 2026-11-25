@@ -1087,10 +1087,10 @@ export function OverviewTab({ taskId }: { taskId: string }) {
 }
 
 const TASK_RULE_KIND_OPTIONS: { value: AssetInterceptKind; label: string; placeholder: string }[] = [
-  { value: "exact_domain", label: "域名(全等)", placeholder: "example.gov.cn" },
+  { value: "exact_domain", label: "域名(全等)", placeholder: "example.com" },
   { value: "exact_ip", label: "IP(全等)", placeholder: "203.0.113.10" },
   { value: "exact_url", label: "URL(全等)", placeholder: "https://example.com/login" },
-  { value: "fuzzy_domain", label: "域名(模糊)", placeholder: ".gov.cn" },
+  { value: "fuzzy_domain", label: "域名(模糊)", placeholder: ".example" },
   { value: "fuzzy_ip", label: "IP(模糊)", placeholder: "203.0.113." },
   { value: "fuzzy_url", label: "URL(模糊)", placeholder: "/admin" },
   { value: "cidr", label: "CIDR 网段", placeholder: "192.168.0.0/16" },
