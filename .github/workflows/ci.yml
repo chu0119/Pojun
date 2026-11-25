@@ -72,6 +72,11 @@ jobs:
       - name: Install
         run: npm ci
         working-directory: web
+      # 纯模块单测（链路布局/活动合并等，node:test + type stripping）：不依赖
+      # 浏览器或 DOM，跑在 build 之前，几何/可读性回归先于导出失败暴露。
+      - name: Unit tests
+        run: npm test
+        working-directory: web
       # lint 暂不进门禁：存量 75 个 error 均为行为级修复（空 catch 补处理、悬浮
       # Promise 补 await、a11y），与最小 diff 原则冲突，留作独立治理任务；
       # build:static 已覆盖 TS 类型检查与静态导出验证。
