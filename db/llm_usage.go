@@ -3,6 +3,7 @@ package db
 import (
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -98,6 +99,45 @@ VALUES (NULLIF($1,''),$2,$3,NULLIF($4,''),NULLIF($5,''),NULLIF($6,''),$7,$8,$9,$
 		u.TaskID, expID, intentID, u.Worker, u.Model, u.ProfileName,
 		u.LatencyMs, u.InputTokens, u.OutputTokens, u.CacheRead, u.CacheWrite, u.Status)
 	return err
+}
+
+// TaskUsageProfile is the newest recorded LLM call for one agent lane of a task,
+// reduced to what the route view can honestly state. The ledger has no effort
+// column, so effort is never claimed from it.
+type TaskUsageProfile struct {
+	Worker      string
+	ProfileName string
+	Model       string
+	Status      string
+	At          time.Time
+}
+
+// LatestTaskUsageProfile returns the newest llm_usage row per worker lane for one
+// task. Unknown tasks and tasks with no recorded call yield an empty map, not an
+// error: "no recorded call" is a normal state, not a failure.
+func (d *DB) LatestTaskUsageProfile(taskID string, workers []string) (map[string]TaskUsageProfile, error) {
+	out := map[string]TaskUsageProfile{}
+	if strings.TrimSpace(taskID) == "" || len(workers) == 0 {
+		return out, nil
+	}
+	rows, err := d.Query(`
+SELECT DISTINCT ON (worker) worker, COALESCE(profile_name,''), COALESCE(model,''),
+       COALESCE(status,''), ts
+FROM llm_usage
+WHERE task_id=$1 AND worker=ANY($2)
+ORDER BY worker, ts DESC, id DESC`, taskID, workers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var u TaskUsageProfile
+		if err := rows.Scan(&u.Worker, &u.ProfileName, &u.Model, &u.Status, &u.At); err != nil {
+			return nil, err
+		}
+		out[u.Worker] = u
+	}
+	return out, rows.Err()
 }
 
 // IntentTokenUsage is per-intent token spend for one exploration (B7): the

@@ -79,6 +79,9 @@ type LLMProfile struct {
 	// PromptApplyInherited=true 时，本配置作为任务链/全局默认被选中也注入提示词。
 	// false（默认）只认 agents.llm_profile_id 显式绑定；会话 pin 始终视为显式。
 	PromptApplyInherited bool `json:"prompt_apply_inherited"`
+	// EffortOverrides 是只读的反向引用（哪些 Agent 覆盖了本配置的强度），由列表
+	// 处理器一次查询后附加；不在 profileCols 中，也不参与保存。
+	EffortOverrides []AgentEffortRef `json:"-"`
 	// Retry overrides this profile's share of the retry ladder. Zero value =
 	// inherit the global policy (LLMRetryPolicy), so an untouched profile behaves
 	// exactly as before. See RetryOverride.
@@ -308,10 +311,14 @@ FOR UPDATE OF t`, id)
 	if err != nil {
 		return false, err
 	}
-	lockedAgents, err := lockProfileReferenceRows(ctx, tx, `SELECT id FROM agents
-WHERE llm_profile_id=$1
-ORDER BY id
-FOR UPDATE`, id)
+	lockedAgents, err := lockProfileReferenceRows(ctx, tx, `SELECT a.id FROM agents a
+WHERE a.llm_profile_id=$1
+   OR EXISTS (
+       SELECT 1 FROM agent_profile_effort_overrides o
+       WHERE o.profile_id=$1 AND o.agent_key=a.key
+   )
+ORDER BY a.id
+FOR UPDATE OF a`, id)
 	if err != nil {
 		return false, err
 	}
@@ -354,7 +361,12 @@ WHERE t.llm_profile_id=$1
        WHERE x.task_id=t.id AND x.profile_id=$1
    )
 	UNION ALL
-	SELECT 'agent', a.id FROM agents a WHERE a.llm_profile_id=$1
+	SELECT 'agent', a.id FROM agents a
+WHERE a.llm_profile_id=$1
+   OR EXISTS (
+       SELECT 1 FROM agent_profile_effort_overrides o
+       WHERE o.profile_id=$1 AND o.agent_key=a.key
+   )
 	UNION ALL
 	SELECT 'conversation', c.id FROM conversations c WHERE c.llm_profile_id=$1
 ) refs

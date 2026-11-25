@@ -1763,6 +1763,11 @@ CREATE TABLE IF NOT EXISTS credential_access_log (
 );
 CREATE INDEX IF NOT EXISTS idx_credential_audit ON credential_access_log(credential_id, at DESC);
 
+-- LLM 选路转跳审计（llm_switch / llm_failover）按任务取历史时走偏索引：
+-- activity 上没有 kind 过滤，跨任务汇总在大会话上会退化为全表扫描。
+CREATE INDEX IF NOT EXISTS idx_act_llm_kind ON activity(exploration_id, id)
+    WHERE kind IN ('llm_switch','llm_failover');
+
 -- ============================================================================
 -- Agent × LLM 配置的 reasoning effort 覆盖（v0.4.121）
 -- effort 原本只属于 llm_profiles.reasoning_effort：同一个 Agent 想换个强度就得
@@ -1779,3 +1784,9 @@ CREATE TABLE IF NOT EXISTS agent_profile_effort_overrides (
     PRIMARY KEY (agent_key, profile_id)
 );
 CREATE INDEX IF NOT EXISTS idx_apeo_profile ON agent_profile_effort_overrides(profile_id);
+-- 只接受运行时认识的五个档位；空值不落库（清除覆盖 = 删除该行）。
+ALTER TABLE agent_profile_effort_overrides
+    DROP CONSTRAINT IF EXISTS agent_profile_effort_overrides_effort_check;
+ALTER TABLE agent_profile_effort_overrides
+    ADD CONSTRAINT agent_profile_effort_overrides_effort_check
+    CHECK (reasoning_effort IN ('low','medium','high','xhigh','max'));
