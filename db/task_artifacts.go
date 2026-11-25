@@ -2,10 +2,17 @@ package db
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// ErrArtifactQuotaExceeded 表示任务附件的件数/字节配额已满。
+// 服务层用它区分“配额拒绝”和其他登记错误（scan 遇到它应立即停止）。
+var ErrArtifactQuotaExceeded = errors.New("artifact quota exceeded")
 
 // TaskArtifact 是任务级证据附件（v0.5.0）：worker 扒到的数据样本、截图、
 // 日志等，落盘到任务目录并登记，随报告导出成证据包。默认只存"证明性样本"
@@ -67,6 +74,99 @@ VALUES ($1,NULLIF($2,0),$3,$4,NULLIF($5,''),$6,NULLIF($7,''),NULLIF($8,''),NULLI
 RETURNING id, created_at`,
 		a.TaskID, a.FindingID, a.Name, a.Kind, a.Mime, a.SizeBytes, a.SHA256, a.SourceURL, a.Note, a.Storage, a.PreviewState).
 		Scan(&a.ID, &a.CreatedAt)
+}
+
+// FindTaskArtifactBySHA 查找任务内同内容附件（sha256 + size 双条件，避免
+// 哈希碰撞/同名不同内容误判）。没有命中返回 (nil,nil)。
+func (d *DB) FindTaskArtifactBySHA(ctx context.Context, taskID, sha string, size int64) (*TaskArtifact, error) {
+	if strings.TrimSpace(sha) == "" {
+		return nil, nil
+	}
+	var a TaskArtifact
+	err := d.QueryRowContext(ctx, `
+SELECT id,task_id,COALESCE(finding_id,0),name,kind,COALESCE(mime,''),size_bytes,COALESCE(sha256,''),
+       COALESCE(source_url,''),COALESCE(note,''),COALESCE(preview_state,''),COALESCE(preview_pages,0),COALESCE(preview_error,''),storage_path,created_at
+FROM task_artifacts
+WHERE task_id=$1 AND sha256=$2 AND size_bytes=$3
+ORDER BY id LIMIT 1`, taskID, sha, size).
+		Scan(&a.ID, &a.TaskID, &a.FindingID, &a.Name, &a.Kind, &a.Mime, &a.SizeBytes,
+			&a.SHA256, &a.SourceURL, &a.Note, &a.PreviewState, &a.PreviewPages, &a.PreviewError, &a.Storage, &a.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+// InsertTaskArtifactWithinQuota 在任务级 advisory lock 内完成「去重 → 配额检查 →
+// 插入」。原实现先 COUNT 再 INSERT，多个 worker 并发 save_evidence 时可同时通过
+// 检查并突破上限；这把 count+insert 放进同一事务，并用任务键串行化。
+//
+// 返回 existing=true 表示同内容附件已存在，调用方应删除自己刚写出的副本并复用
+// 已有记录（幂等）。
+func (d *DB) InsertTaskArtifactWithinQuota(ctx context.Context, a *TaskArtifact, maxCount int, maxBytes int64) (*TaskArtifact, bool, error) {
+	if a == nil {
+		return nil, false, errors.New("artifact is nil")
+	}
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// 任务级事务锁：不同任务互不阻塞；同一任务串行化 count + insert。
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, a.TaskID); err != nil {
+		return nil, false, err
+	}
+
+	if strings.TrimSpace(a.SHA256) != "" {
+		var existing TaskArtifact
+		err := tx.QueryRowContext(ctx, `
+SELECT id,task_id,COALESCE(finding_id,0),name,kind,COALESCE(mime,''),size_bytes,COALESCE(sha256,''),
+       COALESCE(source_url,''),COALESCE(note,''),COALESCE(preview_state,''),COALESCE(preview_pages,0),COALESCE(preview_error,''),storage_path,created_at
+FROM task_artifacts
+WHERE task_id=$1 AND sha256=$2 AND size_bytes=$3
+ORDER BY id LIMIT 1`, a.TaskID, a.SHA256, a.SizeBytes).
+			Scan(&existing.ID, &existing.TaskID, &existing.FindingID, &existing.Name, &existing.Kind, &existing.Mime, &existing.SizeBytes,
+				&existing.SHA256, &existing.SourceURL, &existing.Note, &existing.PreviewState, &existing.PreviewPages, &existing.PreviewError, &existing.Storage, &existing.CreatedAt)
+		if err == nil {
+			return &existing, true, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, false, err
+		}
+	}
+
+	var count int
+	var bytes int64
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(size_bytes),0) FROM task_artifacts WHERE task_id=$1`, a.TaskID).
+		Scan(&count, &bytes); err != nil {
+		// Fail-closed：配额检查读不到数据时不能当作“未超限”继续写入。
+		return nil, false, fmt.Errorf("读取附件配额失败：%w", err)
+	}
+	if maxCount > 0 && count >= maxCount {
+		return nil, false, fmt.Errorf("%w：本任务附件已达上限（%d/%d 个）。请操作员删除不再需要的附件，或在系统设置调高 artifact_max_count；list_artifacts 可查看当前配额",
+			ErrArtifactQuotaExceeded, count, maxCount)
+	}
+	if maxBytes > 0 && bytes+a.SizeBytes > maxBytes {
+		return nil, false, fmt.Errorf("%w：本任务附件总量将超过上限（%d/%d MB）。请操作员删除旧附件或在系统设置调高 artifact_max_bytes",
+			ErrArtifactQuotaExceeded, (bytes+a.SizeBytes)/(1<<20), maxBytes/(1<<20))
+	}
+
+	if err := tx.QueryRowContext(ctx, `
+INSERT INTO task_artifacts(task_id,finding_id,name,kind,mime,size_bytes,sha256,source_url,note,storage_path,preview_state)
+VALUES ($1,NULLIF($2,0),$3,$4,NULLIF($5,''),$6,NULLIF($7,''),NULLIF($8,''),NULLIF($9,''),$10,NULLIF($11,''))
+RETURNING id, created_at`,
+		a.TaskID, a.FindingID, a.Name, a.Kind, a.Mime, a.SizeBytes, a.SHA256, a.SourceURL, a.Note, a.Storage, a.PreviewState).
+		Scan(&a.ID, &a.CreatedAt); err != nil {
+		return nil, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, false, err
+	}
+	return a, false, nil
 }
 
 // ListTaskArtifacts 按时间列出任务附件。

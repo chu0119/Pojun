@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -165,17 +166,8 @@ func (s *Server) RecordArtifact(taskID, findingID int64, runDir, relPath, name, 
 	if info.Size() > maxArtifactFileBytes {
 		return nil, fmt.Errorf("文件超过单附件上限（20MB）：%d 字节", info.Size())
 	}
-	// #45/#50：限额可在系统设置覆盖（artifact_max_count / artifact_max_bytes）。
-	maxCount, maxBytes := pg.ArtifactQuota()
-	if count, total, err := pg.CountTaskArtifacts(taskKey); err == nil {
-		if count >= maxCount {
-			return nil, fmt.Errorf("本任务附件已达上限（%d/%d 个）。请操作员在任务页删除不再需要的附件（证据卡有删除入口），或在系统设置调高 artifact_max_count；list_artifacts 可查看当前配额", count, maxCount)
-		}
-		if total+info.Size() > maxBytes {
-			return nil, fmt.Errorf("本任务附件总量将超过上限（%d/%d MB）。请操作员删除旧附件或在系统设置调高 artifact_max_bytes", (total+info.Size())/(1<<20), maxBytes/(1<<20))
-		}
-	}
-
+	// 配额与去重必须在同一事务内（见 db.InsertTaskArtifactWithinQuota）；
+	// 这里只做文件级校验，避免 COUNT 与 INSERT 之间的并发窗口。
 	return s.recordArtifactAbs(abs, taskKey, findingID, name, kind, sourceURL, note, info.Size())
 }
 
@@ -226,10 +218,33 @@ func (s *Server) deleteTaskArtifact(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "附件不存在或不属于该任务")
 		return
 	}
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		log.Printf("[artifacts] 附件文件删除失败（DB 已删）path=%s: %v", path, err)
-	}
+	s.removeTaskArtifactFiles(taskID, aid, path)
 	writeJSON(w, 200, map[string]any{"ok": true, "freed_bytes": size})
+}
+
+// removeTaskArtifactFiles 删除附件主文件、缩略图缓存与文档预览目录。
+// storage_path 是相对 data 目录的路径；历史实现直接 os.Remove 相对路径，
+// 在容器 cwd=/app、data=/app/data 时永远删不到文件。删除失败只记日志：
+// DB 行已删、配额已释放，不能因为清理 sidecar 失败把接口变成 500。
+func (s *Server) removeTaskArtifactFiles(taskID string, aid int64, storage string) {
+	if s == nil || s.m == nil {
+		return
+	}
+	base := filepath.Join(s.m.dir, filepath.FromSlash(storage))
+	root := filepath.Clean(s.m.dir)
+	clean := filepath.Clean(base)
+	if root != "" && !strings.HasPrefix(clean, root+string(os.PathSeparator)) {
+		log.Printf("[artifacts] 拒绝删除 data 目录外文件（DB 已删）storage=%s", storage)
+		return
+	}
+	for _, path := range []string{clean, clean + ".thumb.jpg"} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			log.Printf("[artifacts] 附件文件删除失败（DB 已删）path=%s: %v", path, err)
+		}
+	}
+	if err := os.RemoveAll(s.previewDir(taskID, aid)); err != nil {
+		log.Printf("[artifacts] 附件预览目录删除失败（DB 已删）task=%s id=%d: %v", taskID, aid, err)
+	}
 }
 
 // patchTaskArtifact 修改附件归属（v0.4.20）。body {finding_id}：
@@ -547,25 +562,27 @@ func (s *Server) recordArtifactAbs(abs, taskKey string, findingID int64, name, k
 	}
 	sum := sha256.Sum256(data)
 	sha := hex.EncodeToString(sum[:])
+	size = int64(len(data))
 
-	// 去重：同任务同内容直接返回已有登记，不重复落盘。
+	// 去重前置到配额检查之前：同一文件重登记应返回已有记录，而不是报“已达上限”。
 	// v0.4.20：截图常发生在 report_finding 之前（拿不到 finding_id），事后补登记
 	// 同一文件时不能因为去重把归属丢掉——旧记录还是任务级就补绑；已归属其他
 	// 漏洞的不抢占（避免把 A 漏洞的证据挪给 B）。
-	if list, err := pg.ListTaskArtifacts(taskKey); err == nil {
-		for i := range list {
-			if list[i].SHA256 == sha && list[i].SizeBytes == size {
-				existing := &list[i]
-				if findingID > 0 && existing.FindingID == 0 {
-					if updated, uerr := pg.UpdateTaskArtifactBinding(existing.ID, findingID, note, sourceURL); uerr == nil {
-						s.enqueueArtifactPreview(updated, false)
-						return updated, nil
-					}
-				}
-				s.enqueueArtifactPreview(existing, false)
-				return existing, nil
+	reuse := func(existing *db.TaskArtifact) *db.TaskArtifact {
+		if findingID > 0 && existing.FindingID == 0 {
+			if updated, uerr := pg.UpdateTaskArtifactBinding(existing.ID, findingID, note, sourceURL); uerr == nil {
+				existing = updated
 			}
 		}
+		s.enqueueArtifactPreview(existing, false)
+		return existing
+	}
+	existing, err := pg.FindTaskArtifactBySHA(context.Background(), taskKey, sha, size)
+	if err != nil {
+		return nil, fmt.Errorf("检查附件去重失败：%w", err)
+	}
+	if existing != nil {
+		return reuse(existing), nil
 	}
 
 	if strings.TrimSpace(name) == "" {
@@ -589,19 +606,26 @@ func (s *Server) recordArtifactAbs(abs, taskKey string, findingID int64, name, k
 	}
 	a := &db.TaskArtifact{
 		TaskID: taskKey, FindingID: findingID, Name: name, Kind: kind, Mime: autoMime,
-		SizeBytes: int64(len(data)), SHA256: sha, SourceURL: sourceURL,
+		SizeBytes: size, SHA256: sha, SourceURL: sourceURL,
 		Note: note, Storage: storage,
 	}
 	if docpreview.Supports(name) {
 		a.PreviewState = "pending" // 前端立即显示“生成中”，worker 接上后覆盖
 	}
-	if err := pg.InsertTaskArtifact(context.Background(), a); err != nil {
+	maxCount, maxBytes := pg.ArtifactQuota()
+	saved, duplicate, err := pg.InsertTaskArtifactWithinQuota(context.Background(), a, maxCount, maxBytes)
+	if err != nil {
 		_ = os.Remove(dst)
 		return nil, fmt.Errorf("登记附件失败：%w", err)
 	}
+	if duplicate {
+		// 并发登记同一文件：自己的副本没有落库，删掉并复用已有记录。
+		_ = os.Remove(dst)
+		return reuse(saved), nil
+	}
 	// Office/PDF 附件异步生成取样预览（v0.4.21），不阻塞 save_evidence。
-	s.enqueueArtifactPreview(a, false)
-	return a, nil
+	s.enqueueArtifactPreview(saved, false)
+	return saved, nil
 }
 
 // scanTaskArtifactDir 扫描任务工作目录里的历史图片并补登记（v0.4.10）。
@@ -675,6 +699,10 @@ func (s *Server) scanTaskArtifactDir(taskID string) (added, skipped, truncated i
 		rel, _ := filepath.Rel(root, path)
 		_, e = s.recordArtifactAbs(path, taskID, 0, base, "auto", "", "工作目录历史文件："+rel, info.Size())
 		if e != nil {
+			// 配额触顶时停止补登记并把这个错误交给接口；其他单文件错误继续扫描。
+			if errors.Is(e, db.ErrArtifactQuotaExceeded) {
+				return e
+			}
 			return nil
 		}
 		existing[sum] = true
