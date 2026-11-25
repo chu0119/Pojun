@@ -463,10 +463,13 @@ func plannerSystem(goal, dataDir, workDir string) string {
 }
 
 func plannerSystemWith(goal, dataDir, workDir string, pp ProfilePrompt) string {
-	body := renderSystemWith("planner", plannerDefaultTmpl, PlannerVars{Goal: goal, DataDir: dataDir, Now: nowStr()}, pp)
-	// 作业硬尾巴（v0.4.63）：漏洞覆盖矩阵/纵深优先 + 授权边界复核。
-	return body + artifactSpec(workDir) + coverageMatrixPlannerGuidance + scopeVerifyPlannerGuidance + execFacePlannerGuidance +
-		engagementFraming + impactOrchestrationGuidance + blackboardPlannerGuidance + untrustedOutputGuidance
+	// Body/profile/skill + the code-owned hard tails come from the shared
+	// assembly (RuntimeSystem), so the read-only chain projection and the runtime
+	// cannot drift.
+	out, _ := RuntimeSystem("planner", plannerDefaultTmpl,
+		PlannerVars{Goal: goal, DataDir: dataDir, Now: nowStr()}, pp,
+		TailOptions{WorkDir: workDir})
+	return out
 }
 
 // Plan runs one planning round. emit, if non-nil, receives the planner's execution

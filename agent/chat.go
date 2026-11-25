@@ -88,17 +88,11 @@ func chatSystem(agentKey, dataDir, workDir string) string {
 }
 
 func chatSystemWith(agentKey, dataDir, workDir string, pp ProfilePrompt) string {
-	out := renderSystemWith(agentKey, DefaultPromptFor(agentKey), chatVars{DataDir: dataDir, Now: nowStr()}, pp) + chatWorkDirSpec(workDir)
-	// 执行/报告类对话 agent 也要看到全量验证口径——它们不走 planner/worker 的
-	// system 装配，只在 chat 路径运行。
-	switch agentKey {
-	case "pentest":
-		out += engagementFraming + impactVerificationGuidance + impactOrchestrationGuidance + srcReportAnnex
-	case "reporter":
-		out += engagementFraming + srcReportAnnex
-	case "retester":
-		out += engagementFraming
-	}
+	// 执行/报告类对话 agent 的尾巴（workdir 规约、交战框定、影响验证/编排、SRC
+	// 报告附录）全部由 StaticTailSegments 统一声明，经 RuntimeSystem 与运行时共用，
+	// 避免页面投影与真实装配各写一份。
+	out, _ := RuntimeSystem(agentKey, DefaultPromptFor(agentKey),
+		chatVars{DataDir: dataDir, Now: nowStr()}, pp, TailOptions{WorkDir: workDir})
 	return out
 }
 

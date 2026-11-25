@@ -72,10 +72,34 @@ func DefaultPromptFor(agentKey string) string {
 // failed and a fallback was used. Runtime-only tails are not included here;
 // callers append StaticTailSegments and their own runtime placeholders.
 func PreviewSystemSegments(agentKey, def string, pp ProfilePrompt) ([]PromptSegment, string) {
-	return renderSystemSegments(agentKey, def, previewVarsFor(agentKey), pp)
+	return renderSystemSegments(agentKey, def, PreviewVarsFor(agentKey), pp)
 }
 
-func previewVarsFor(agentKey string) any {
+// RuntimeSystemSegments assembles the exact segment list a runtime turn joins for
+// an agent: the editable body (with any ProfilePrompt overlay), the skill index,
+// and the code-owned static tails. The runtime builders call this, and the
+// read-only chain projection renders the same inputs through
+// StaticTailSegments, so preview and runtime cannot drift. The returned warning
+// is non-empty when the selected template failed and a fallback was used.
+//
+// Runtime-only injections (task constraints, Program Profile, task auth, intent
+// context, facts/lessons, autopilot, launch instruction, finding guidance,
+// deferred tools) are appended by callers and are not part of this function.
+func RuntimeSystemSegments(agentKey, def string, vars any, pp ProfilePrompt, o TailOptions) ([]PromptSegment, string) {
+	segs, warning := renderSystemSegments(agentKey, def, vars, pp)
+	return append(segs, StaticTailSegments(agentKey, o)...), warning
+}
+
+// RuntimeSystem is RuntimeSystemSegments' joined form — the system prompt before
+// any runtime-only injection.
+func RuntimeSystem(agentKey, def string, vars any, pp ProfilePrompt, o TailOptions) (string, string) {
+	segs, warning := RuntimeSystemSegments(agentKey, def, vars, pp, o)
+	return JoinPromptSegments(segs), warning
+}
+
+// PreviewVarsFor returns the sample template variables for an agent. Exported so
+// tests can rebuild a runtime assembly with exactly the values the preview shows.
+func PreviewVarsFor(agentKey string) any {
 	switch agentKey {
 	case "goals":
 		// EngagementDescription is registered in the catalog but the runtime
