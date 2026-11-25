@@ -2068,7 +2068,9 @@ function stageTargets(chain: AgentPromptChainData): Stage[] {
   out.push({ id: "llm", label: "LLM 配置", target: { kind: "llm" }, offTrunk: true });
   out.push({ id: "skills", label: "Skill 轨", target: { kind: "skills" }, offTrunk: true });
   out.push({ id: "tools", label: "工具轨", target: { kind: "tools" }, offTrunk: true });
-  out.push({ id: "mcp", label: "MCP 轨", target: { kind: "mcp", id: chain.mcp[0]?.id ?? 0 }, offTrunk: true });
+  if (chain.mcp.length > 0) {
+    out.push({ id: "mcp", label: "MCP 轨", target: { kind: "mcp", id: chain.mcp[0].id }, offTrunk: true });
+  }
   return out;
 }
 
