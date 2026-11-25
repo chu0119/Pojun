@@ -1,5 +1,20 @@
 # 更新日志
 
+## [Unreleased]
+
+### 修复：附件配额与落盘清理闭环（#59）
+
+- DELETE 按 data 目录解析 `storage_path`，并清理 `.thumb.jpg` 与 `previews/<id>`；
+- 去重前置于配额检查，重复登记幂等；任务级 advisory lock 内完成去重/配额/插入；
+- 配额查询失败 fail-closed；scan 走同一配额并在触顶时停止。
+
+### 新增：未引用流量 TTL 清理（#25）
+
+- 新增 `traffic_retention_days`（默认 0=关闭）、`GET/POST /api/traffic/retention`；
+- 支持 dry-run 预览、手动执行与后台 6h 清理；
+- 保护集从 evidence snapshot / finding regression / finding timeline / 探索图读取，
+  查询失败立即中止；删除复用 FTS/bodies/blob_refs/exchanges 与增量 vacuum。
+
 本项目的重要变更记录在此文件中，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
 ## [0.4.119] - 2026-11-25

@@ -827,6 +827,9 @@ Apache CXF、RabbitMQ、MQTT broker、MariaDB、GitLab、Splunk、F5、Fortinet 
 
 - **命令审计**：`tool_use` + `tool_result` 成对记录，可按任务/关键词/工具筛选，支持单条执行详情；
 - **实时日志**：SSE 滚动日志，断线可回放 ring buffer，支持历史游标；
+- **流量保留**：`traffic_retention_days`（默认 0=关闭）自动清理超期未引用流量；支持 dry-run
+  预览，保护集从 evidence snapshot / regression / finding timeline / 探索图读取，查询失败
+  fail-closed；清理复用 FTS/blob/增量 vacuum 链路；
 - **通知推送**：钉钉、企业微信、飞书、Telegram、通用 Webhook；支持单条/汇总、失败重试、
   渠道限流、漏洞详情回链；
 - **诊断包**：一键导出 zip（版本、配置、引擎、代理、任务、finding 等），用于排障；
@@ -1139,6 +1142,13 @@ CGO_ENABLED=0 go build -o pojun-hostd ./cmd/pojun-hostd   # 可选：特权安�
 - `task_budget_warn_pct`：默认 80%，达到后注入收敛提醒；
 - `intent_budget_tokens`：默认 3,000,000，worker 单意图预算；
 - 预算耗尽会直接收尾，不再跑终局 planner。
+
+**流量保留（可选）**：
+
+```text
+系统设置 / 流量页「保留策略」→ traffic_retention_days
+0 = 关闭；>0 = 只清理超过 N 天且未被证据/回归/探索图引用的流量
+```
 
 **工具可见性（可选）**：
 
