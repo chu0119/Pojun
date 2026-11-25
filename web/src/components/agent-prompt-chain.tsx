@@ -839,7 +839,7 @@ export function AgentPromptChain({
     return () => window.clearTimeout(t);
   }, [lampTest]);
 
-  const load = React.useCallback(async () => {
+  const load = React.useCallback(async (keepPath = false) => {
     const seq = ++reqRef.current;
     setLoading(true);
     setError("");
@@ -847,12 +847,12 @@ export function AgentPromptChain({
       const data = await api.agentPromptChain(agentKey, profileId);
       if (reqRef.current === seq) {
         setChain(normalizeChain(data));
-        setPath([]);
+        if (!keepPath) setPath([]);
       }
     } catch (e) {
       if (reqRef.current === seq) {
         setChain(null);
-        setPath([]);
+        if (!keepPath) setPath([]);
         setError((e as Error).message);
       }
     } finally {
@@ -1020,7 +1020,7 @@ export function AgentPromptChain({
         onTruncate={truncatePath}
         onCopyStatic={() => void copyStatic()}
         onCopyText={(text, what) => void copyText(text, what)}
-        onReload={() => void load()}
+        onReload={() => void load(true)}
       />
 
       <div className="flex flex-wrap items-center gap-2 text-muted-foreground text-[11px]">
