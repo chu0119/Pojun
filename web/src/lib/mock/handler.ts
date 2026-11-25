@@ -37,6 +37,7 @@ import type {
 } from "../types";
 import * as D from "./data";
 import { hostenvStatus } from "./hostenv";
+import { mockPromptChain, setMockEffortOverride, setMockProfilePrompt } from "./prompt-chain";
 
 const delay = (ms = 120) => new Promise((r) => setTimeout(r, ms));
 
@@ -2435,6 +2436,8 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
     };
   if (seg[0] === "agents" && seg.length === 2 && m === "GET") return D.agentDetail(seg[1]);
   if (seg[0] === "agents" && seg[2] === "triggers" && m === "GET") return { triggers: [] };
+  if (seg[0] === "agents" && seg[2] === "prompt" && seg[3] === "chain" && m === "GET")
+    return mockPromptChain(seg[1]);
   if (seg[0] === "agents" && seg[2] === "prompts") return { versions: D.agentDetail(seg[1]).versions };
   if (seg[0] === "agents" && seg[2] === "variables") return { variables: D.agentDetail(seg[1]).variables };
   if (seg[0] === "agents" && seg[2] === "prompt" && seg[3] === "preview")
@@ -2464,7 +2467,21 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
       }),
     };
   }
-  if (seg[0] === "agents" && seg[2] === "llm-effort-overrides") return {}; // PUT/DELETE：演示模式不落库
+  if (seg[0] === "agents" && seg[2] === "llm-effort-overrides" && seg.length === 4) {
+    // 演示模式下把覆盖记在内存里，右侧配置面板保存后立即能在图上看到。
+    const pid = Number(seg[3]);
+    if (m === "PUT") setMockEffortOverride(seg[1], pid, String(b.reasoning_effort ?? ""));
+    if (m === "DELETE") setMockEffortOverride(seg[1], pid, "");
+    return {};
+  }
+  if (path === "/llm/profiles" && m === "POST") {
+    const pid = Number(b.id) || 0;
+    if (pid > 0) {
+      setMockProfilePrompt(pid, String(b.prompt ?? ""), String(b.prompt_mode ?? ""), Boolean(b.prompt_apply_inherited));
+    }
+    return { id: pid || 4 };
+  }
+  if (seg[0] === "agents" && seg[2] === "llm-effort-overrides") return {}; // 其余方法：演示模式不落库
 
   // ── conversations ──
   if (path === "/conversations" && m === "GET") {
