@@ -346,7 +346,7 @@ export const taskEgressByTask: Record<string, TaskEgressResponse> = {
       schema_version: 1,
       source: "task_agent_bundle",
       captured_at: mockCapturedAt,
-      build_version: "v0.4.119",
+      build_version: "v0.4.121",
       capture: {
         enabled: true,
         injected: true,

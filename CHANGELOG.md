@@ -2,7 +2,7 @@
 
 本项目的重要变更记录在此文件中，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
-## [Unreleased]
+## [0.4.121] - 2026-11-25
 ### 新增：LLM 配置独立提示词与 Agent 装配链只读视图
 
 - **独立提示词**：`llm_profiles` 新增 `prompt` / `prompt_mode` /
