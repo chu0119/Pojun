@@ -686,6 +686,25 @@ export function ProfileSheet({
     </Collapsible>
   );
 
+  // 反向引用：哪些 Agent 覆盖了本配置的思考强度（只读，帮助清理配置时不漏）。
+  const effortRefsSection = profile?.effort_overrides?.length ? (
+    <div className="rounded-lg border px-3 py-2">
+      <p className="font-medium text-sm">被以下 Agent 覆盖思考强度</p>
+      <p className="mt-0.5 text-muted-foreground text-xs">
+        这些都是 (Agent, 本配置) 的独立 effort 覆盖，优先于本配置自身的 reasoning_effort；只影响请求参数，不改变模型选择。
+      </p>
+      <div className="mt-2 grid gap-1">
+        {profile.effort_overrides!.map((r) => (
+          <div key={r.agent_key} className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="font-mono">{r.agent_key}</span>
+            <span className="text-muted-foreground">effort → {r.reasoning_effort}</span>
+            {r.updated_at && <span className="text-muted-foreground text-[10px]">{r.updated_at}</span>}
+          </div>
+        ))}
+      </div>
+    </div>
+  ) : null;
+
   // 高级设置折叠区（极客参数都收进来；两模式共用）
   const advancedSection = (
     <Collapsible open={advOpen} onOpenChange={setAdvOpen} className="rounded-lg border">
@@ -1015,6 +1034,7 @@ export function ProfileSheet({
                   {modelField}
                   {cwField}
                   {promptSection}
+                  {effortRefsSection}
                   {advancedSection}
                 </>
               )}

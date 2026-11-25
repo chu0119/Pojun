@@ -7,6 +7,7 @@ import type {
   Activity,
   Agent,
   AgentDetail,
+  AgentLLMRoute,
   Asset,
   Audit,
   Company,
@@ -23,6 +24,7 @@ import type {
   InterceptRule,
   LLMPoolStatus,
   LLMProfile,
+  LLMRouteProfile,
   LLMTask,
   MCPServer,
   MCPTool,
@@ -3437,6 +3439,113 @@ export function agentDetail(key: string): AgentDetail {
     task_timeout_wrapup_supported: a.key === "worker" || a.key === "planner",
     task_timeout_wrapup_default: "任务超时，请立即收尾并落库当前结论。",
     task_timeout_wrapup_max_turns_default: 2,
+  };
+}
+
+// ── LLM 路由投影（只读，demo） ────────────────────────────────────────────────
+// 形状与后端 /agents/{key}/llm-route 一致；运行期历史在演示数据里不存在，故
+// 明确返回 no_records 与原因，而不是编造转跳记录。
+const routeProfile = (profileID: string): LLMRouteProfile => {
+  const member = llmPool.chain.find((c) => c.profile_id === profileID) ?? llmPool.chain[0];
+  const prof = llmProfiles.find((p) => p.id === profileID);
+  const effort = prof?.reasoning_effort ?? "";
+  return {
+    id: Number(member.profile_id),
+    name: member.name,
+    format: member.format,
+    model: member.model,
+    priority: member.priority,
+    pool_exclude: false,
+    has_key: true,
+    availability: "ok",
+    effort: effort || undefined,
+    effort_source: effort ? "profile" : "unset",
+  };
+};
+
+export function agentLLMRoute(key: string, taskID?: string): AgentLLMRoute {
+  const detail = agentDetail(key);
+  const binding = detail.agent.llm_profile_id;
+  const bindingProfile = binding !== undefined ? routeProfile(String(binding)) : undefined;
+  const globalProfile = routeProfile((llmProfiles.find((p) => p.is_default) ?? llmProfiles[0]).id);
+  const task = taskID ? tasks.find((t) => t.id === taskID) : undefined;
+  const roles = Object.fromEntries(
+    ["mainagent", "planner", "worker", "goals", "chat"].map((role) => {
+      const bound = agents.find((a) => a.key === role)?.llm_profile_id;
+      const p = bound !== undefined ? routeProfile(String(bound)) : globalProfile;
+      return [
+        role,
+        {
+          agent_key: role,
+          source: bound !== undefined ? "agent_binding" : "global_profile",
+          available: true,
+          availability: "ok" as const,
+          profile_id: p.id,
+          name: p.name,
+          format: p.format,
+          model: p.model,
+          effort: p.effort,
+          effort_source: p.effort_source,
+        },
+      ];
+    }),
+  );
+  return {
+    scope: task ? "task" : "static",
+    agent: { key, name: detail.agent.name, kind: detail.agent.builtin ? "builtin" : "custom", binding: binding ?? null },
+    task: task ? { id: task.id, name: task.name, status: task.status, created_at: task.created_unix ?? 0 } : undefined,
+    precedence: [
+      { layer: "pin", hit: false, reason: task ? "该任务未设置配置 pin" : "未选择任务" },
+      {
+        layer: "agent_binding",
+        applies_to: key,
+        hit: !!bindingProfile,
+        profile: bindingProfile,
+        reason: bindingProfile ? "Agent 显式绑定" : "未绑定",
+      },
+      { layer: "task_chain", hit: false, reason: task ? "该任务没有显式配置链" : "未选择任务" },
+      {
+        layer: "global_profile",
+        hit: !bindingProfile,
+        profile: globalProfile,
+        reason: bindingProfile ? "被 Agent 绑定覆盖" : "全局激活配置",
+      },
+      { layer: "environment", hit: false, reason: "未配置环境变量覆盖" },
+    ],
+    roles,
+    chain: [],
+    active_profile_id: bindingProfile?.id ?? globalProfile.id,
+    failover_state: "default",
+    pool: {
+      enabled: llmPool.enabled,
+      bind_fallback: llmPool.bind_fallback,
+      order: "激活配置优先进池，其余按 priority 升序",
+      wraps: "包裹 Agent 绑定与全局激活配置",
+      members: llmPool.chain.map((c) => ({ ...c, has_key: true, in_chain: true })),
+      note: "演示数据：池状态为静态快照，不代表实时健康度。",
+    },
+    failover_policy: {
+      trigger: "仅额度/余额耗尽（402、quota、insufficient balance 等）",
+      does_not_trigger: "429 限流、超时、5xx、网络错误",
+      advance_rule: "按用户配置链顺序推进，耗尽后停在链尾",
+      same_provider_retry: "同 provider 内重试与 thinking 降级不推进配置",
+      pool_selection: "池只决定候选 provider，不改变用户链顺序",
+    },
+    history: {
+      scope: task ? "task" : "recent_tasks",
+      state: "no_records",
+      items: [],
+      has_more: false,
+      retention_note: "演示数据不含审计记录。",
+    },
+    tasks: tasks.slice(0, 20).map((t) => ({
+      id: t.id,
+      name: t.name,
+      status: t.status,
+      created_at: t.created_unix ?? 0,
+    })),
+    observed_at: T("2026-07-26T04:00:00Z"),
+    warnings: ["演示模式：运行期转跳历史不可用。"],
   };
 }
 

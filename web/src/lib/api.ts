@@ -13,6 +13,8 @@ import type {
   Activity,
   Agent,
   AgentDetail,
+  AgentLLMRoute,
+  AgentEffortOverrides,
   AgentPromptChain,
   AgentTrigger,
   ArchiveBatchItem,
@@ -1457,6 +1459,25 @@ export const api = {
     get<AgentPromptChain>(
       `/agents/${key}/prompt/chain${profileId ? `?profile_id=${encodeURIComponent(profileId)}` : ""}`,
     ),
+  // (Agent, LLM 配置) 的 effort 覆盖：GET 同时返回每个配置的解析结果，避免 N+1。
+  agentEffortOverrides: (key: string) =>
+    get<AgentEffortOverrides>(`/agents/${key}/llm-effort-overrides`),
+  setAgentEffortOverride: (key: string, profileId: number, effort: string) =>
+    http<void>(`/agents/${key}/llm-effort-overrides/${profileId}`, {
+      method: "PUT",
+      body: JSON.stringify({ reasoning_effort: effort }),
+    }),
+  deleteAgentEffortOverride: (key: string, profileId: number) =>
+    http<void>(`/agents/${key}/llm-effort-overrides/${profileId}`, { method: "DELETE" }),
+  // 只读路由投影：静态来源链/池 + 任务内运行期转跳历史。不构建 provider。
+  agentLLMRoute: (key: string, opts?: { taskId?: string; limit?: number; before?: number }) => {
+    const q = new URLSearchParams();
+    if (opts?.taskId) q.set("task_id", opts.taskId);
+    if (opts?.limit) q.set("limit", String(opts.limit));
+    if (opts?.before) q.set("before", String(opts.before));
+    const qs = q.toString();
+    return get<AgentLLMRoute>(`/agents/${key}/llm-route${qs ? `?${qs}` : ""}`);
+  },
   getAgentVisibility: (key: string) => get<{ mcp: number[]; skill: string[] }>(`/agents/${key}/visibility`),
   setAgentVisibility: (key: string, mcp: number[], skill: string[]) =>
     put<{ ok: boolean }>(`/agents/${key}/visibility`, { mcp, skill }),

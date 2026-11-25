@@ -2440,6 +2440,31 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
   if (seg[0] === "agents" && seg[2] === "prompt" && seg[3] === "preview")
     return { rendered: String(b.template ?? "").replace(/\{\{\.(\w+)\}\}/g, "«$1»") };
   if (seg[0] === "agents" && seg[2] === "visibility" && m === "GET") return D.agentDetail(seg[1]).visibility;
+  // 只读 LLM 路由投影：与真实端点同形状，运行期历史在演示数据里明确为空。
+  if (seg[0] === "agents" && seg[2] === "llm-route" && m === "GET")
+    return D.agentLLMRoute(seg[1], q.get("task_id") ?? undefined);
+  // 每 Agent 的思考强度覆盖：演示数据没有覆盖，只回显 profile 自身档位。
+  if (seg[0] === "agents" && seg[2] === "llm-effort-overrides" && m === "GET") {
+    return {
+      agent_key: seg[1],
+      overrides: [],
+      profiles: D.llmProfiles.map((p) => {
+        const effort = p.reasoning_effort ?? "";
+        return {
+          profile_id: Number(p.id),
+          name: p.name,
+          format: p.format,
+          model: p.model,
+          is_default: p.is_default,
+          has_key: true,
+          profile_effort: effort,
+          effort,
+          source: effort ? "profile" : "unset",
+        };
+      }),
+    };
+  }
+  if (seg[0] === "agents" && seg[2] === "llm-effort-overrides") return {}; // PUT/DELETE：演示模式不落库
 
   // ── conversations ──
   if (path === "/conversations" && m === "GET") {

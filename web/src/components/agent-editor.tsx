@@ -28,7 +28,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Markdown } from "@/components/markdown";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import type { Agent, AgentDetail, AgentTrigger, MCPServer, PromptVar, PromptVersion, Settings, SkillItem, Tool } from "@/lib/types";
+import { EFFORT_LEVELS, fromStore, toStore } from "@/lib/effort";
+import type { Agent, AgentDetail, AgentTrigger, AgentEffortProfile, MCPServer, PromptVar, PromptVersion, Settings, SkillItem, Tool } from "@/lib/types";
 
 // Traffic tools are host tools gated by the global 流量捕获 switch: bindable, but
 // only usable when capture is on. Keep this list in sync with traffic.SeedToolMetas.
@@ -58,6 +59,10 @@ export function AgentEditor({ agentKey, onSaved }: { agentKey: string; onSaved?:
   // "" = 跟随(未绑定)；否则为 profile id 字符串
   const [llmProfileId, setLlmProfileId] = React.useState("");
   const [llmProfiles, setLlmProfiles] = React.useState<NonNullable<AgentDetail["llm_profiles"]>>([]);
+  // (Agent, LLM 配置) 的 effort 覆盖；profiles 已含每个配置的解析结果与来源。
+  const [effortRows, setEffortRows] = React.useState<AgentEffortProfile[]>([]);
+  const [effortBusy, setEffortBusy] = React.useState<number | null>(null);
+  const [showAllEffort, setShowAllEffort] = React.useState(false);
   const [webSearch, setWebSearch] = React.useState(false);
   const [interactiveShell, setInteractiveShell] = React.useState(false);
   const [localExec, setLocalExec] = React.useState(true);
@@ -112,7 +117,38 @@ export function AgentEditor({ agentKey, onSaved }: { agentKey: string; onSaved?:
       })
       .catch(() => setDetail(null))
       .finally(() => setLoaded(true));
+    api
+      .agentEffortOverrides(agentKey)
+      .then((r) => setEffortRows(r.profiles ?? []))
+      .catch(() => setEffortRows([]));
   }, [agentKey]);
+
+  const saveEffort = React.useCallback(
+    async (profileId: number, value: string) => {
+      setEffortBusy(profileId);
+      try {
+        await api.setAgentEffortOverride(agentKey, profileId, toStore(value));
+        const r = await api.agentEffortOverrides(agentKey);
+        setEffortRows(r.profiles ?? []);
+        toast.success("已保存：下一次模型调用生效，不重建运行中的 system prompt");
+      } catch (e) {
+        toast.error(`保存失败：${(e as Error).message}`);
+      } finally {
+        setEffortBusy(null);
+      }
+    },
+    [agentKey],
+  );
+
+  // 默认只展示真正相关的配置（已绑定 / 全局激活 / 已有覆盖），其余折叠。
+  const effortVisible = React.useMemo(() => {
+    if (showAllEffort) return effortRows;
+    const relevant = effortRows.filter(
+      (p) => p.is_default || p.source === "override" || String(p.profile_id) === llmProfileId,
+    );
+    return relevant.length > 0 ? relevant : effortRows.slice(0, 3);
+  }, [effortRows, showAllEffort, llmProfileId]);
+  const effortHidden = effortRows.length - effortVisible.length;
   React.useEffect(() => {
     reload();
   }, [reload]);
@@ -320,6 +356,69 @@ export function AgentEditor({ agentKey, onSaved }: { agentKey: string; onSaved?:
                       为该 Agent 绑定固定 LLM 配置（点「保存配置」生效）。优先级：Agent 绑定 &gt; 任务/会话指定 &gt; 全局激活。
                     </span>
                   </div>
+                </div>
+              )}
+              {showLLM && (
+                <div className="grid gap-1.5 border-t pt-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Label className="text-xs">思考强度覆盖（按 LLM 配置）</Label>
+                    <span className="text-muted-foreground text-[11px]">
+                      只改 reasoning_effort；下一次模型调用生效，不重建运行中的 system prompt。故障转移时按目标配置重新解析。
+                    </span>
+                  </div>
+                  <div className="grid gap-1">
+                    {effortVisible.map((p) => (
+                      <div key={p.profile_id} className="flex flex-wrap items-center gap-2 rounded border px-2 py-1.5">
+                        <span className="min-w-0 max-w-[220px] truncate text-xs" title={`${p.name}（${p.model}）`}>
+                          {p.name}
+                          <span className="text-muted-foreground"> · {p.model || "未填模型"}</span>
+                        </span>
+                        {p.is_default && (
+                          <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">全局激活</Badge>
+                        )}
+                        {!p.has_key && (
+                          <Badge variant="outline" className="px-1.5 py-0 text-[10px] text-destructive">缺少 Key</Badge>
+                        )}
+                        <span className="text-muted-foreground text-[11px]">
+                          配置默认：{p.profile_effort || "未设置"}
+                        </span>
+                        <Badge variant={p.source === "override" ? "default" : "outline"} className="px-1.5 py-0 text-[10px]">
+                          {p.source === "override" ? "覆盖生效" : p.source === "profile" ? "跟随配置" : "未设置"}
+                        </Badge>
+                        <div className="ml-auto flex items-center gap-2">
+                          <Select
+                            value={fromStore(p.source === "override" ? p.effort : "")}
+                            onValueChange={(v) => void saveEffort(p.profile_id, v)}
+                            disabled={effortBusy === p.profile_id}
+                          >
+                            <SelectTrigger className="h-7 w-40 text-xs">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {EFFORT_LEVELS.map((e) => (
+                                <SelectItem key={e.value} value={e.value}>
+                                  {e.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                    ))}
+                    {effortRows.length === 0 && (
+                      <p className="text-muted-foreground text-xs">（没有可配置的 LLM 配置）</p>
+                    )}
+                  </div>
+                  {!showAllEffort && effortHidden > 0 && (
+                    <Button type="button" variant="ghost" size="sm" className="w-fit text-xs" onClick={() => setShowAllEffort(true)}>
+                      展开其余 {effortHidden} 个配置
+                    </Button>
+                  )}
+                  {showAllEffort && (
+                    <Button type="button" variant="ghost" size="sm" className="w-fit text-xs" onClick={() => setShowAllEffort(false)}>
+                      只看相关配置
+                    </Button>
+                  )}
                 </div>
               )}
               <div className="flex flex-wrap items-end gap-3">

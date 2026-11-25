@@ -797,6 +797,9 @@ export interface LLMAuditProfile {
   name: string;
   format: string;
   model: string;
+  /** 生效强度与该角色维度上的来源（未记录时缺省，禁止用当前覆盖回填历史）。 */
+  effort?: string;
+  effort_source?: "override" | "profile" | "unset";
 }
 
 export interface LLMTransition {
@@ -814,6 +817,8 @@ export interface TaskLLMResolution {
   source: "task_chain" | "agent_binding" | "global_profile" | "environment" | "global";
   available: boolean;
   reason?: string;
+  effort?: string;
+  effort_source?: "override" | "profile" | "unset";
 }
 
 export interface TaskLLMResolutions {
@@ -1405,6 +1410,8 @@ export interface LLMProfile {
   prompt?: string;
   prompt_mode?: "prepend" | "append" | "replace" | "";
   prompt_apply_inherited?: boolean;
+  // 反向引用：哪些 Agent 覆盖了本配置的思考强度（只读）。
+  effort_overrides?: { agent_key: string; reasoning_effort: string; updated_at?: string }[];
 }
 
 // ─── LLM 厂商知识层（v0.4.91 配置重构）───
@@ -1496,6 +1503,8 @@ export interface LLMPoolMember {
   priority: number;
   active: boolean; // 是否为当前激活配置（恒为链首）
   excluded: boolean; // pool_exclude：不参与轮询
+  has_key?: boolean;
+  in_chain?: boolean; // 有 key 且（激活或未排除）才会被轮询
   state: "ok" | "degraded" | "tripped";
   fails: number;
   trips: number;
@@ -1597,6 +1606,8 @@ export interface PromptChainLLM {
   prompt_chars: number;
   prompt_apply_inherited: boolean;
   prompt_active: boolean;
+  effort?: string;
+  effort_source?: "override" | "profile" | "unset";
 }
 
 export interface PromptChainTool {
@@ -2450,3 +2461,153 @@ export interface SSHProvider {
   started_at?: string;
 }
 
+
+
+// ---- Agent × LLM 配置的 effort 覆盖 ----
+export interface AgentEffortProfile {
+  profile_id: number;
+  name: string;
+  format: string;
+  model: string;
+  is_default: boolean;
+  has_key: boolean;
+  profile_effort: string;
+  effort: string;
+  source: "override" | "profile" | "unset";
+  updated_at?: string;
+}
+
+export interface AgentEffortOverrides {
+  agent_key: string;
+  overrides: { profile_id: number; reasoning_effort: string; updated_at?: string }[];
+  profiles: AgentEffortProfile[];
+}
+
+// ---- LLM 路由投影（只读） ----
+export type LLMRouteAvailability = "ok" | "missing_key" | "invalid_config";
+
+export interface LLMRouteProfile {
+  id: number;
+  name: string;
+  format: string;
+  model: string;
+  priority: number;
+  pool_exclude: boolean;
+  has_key: boolean;
+  availability: LLMRouteAvailability;
+  availability_reason?: string;
+  effort?: string;
+  effort_source?: "override" | "profile" | "unset";
+}
+
+export interface LLMRouteLayer {
+  layer: "pin" | "agent_binding" | "task_chain" | "global_profile" | "environment";
+  applies_to?: string;
+  hit: boolean;
+  profile?: LLMRouteProfile;
+  reason?: string;
+}
+
+export interface LLMRouteChainEntry {
+  profile_id: number;
+  position: number;
+  status: string;
+  is_cursor: boolean;
+  last_error?: string;
+  exhausted_at?: string;
+  profile?: LLMRouteProfile;
+}
+
+export interface LLMRoutePool {
+  enabled: boolean;
+  bind_fallback: boolean;
+  order: string;
+  wraps: string;
+  members: LLMPoolMember[];
+  note: string;
+}
+
+export interface LLMRoutePolicy {
+  trigger: string;
+  does_not_trigger: string;
+  advance_rule: string;
+  same_provider_retry: string;
+  pool_selection: string;
+}
+
+export interface LLMRouteTransition {
+  id: number;
+  task_id: string;
+  created_at: string;
+  kind: string;
+  mode: "automatic" | "manual" | "exhausted" | string;
+  reason?: string;
+  summary?: string;
+  is_error: boolean;
+  previous?: LLMAuditProfile;
+  next?: LLMAuditProfile;
+}
+
+export interface LLMRouteHistory {
+  scope: "task" | "recent_tasks" | string;
+  state: "ok" | "no_records" | "error";
+  error?: string;
+  items: LLMRouteTransition[];
+  has_more: boolean;
+  earliest_cursor?: number;
+  snapshot_cursor?: number;
+  retention_note?: string;
+}
+
+export interface LLMRouteRole {
+  agent_key: string;
+  source: string;
+  available: boolean;
+  availability?: LLMRouteAvailability;
+  reason?: string;
+  profile_id?: number;
+  name?: string;
+  format?: string;
+  model?: string;
+  effort?: string;
+  effort_source?: "override" | "profile" | "unset";
+}
+
+export interface LLMRouteTaskRef {
+  id: string;
+  name?: string;
+  status?: string;
+  created_at?: number;
+  failover_state?: string;
+  failover_reason?: string;
+}
+
+export interface LLMRouteLastUsed {
+  worker: string;
+  profile_name?: string;
+  model?: string;
+  status?: string;
+  at?: string;
+}
+
+export interface AgentLLMRoute {
+  scope: "task" | "static" | string;
+  agent: { key: string; name: string; kind: string; binding: number | null };
+  task?: LLMRouteTaskRef;
+  precedence: LLMRouteLayer[];
+  roles: Record<string, LLMRouteRole>;
+  chain: LLMRouteChainEntry[];
+  active_profile_id?: number;
+  failover_state?: string;
+  failover_reason?: string;
+  pool: LLMRoutePool;
+  failover_policy: LLMRoutePolicy;
+  history: LLMRouteHistory;
+  /** 来自 llm_usage 记账的“最近一次实际使用”；仅任务视图且该泳道有记录时存在。 */
+  last_used?: LLMRouteLastUsed;
+  /** last_used 的边界说明（后端生成，前端原样展示）。 */
+  history_note?: string;
+  tasks: LLMRouteTaskRef[];
+  observed_at: string;
+  warnings: string[];
+}

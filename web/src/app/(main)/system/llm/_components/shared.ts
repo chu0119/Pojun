@@ -3,9 +3,14 @@
 // 各自单独设置——有些接口没有 thinking 字段、只靠强度参数就能激活思考，故需解耦。
 // 存库空字符串 = 该字段【不发送】；Radix Select 不接受空 value，故 UI 用 "none"
 // 哨兵表示不发送，存取时与 "" 互转（NONE / fromStore / toStore）。
-export const NONE = "none";
-export const fromStore = (v?: string) => (v ? v : NONE);
-export const toStore = (v: string) => (v === NONE ? "" : v);
+import { NONE, fromStore, toStore, EFFORT_VALUES } from "@/lib/effort";
+export { NONE, fromStore, toStore, EFFORT_VALUES };
+
+// 配置页的档位文案：「不发送」= 该配置自身不发 reasoning_effort 字段。
+export const EFFORT_LEVELS: { value: string; label: string }[] = [
+  { value: NONE, label: "不发送（默认）" },
+  ...EFFORT_VALUES.map((v) => ({ value: v, label: v })),
+];
 
 export const THINKING_TYPES: { value: string; label: string }[] = [
   { value: NONE, label: "不发送（默认）" },
@@ -27,14 +32,6 @@ export const MAX_TOKENS_FIELD_HINTS: Record<string, string> = {
   "openai-responses": "仅 openai 格式可选。Responses API 的字段名固定为 max_output_tokens。",
 };
 
-export const EFFORT_LEVELS: { value: string; label: string }[] = [
-  { value: NONE, label: "不发送（默认）" },
-  { value: "low", label: "low" },
-  { value: "medium", label: "medium" },
-  { value: "high", label: "high" },
-  { value: "xhigh", label: "xhigh" },
-  { value: "max", label: "max" },
-];
 
 export const CUSTOM_UA = "custom";
 
