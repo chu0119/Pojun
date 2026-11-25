@@ -1143,7 +1143,8 @@ function ChainGraph({
   const anchor = last?.anchor ?? null;
   // 几何由容器实测宽推导：1 SVG 单位 = 1 CSS px，默认视图不缩放。
   const layout = React.useMemo(() => buildLayout(chain, frameW), [chain, frameW]);
-  const narrow = layout.mode === "one";
+  // 画布过窄时才让详情覆盖全宽；否则始终并排，保留图的语境。
+  const narrow = frameW < 560;
   const anchorIdx = anchor ? layout.rows.findIndex((r) => r.id === anchor) : -1;
   const [zoom, setZoom] = React.useState(1);
   const zoomRef = React.useRef(1);
