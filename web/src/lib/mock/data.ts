@@ -3469,6 +3469,10 @@ export function agentLLMRoute(key: string, taskID?: string): AgentLLMRoute {
   const bindingProfile = binding !== undefined ? routeProfile(String(binding)) : undefined;
   const globalProfile = routeProfile((llmProfiles.find((p) => p.is_default) ?? llmProfiles[0]).id);
   const task = taskID ? tasks.find((t) => t.id === taskID) : undefined;
+  // 任务级配置链：优先级顺序是 pin > Agent 绑定 > 任务链 > 全局。
+  const taskChainIds = task?.llm_profile_ids ?? [];
+  const taskActiveId = task?.active_llm_profile_id ?? taskChainIds[0];
+  const taskProfile = taskActiveId !== undefined ? routeProfile(String(taskActiveId)) : undefined;
   const roles = Object.fromEntries(
     ["mainagent", "planner", "worker", "goals", "chat"].map((role) => {
       const bound = agents.find((a) => a.key === role)?.llm_profile_id;
@@ -3503,18 +3507,32 @@ export function agentLLMRoute(key: string, taskID?: string): AgentLLMRoute {
         profile: bindingProfile,
         reason: bindingProfile ? "Agent 显式绑定" : "未绑定",
       },
-      { layer: "task_chain", hit: false, reason: task ? "该任务没有显式配置链" : "未选择任务" },
+      {
+        layer: "task_chain",
+        hit: !!taskProfile,
+        profile: taskProfile,
+        reason: taskProfile
+          ? `任务配置链激活（游标 #${taskProfile.id}）`
+          : task
+            ? "该任务没有显式配置链"
+            : "未选择任务",
+      },
       {
         layer: "global_profile",
-        hit: !bindingProfile,
+        hit: !bindingProfile && !taskProfile,
         profile: globalProfile,
-        reason: bindingProfile ? "被 Agent 绑定覆盖" : "全局激活配置",
+        reason: bindingProfile ? "被 Agent 绑定覆盖" : taskProfile ? "被任务配置链覆盖" : "全局激活配置",
       },
       { layer: "environment", hit: false, reason: "未配置环境变量覆盖" },
     ],
     roles,
-    chain: [],
-    active_profile_id: bindingProfile?.id ?? globalProfile.id,
+    chain: taskChainIds.map((id, i) => ({
+      profile_id: id,
+      position: i,
+      status: "ready",
+      is_cursor: id === taskActiveId,
+    })),
+    active_profile_id: bindingProfile?.id ?? taskProfile?.id ?? globalProfile.id,
     failover_state: "default",
     pool: {
       enabled: llmPool.enabled,

@@ -26,6 +26,10 @@ export function setMockProfilePrompt(
   promptEdits.set(profileId, { prompt, mode, inherit });
 }
 
+export function getMockProfilePrompt(profileId: number) {
+  return promptEdits.get(profileId);
+}
+
 const seg = (
   key: string,
   title: string,
@@ -57,8 +61,14 @@ const seg = (
   ...over,
 });
 
-export function mockPromptChain(agentKey: string): AgentPromptChain {
-  const baseProfileId = 1;
+const MOCK_PROFILES: { id: number; name: string; model: string; format: string; effort: string }[] = [
+  { id: 1, name: "Claude Opus 4.8", model: "claude-opus-4-8", format: "anthropic", effort: "high" },
+  { id: 2, name: "DeepSeek V4", model: "deepseek-v4-flash", format: "openai", effort: "" },
+];
+
+export function mockPromptChain(agentKey: string, profileId?: string | number): AgentPromptChain {
+  const pid = Number(profileId) || 1;
+  const prof = MOCK_PROFILES.find((p) => p.id === pid) ?? MOCK_PROFILES[0];
   const codeTail = (n: number, present = true, gate = "") =>
     seg(`tail-${n}`, `硬尾巴 #${n}`, "code_tail", {
       present,
@@ -100,7 +110,7 @@ export function mockPromptChain(agentKey: string): AgentPromptChain {
     }),
   ].map((s, i) => ({ ...s, order: i + 1 }));
 
-  const edit = promptEdits.get(baseProfileId);
+  const edit = promptEdits.get(pid);
   if (edit) {
     const seg = segments.find((x) => x.kind === "profile_prompt");
     if (seg) {
@@ -110,25 +120,33 @@ export function mockPromptChain(agentKey: string): AgentPromptChain {
       seg.source_label = edit.mode ? `LLM 配置 · ${edit.mode}` : "未配置";
     }
   }
-  const override = getMockEffortOverride(agentKey, baseProfileId);
-  const cleared = override === "";
+  // 与后端解析顺序一致：显式覆盖 > 配置自身档位 > 未设置。
+  // 空串是「已删除覆盖」的哨兵，应回落到配置自身，而不是当成覆盖值。
+  const override = getMockEffortOverride(agentKey, pid);
+  const overrideEffort = override && override !== "" ? override : "";
+  const effort = overrideEffort || prof.effort;
+  const effortSource = overrideEffort ? "override" : prof.effort ? "profile" : "unset";
+  // 与 server/prompt_chain.go 同口径：只累计 present 且 available 的段，token 估算 (chars+1)/2。
+  const presentChars = segments
+    .filter((s) => s.present && s.available)
+    .reduce((n, s) => n + s.chars, 0);
 
   return {
     agent_key: agentKey,
     agent_kind: agentKey === "worker" || agentKey === "planner" ? "builtin" : "custom",
     llm: {
-      profile_id: 1,
-      name: "Claude Opus 4.8",
-      model: "claude-opus-4-8",
-      format: "anthropic",
+      profile_id: prof.id,
+      name: prof.name,
+      model: prof.model,
+      format: prof.format,
       source: "agent_binding",
       source_label: "显式绑定",
       prompt_mode: edit?.mode || "append",
       prompt_chars: edit ? edit.prompt.length : 412,
       prompt_apply_inherited: edit ? edit.inherit : false,
       prompt_active: edit ? !!edit.mode && edit.prompt.length > 0 : true,
-      effort: cleared ? "" : (override ?? "high"),
-      effort_source: cleared ? "unset" : "override",
+      effort,
+      effort_source: effortSource,
     },
     segments,
     tools: {
@@ -208,9 +226,10 @@ export function mockPromptChain(agentKey: string): AgentPromptChain {
       { name: "report-writing", description: "报告撰写", in_index: true, mcp_gated: [] },
     ],
     totals: {
+      // 与 server/prompt_chain.go 同口径：只累计 present 段，token 估算 (chars+1)/2。
       segments: segments.length,
-      chars: 3260 + 412 + 1580 + 640 + 810,
-      est_tokens: 1850,
+      chars: presentChars,
+      est_tokens: Math.floor((presentChars + 1) / 2),
     },
     warnings: [
       "运行时注入在任务执行时生成；本视图只给位置与条件，不展开正文、不连接 MCP、不含凭据。",
