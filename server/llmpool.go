@@ -54,11 +54,12 @@ func newLLMHealthRegistry(pg *db.DB) *llmpool.Registry {
 	return reg
 }
 
-// poolMember builds one chain member from a profile, reusing the per-profile
-// provider cache so every agent pointing at the same profile shares one provider
-// (hence one rate limiter). Returns nil when the profile can't be built.
-func (s *Server) poolMember(p *db.LLMProfile, rank int) *llmpool.Member {
-	prov, cfg, ok := s.providerForProfile(p.ID)
+// poolMember builds one chain member from a profile, reusing the per-(profile,
+// effort) provider cache. agentKey selects that agent's effort override for this
+// profile, so a failover member runs at the effort the agent would use there.
+// Returns nil when the profile can't be built.
+func (s *Server) poolMember(agentKey string, p *db.LLMProfile, rank int) *llmpool.Member {
+	prov, cfg, ok := s.providerForAgentProfile(agentKey, p.ID)
 	if !ok {
 		return nil
 	}
@@ -77,7 +78,7 @@ func (s *Server) poolMember(p *db.LLMProfile, rank int) *llmpool.Member {
 //
 // Returns nil when failover is off or the chain has fewer than two usable members
 // — callers then use the bare provider, which is byte-for-byte the old behavior.
-func (s *Server) poolChain(headID int64, headProv llm.Provider, headCfg agent.Config) *llmpool.Pool {
+func (s *Server) poolChain(agentKey string, headID int64, headProv llm.Provider, headCfg agent.Config) *llmpool.Pool {
 	if s.m == nil || s.m.pg == nil || !s.m.LLMPoolEnabled() {
 		return nil
 	}
@@ -115,7 +116,7 @@ func (s *Server) poolChain(headID int64, headProv llm.Provider, headCfg agent.Co
 		if p.IsDefault {
 			rank = llmpool.RankActive - 1
 		}
-		if m := s.poolMember(p, rank); m != nil {
+		if m := s.poolMember(agentKey, p, rank); m != nil {
 			members = append(members, m)
 		}
 	}
@@ -128,7 +129,7 @@ func (s *Server) poolChain(headID int64, headProv llm.Provider, headCfg agent.Co
 // poolForActive wraps the globally-active provider in the failover chain. Returns
 // prov unchanged when failover is off or there's nothing to fall back to.
 func (s *Server) poolForActive(activeID int64, prov llm.Provider, cfg agent.Config) llm.Provider {
-	pool := s.poolChain(activeID, prov, cfg)
+	pool := s.poolChain("", activeID, prov, cfg)
 	if pool == nil {
 		return prov
 	}
@@ -144,11 +145,24 @@ func (s *Server) poolForActive(activeID int64, prov llm.Provider, cfg agent.Conf
 // Only active when both the failover master switch and the bound-fallback switch
 // are on; otherwise a bound profile stays exclusive (fails hard), which is the
 // default and the documented precedence.
-func (s *Server) poolForBinding(id int64, prov llm.Provider, cfg agent.Config) llm.Provider {
+func (s *Server) poolForBinding(agentKey string, id int64, prov llm.Provider, cfg agent.Config) llm.Provider {
 	if s.m == nil || !s.m.LLMPoolEnabled() || !s.m.LLMPoolBindFallback() {
 		return prov
 	}
-	if pool := s.poolChain(id, prov, cfg); pool != nil {
+	if pool := s.poolChain(agentKey, id, prov, cfg); pool != nil {
+		return pool
+	}
+	return prov
+}
+
+// poolForAgent wraps a per-agent provider (an effort override on the globally
+// active profile) in the failover chain. Unlike the shared global pool, every
+// member is built with this agent's effort for that profile.
+func (s *Server) poolForAgent(agentKey string, id int64, prov llm.Provider, cfg agent.Config) llm.Provider {
+	if s.m == nil || !s.m.LLMPoolEnabled() {
+		return prov
+	}
+	if pool := s.poolChain(agentKey, id, prov, cfg); pool != nil {
 		return pool
 	}
 	return prov
@@ -163,6 +177,10 @@ type LLMPoolMemberStatus struct {
 	Priority  int    `json:"priority"`
 	Active    bool   `json:"active"`   // is the globally-activated profile
 	Excluded  bool   `json:"excluded"` // pool_exclude — not a failover target
+	// HasKey and InChain describe static eligibility without loading the key:
+	// InChain mirrors PoolProfiles' WHERE (has key AND (active OR not excluded)).
+	HasKey  bool `json:"has_key"`
+	InChain bool `json:"in_chain"`
 	// Health: state is "ok" | "degraded" (failing but not tripped) | "tripped".
 	State        string `json:"state"`
 	Fails        int    `json:"fails"`
@@ -170,6 +188,52 @@ type LLMPoolMemberStatus struct {
 	CooldownSecs int    `json:"cooldown_secs"` // remaining cooling-off seconds; 0 = none
 	LastError    string `json:"last_error,omitempty"`
 	LastAt       string `json:"last_at,omitempty"`
+}
+
+// poolMemberStatuses computes the chain view for the LLM page and the read-only
+// route projection from one shared implementation. It never calls PoolProfiles:
+// that query loads api_key, while this view needs only presence. Ordering matches
+// the live chain (active first, then priority DESC, id ASC).
+func (s *Server) poolMemberStatuses() []LLMPoolMemberStatus {
+	if s == nil || s.m == nil || s.m.pg == nil {
+		return []LLMPoolMemberStatus{}
+	}
+	all, err := s.m.pg.ListProfiles()
+	if err != nil {
+		return []LLMPoolMemberStatus{}
+	}
+	keys, err := s.m.pg.ProfileKeyPresence()
+	if err != nil {
+		keys = map[int64]bool{}
+	}
+	var health map[int64]llmpool.State
+	if s.llmHealth != nil {
+		health = s.llmHealth.Snapshot()
+	}
+	now := time.Now()
+	out := make([]LLMPoolMemberStatus, 0, len(all))
+	for _, p := range all {
+		st := health[p.ID]
+		hasKey := keys[p.ID]
+		m := LLMPoolMemberStatus{
+			ProfileID: i64s(p.ID), Name: p.Name, Model: p.Model, Format: p.Format,
+			Priority: p.Priority, Active: p.IsDefault, Excluded: p.PoolExclude,
+			HasKey: hasKey, InChain: hasKey && (p.IsDefault || !p.PoolExclude),
+			State: "ok", Fails: st.Fails, Trips: st.Trips, LastError: sanitizeRouteError(st.LastError),
+		}
+		if st.Open() {
+			m.State = "tripped"
+			m.CooldownSecs = int(st.OpenUntil.Sub(now).Seconds()) + 1
+		} else if st.Fails > 0 {
+			m.State = "degraded"
+		}
+		if !st.LastAt.IsZero() {
+			m.LastAt = st.LastAt.Format(time.RFC3339)
+		}
+		out = append(out, m)
+	}
+	sortPoolStatus(out)
+	return out
 }
 
 // llmPoolStatus reports the whole picture for the LLM page: whether failover is
@@ -186,37 +250,7 @@ func (s *Server) llmPoolStatus() map[string]any {
 	}
 	out["enabled"] = s.m.LLMPoolEnabled()
 	out["bind_fallback"] = s.m.LLMPoolBindFallback()
-
-	all, err := s.m.pg.ListProfiles()
-	if err != nil {
-		return out
-	}
-	health := s.llmHealth.Snapshot()
-	now := time.Now()
-	// Chain order: active first, then priority DESC / id ASC — the same ordering
-	// PoolProfiles applies, recomputed here so excluded ones can be shown in place.
-	chain := make([]LLMPoolMemberStatus, 0, len(all))
-	for _, p := range all {
-		st := health[p.ID]
-		m := LLMPoolMemberStatus{
-			ProfileID: i64s(p.ID), Name: p.Name, Model: p.Model, Format: p.Format,
-			Priority: p.Priority, Active: p.IsDefault, Excluded: p.PoolExclude,
-			State: "ok", Fails: st.Fails, Trips: st.Trips,
-			LastError: st.LastError,
-		}
-		if st.Open() {
-			m.State = "tripped"
-			m.CooldownSecs = int(st.OpenUntil.Sub(now).Seconds()) + 1
-		} else if st.Fails > 0 {
-			m.State = "degraded"
-		}
-		if !st.LastAt.IsZero() {
-			m.LastAt = st.LastAt.Format(time.RFC3339)
-		}
-		chain = append(chain, m)
-	}
-	sortPoolStatus(chain)
-	out["chain"] = chain
+	out["chain"] = s.poolMemberStatuses()
 	return out
 }
 

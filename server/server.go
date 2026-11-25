@@ -1089,6 +1089,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/agents/{key}/llm-effort-overrides", s.pgAgentEffortOverrides)
 	mux.HandleFunc("PUT /api/agents/{key}/llm-effort-overrides/{profile_id}", s.pgSaveAgentEffortOverride)
 	mux.HandleFunc("DELETE /api/agents/{key}/llm-effort-overrides/{profile_id}", s.pgDeleteAgentEffortOverride)
+	mux.HandleFunc("GET /api/agents/{key}/llm-route", s.pgAgentLLMRoute)
 	mux.HandleFunc("GET /api/agents/{key}/visibility", s.pgGetAgentVisibility)
 	mux.HandleFunc("PUT /api/agents/{key}/visibility", s.pgSetAgentVisibility)
 	// 内置工具目录（描述/参数默认值可改、按 agent 绑定；key 与 handler 在代码层）
