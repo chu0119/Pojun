@@ -1849,6 +1849,12 @@ func (s *Server) pgListProfiles(w http.ResponseWriter, r *http.Request) {
 			p.Prompt, p.PromptMode, p.PromptApplyInherited = pi.Text, pi.Mode, pi.ApplyInherited
 		}
 	}
+	// 反向引用：哪些 Agent 覆盖了本配置的强度。读取失败不阻断列表（这是辅助信息）。
+	if ovs, err := pg.AllEffortOverrides(); err == nil {
+		for _, p := range ps {
+			p.EffortOverrides = ovs[p.ID]
+		}
+	}
 	writeJSON(w, 200, map[string]any{"profiles": llmProfileDTOs(ps)})
 }
 

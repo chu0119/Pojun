@@ -8,32 +8,37 @@ import (
 )
 
 type taskLLMResolution struct {
-	ProfileID *int64 `json:"profile_id,omitempty"`
-	Name      string `json:"name"`
-	Format    string `json:"format"`
-	Model     string `json:"model"`
-	Source    string `json:"source"`
-	Available bool   `json:"available"`
-	Reason    string `json:"reason,omitempty"`
+	ProfileID    *int64 `json:"profile_id,omitempty"`
+	Name         string `json:"name"`
+	Format       string `json:"format"`
+	Model        string `json:"model"`
+	Source       string `json:"source"`
+	Available    bool   `json:"available"`
+	Reason       string `json:"reason,omitempty"`
+	Effort       string `json:"effort,omitempty"`
+	EffortSource string `json:"effort_source,omitempty"`
 }
 
-func (s *Server) resolutionFromProfile(p *db.LLMProfile, source string) taskLLMResolution {
+func (s *Server) resolutionFromProfile(agentKey string, p *db.LLMProfile, source string) taskLLMResolution {
 	if p == nil {
 		return taskLLMResolution{Source: source, Reason: "LLM 配置不存在"}
 	}
 	id := p.ID
+	effort, effortSource := s.resolveEffort(agentKey, p)
 	result := taskLLMResolution{
-		ProfileID: &id,
-		Name:      p.Name,
-		Format:    p.Format,
-		Model:     p.Model,
-		Source:    source,
+		ProfileID:    &id,
+		Name:         p.Name,
+		Format:       p.Format,
+		Model:        p.Model,
+		Source:       source,
+		Effort:       effort,
+		EffortSource: effortSource,
 	}
 	if p.APIKey == "" {
 		result.Reason = "LLM 配置未设置 API Key"
 		return result
 	}
-	if _, _, ok := s.providerForProfile(p.ID); !ok {
+	if _, _, ok := s.providerForAgentProfile(agentKey, p.ID); !ok {
 		result.Reason = "LLM 配置格式或参数无效"
 		return result
 	}
@@ -58,7 +63,7 @@ func (s *Server) resolveTaskRoleLLM(t *Task, agentKey string) (taskLLMResolution
 			return taskLLMResolution{}, fmt.Errorf("load agent LLM profile: %w", err)
 		}
 		if p != nil {
-			resolved := s.resolutionFromProfile(p, "agent_binding")
+			resolved := s.resolutionFromProfile(agentKey, p, "agent_binding")
 			if resolved.Available {
 				return resolved, nil
 			}
@@ -73,14 +78,14 @@ func (s *Server) resolveTaskRoleLLM(t *Task, agentKey string) (taskLLMResolution
 		if err != nil {
 			return taskLLMResolution{}, fmt.Errorf("load task LLM profile: %w", err)
 		}
-		return s.resolutionFromProfile(p, "task_chain"), nil
+		return s.resolutionFromProfile(agentKey, p, "task_chain"), nil
 	}
 	p, err := s.m.pg.ActiveProfile()
 	if err != nil {
 		return taskLLMResolution{}, fmt.Errorf("load global LLM profile: %w", err)
 	}
 	if p != nil {
-		resolved := s.resolutionFromProfile(p, "global_profile")
+		resolved := s.resolutionFromProfile(agentKey, p, "global_profile")
 		if resolved.Available {
 			return resolved, nil
 		}

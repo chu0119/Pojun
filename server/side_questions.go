@@ -40,14 +40,14 @@ type sideQuestionState struct {
 	outputTokens int
 }
 
-func sideModel(cfg agent.Config, id int64, name string) sidequestion.Model {
+func sideModel(cfg agent.Config, id int64, name, agentKey string) sidequestion.Model {
 	b, _ := json.Marshal([]any{cfg.Format, cfg.BaseURL, cfg.Model, cfg.ThinkingType, cfg.ReasoningEffort, cfg.Stream, cfg.MaxTokensField, cfg.SessionHeaderKey, cfg.UserAgent})
 	h := sha256.Sum256(b)
-	return sidequestion.Model{ProfileID: id, Name: name, Format: string(cfg.Format), Model: cfg.Model, Identity: hex.EncodeToString(h[:]), Streaming: cfg.Stream, WindowTokens: cfg.CompactionWindow()}
+	return sidequestion.Model{ProfileID: id, AgentKey: agentKey, Name: name, Format: string(cfg.Format), Model: cfg.Model, Identity: hex.EncodeToString(h[:]), Streaming: cfg.Stream, WindowTokens: cfg.CompactionWindow()}
 }
 
-func bindSideProvider(p llm.Provider, cfg agent.Config, id int64, name string) llm.Provider {
-	return sidequestion.Bind(p, sideModel(cfg, id, name))
+func bindSideProvider(p llm.Provider, cfg agent.Config, id int64, name, agentKey string) llm.Provider {
+	return sidequestion.Bind(p, sideModel(cfg, id, name, agentKey))
 }
 
 func (s *Server) initSideQuestions() {
@@ -190,18 +190,33 @@ func (s *Server) sideProvider(model sidequestion.Model) (llm.Provider, error) {
 	var cfg agent.Config
 	var ok bool
 	if model.ProfileID > 0 {
-		// Validate the persisted reference even if a previous provider is cached.
-		current, exists := s.loadProfileConfig(model.ProfileID)
-		if !exists || sideModel(current, model.ProfileID, model.Name).Identity != model.Identity {
+		// Rebuild the exact request parameters this agent would use on this
+		// profile — including its effort override — and compare the identity. Using
+		// the profile-only config here would reject every side question from an
+		// agent that has an override.
+		prof, err := s.m.pg.ProfileByID(model.ProfileID)
+		if err != nil || prof == nil {
 			return nil, errors.New("模型配置已删除或变化，请先运行主 Agent 更新上下文")
 		}
-		p, cfg, ok = s.providerForProfile(model.ProfileID)
+		current, exists := s.profileConfig(prof)
+		if !exists {
+			return nil, errors.New("模型配置已删除或变化，请先运行主 Agent 更新上下文")
+		}
+		effort, _ := s.resolveEffort(model.AgentKey, prof)
+		current = applyEffortToConfig(current, effort)
+		if sideModel(current, model.ProfileID, model.Name, model.AgentKey).Identity != model.Identity {
+			return nil, errors.New("模型配置已删除或变化，请先运行主 Agent 更新上下文")
+		}
+		p, _, ok = s.providerForAgentProfile(model.AgentKey, model.ProfileID)
 	} else {
 		s.cfgMu.Lock()
 		p, cfg, ok = s.llmDirect, s.llmCfg, s.llmOn
 		s.cfgMu.Unlock()
+		if ok && sideModel(cfg, model.ProfileID, model.Name, model.AgentKey).Identity != model.Identity {
+			return nil, errors.New("模型配置已删除或变化，请先运行主 Agent 更新上下文")
+		}
 	}
-	if !ok || p == nil || sideModel(cfg, model.ProfileID, model.Name).Identity != model.Identity {
+	if !ok || p == nil {
 		return nil, errors.New("模型配置已删除或变化，请先运行主 Agent 更新上下文")
 	}
 	return p, nil

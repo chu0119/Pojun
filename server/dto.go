@@ -642,6 +642,8 @@ type LLMProfileDTO struct {
 	Prompt               string `json:"prompt"`
 	PromptMode           string `json:"prompt_mode"`
 	PromptApplyInherited bool   `json:"prompt_apply_inherited"`
+	// 反向引用：哪些 Agent 覆盖了本配置的思考强度（只读，来自 effort 覆盖表）。
+	EffortOverrides []db.AgentEffortRef `json:"effort_overrides,omitempty"`
 }
 
 func llmProfileDTO(p *db.LLMProfile) LLMProfileDTO {
@@ -671,6 +673,7 @@ func llmProfileDTO(p *db.LLMProfile) LLMProfileDTO {
 		Prompt:               p.Prompt,
 		PromptMode:           p.PromptMode,
 		PromptApplyInherited: p.PromptApplyInherited,
+		EffortOverrides:      p.EffortOverrides,
 	}
 }
 

@@ -34,7 +34,12 @@ func (p Parent) Key() string {
 
 // Model contains only configuration identity, never credentials or proxy URLs.
 type Model struct {
-	ProfileID    int64  `json:"profile_id"`
+	ProfileID int64 `json:"profile_id"`
+	// AgentKey is a resolution hint only: it selects that agent's
+	// (agent, profile) effort override when rebuilding the provider. It is NOT
+	// part of Identity — identity keeps covering the effective request parameters,
+	// which already include the resolved effort.
+	AgentKey     string `json:"agent_key,omitempty"`
 	Name         string `json:"name"`
 	Format       string `json:"format"`
 	Model        string `json:"model"`

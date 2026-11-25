@@ -34,10 +34,17 @@ type llmAuditProfile struct {
 	Name   string `json:"name"`
 	Format string `json:"format"`
 	Model  string `json:"model"`
+	// Effort/EffortSource are the EFFECTIVE values for the role that hit the
+	// transition, resolved at emit time. Empty/absent means "not recorded" (e.g. a
+	// manual task-level switch with no single role context) — readers must not
+	// backfill from the current override.
+	Effort       string `json:"effort,omitempty"`
+	EffortSource string `json:"effort_source,omitempty"`
 }
 
 type llmTransitionAudit struct {
-	Mode     string           `json:"mode"` // automatic | manual | exhausted
+	AgentKey string           `json:"agent_key,omitempty"` // role that hit the transition
+	Mode     string           `json:"mode"`                // automatic | manual | exhausted
 	Reason   string           `json:"reason"`
 	Previous *llmAuditProfile `json:"previous,omitempty"`
 	Next     *llmAuditProfile `json:"next,omitempty"`
@@ -151,14 +158,17 @@ func (r *taskLLMRuntime) current() (taskLLMSelection, error) {
 			return sel, &taskLLMError{taskID: r.taskID, chainExhausted: true, cause: errors.New("all selected profiles are quota exhausted")}
 		}
 		sel.profileID = *pt.ActiveLLMProfileID
-		prov, cfg, ok := r.s.providerForProfile(sel.profileID)
+		// Resolve this role's effort for the active profile: a failover to another
+		// profile goes through this same branch and therefore re-resolves, never
+		// carrying the previous profile's override over.
+		prov, cfg, ok := r.s.providerForAgentProfile(r.agentKey, sel.profileID)
 		if !ok {
 			return sel, fmt.Errorf("LLM profile #%d is missing or invalid", sel.profileID)
 		}
 		sel.provider, sel.retry = prov, cfg.Retry
 		return sel, nil
 	}
-	prov, cfg, ok := r.s.globalProvider()
+	prov, cfg, ok := r.s.globalProviderForAgent(r.agentKey)
 	if !ok {
 		return sel, fmt.Errorf("task %s has no available fallback LLM provider", r.taskID)
 	}
@@ -190,11 +200,11 @@ func (r *taskLLMRuntime) activeCfg() (agent.Config, bool) {
 		return cfg, true
 	}
 	if len(pt.LLMProfileIDs) > 0 && pt.ActiveLLMProfileID != nil {
-		if _, cfg, ok := r.s.providerForProfile(*pt.ActiveLLMProfileID); ok {
+		if _, cfg, ok := r.s.providerForAgentProfile(r.agentKey, *pt.ActiveLLMProfileID); ok {
 			return cfg, true
 		}
 	}
-	if _, cfg, ok := r.s.globalProvider(); ok {
+	if _, cfg, ok := r.s.globalProviderForAgent(r.agentKey); ok {
 		return cfg, true
 	}
 	return agent.Config{}, false
@@ -240,7 +250,7 @@ func (r *taskLLMRuntime) streamHooks() taskLLMStreamHooks {
 			return transition, nil
 		},
 		transition: func(selection taskLLMSelection, transition db.TaskLLMTransition, cause error) {
-			r.s.emitTaskLLMTransition(selection.task, transition, cause)
+			r.s.emitTaskLLMTransition(selection.task, r.agentKey, transition, cause)
 		},
 		withoutThinking: r.withoutThinking,
 	}
@@ -261,12 +271,12 @@ func (s *Server) configForSelection(agentKey string, sel taskLLMSelection) (agen
 	}
 	// 2) 任务链的当前 profile
 	if sel.profileID > 0 {
-		if _, cfg, ok := s.providerForProfile(sel.profileID); ok {
+		if _, cfg, ok := s.providerForAgentProfile(agentKey, sel.profileID); ok {
 			return cfg, true
 		}
 	}
 	// 3) 全局
-	if _, cfg, ok := s.globalProvider(); ok {
+	if _, cfg, ok := s.globalProviderForAgent(agentKey); ok {
 		return cfg, true
 	}
 	return agent.Config{}, false
@@ -321,11 +331,17 @@ func (r *taskLLMRuntime) Complete(ctx context.Context, req llm.CompletionRequest
 func completeTaskLLM(ctx context.Context, taskID string, req llm.CompletionRequest, hooks taskLLMStreamHooks) (llm.Message, string, llm.Usage, error) {
 	// thinking 降级只做一次（与 streamTaskLLM 同理，见 thinking_fallback.go）。
 	// 降级是【换 provider】而不是改请求——thinking 参数在 provider 配置层。
-	downgradedProv, thinkingDowngraded := llm.Provider(nil), false
+	// downgradedFor 记住降级属于哪个 profile：failover 换 profile 后必须丢弃，
+	// 否则会把旧 profile 的 cfg（含旧 effort）带到目标 profile，违背
+	// 「按目标配置重新解析」的规则。
+	downgradedProv, thinkingDowngraded, downgradedFor := llm.Provider(nil), false, int64(0)
 	for {
 		selection, err := hooks.current()
 		if err != nil {
 			return llm.Message{}, "", llm.Usage{}, err
+		}
+		if downgradedProv != nil && downgradedFor != selection.profileID {
+			downgradedProv, thinkingDowngraded = nil, false
 		}
 		var (
 			msg     llm.Message
@@ -349,6 +365,7 @@ func completeTaskLLM(ctx context.Context, taskID string, req llm.CompletionReque
 				if altErr == nil {
 					thinkingDowngraded = true
 					downgradedProv = alt
+					downgradedFor = selection.profileID
 					log.Printf("[task-llm] task %s 模型拒收 thinking 参数,改用不带 thinking 的 provider 重试: %v", taskID, callErr)
 					continue
 				}
@@ -390,15 +407,18 @@ func completeTaskLLM(ctx context.Context, taskID string, req llm.CompletionReque
 func streamTaskLLM(ctx context.Context, taskID string, req llm.CompletionRequest, hooks taskLLMStreamHooks) iter.Seq2[llm.StreamEvent, error] {
 	return func(yield func(llm.StreamEvent, error) bool) {
 		// thinking 降级只做一次：模型拒收 thinking 参数时换 provider 重试。
-		// 变量在闭包外声明，因为降级后的 provider 要贯穿整个 for 循环
-		// （换 profile 之后用的也是这一份）。
+		// 降级后的 provider 只对**同一个 profile** 有效；failover 换 profile 后
+		// 必须丢弃它（downgradedFor），否则旧 profile 的 cfg/effort 会被带过去。
 		cur := req
-		downgradedProv, thinkingDowngraded := llm.Provider(nil), false
+		downgradedProv, thinkingDowngraded, downgradedFor := llm.Provider(nil), false, int64(0)
 		for {
 			selection, err := hooks.current()
 			if err != nil {
 				yield(llm.StreamEvent{}, err)
 				return
+			}
+			if downgradedProv != nil && downgradedFor != selection.profileID {
+				downgradedProv, thinkingDowngraded = nil, false
 			}
 			committed := false
 			var pending []llm.StreamEvent
@@ -457,6 +477,7 @@ func streamTaskLLM(ctx context.Context, taskID string, req llm.CompletionRequest
 					if altErr == nil {
 						thinkingDowngraded = true
 						downgradedProv = alt
+						downgradedFor = selection.profileID
 						log.Printf("[task-llm] task %s 模型拒收 thinking 参数,改用不带 thinking 的 provider 重试: %v", taskID, streamErr)
 						continue
 					}
@@ -635,11 +656,11 @@ func (s *Server) agentBindingProvider(agentKey string) (llm.Provider, agent.Conf
 	if id == nil {
 		return nil, agent.Config{}, false
 	}
-	prov, cfg, ok := s.providerForProfile(*id)
+	prov, cfg, ok := s.providerForAgentProfile(agentKey, *id)
 	if !ok {
 		return nil, agent.Config{}, false
 	}
-	return s.poolForBinding(*id, prov, cfg), cfg, true
+	return s.poolForBinding(agentKey, *id, prov, cfg), cfg, true
 }
 
 // globalProvider returns the process-wide provider (persisted active profile or
@@ -652,6 +673,31 @@ func (s *Server) globalProvider() (llm.Provider, agent.Config, bool) {
 		return nil, agent.Config{}, false
 	}
 	return s.llmProv, s.llmCfg, true
+}
+
+// globalProviderForAgent is the global fallback with a per-(agent, profile)
+// effort override applied. With no override it returns the shared global pair
+// unchanged, so the default path keeps one provider and one rate limiter. With an
+// override it builds (and pools) a provider for exactly this agent.
+func (s *Server) globalProviderForAgent(agentKey string) (llm.Provider, agent.Config, bool) {
+	if agentKey == "" || s == nil || s.m == nil || s.m.pg == nil {
+		return s.globalProvider()
+	}
+	// Any override — including one on a fallback member — means the shared global
+	// pool cannot serve this agent: its members must be built per (agent, profile).
+	overrides, err := s.m.pg.EffortOverrides(agentKey)
+	if err != nil || len(overrides) == 0 {
+		return s.globalProvider()
+	}
+	act, err := s.m.pg.ActiveProfile()
+	if err != nil || act == nil {
+		return s.globalProvider()
+	}
+	prov, cfg, ok := s.providerForAgentProfile(agentKey, act.ID)
+	if !ok {
+		return s.globalProvider()
+	}
+	return s.poolForAgent(agentKey, act.ID, prov, cfg), cfg, true
 }
 
 // taskRuntimeAvailable reports whether every listed role can resolve a provider
@@ -842,14 +888,14 @@ func (s *Server) syncTaskLLMState(pt *db.Task) {
 	s.m.mu.Unlock()
 }
 
-func (s *Server) emitTaskLLMTransition(t *Task, transition db.TaskLLMTransition, cause error) {
+func (s *Server) emitTaskLLMTransition(t *Task, agentKey string, transition db.TaskLLMTransition, cause error) {
 	if t == nil {
 		return
 	}
-	previous := s.llmAuditProfile(transition.PreviousProfileID)
+	previous := s.llmAuditProfileFor(agentKey, transition.PreviousProfileID)
 	var next *llmAuditProfile
 	if transition.NextProfileID != nil {
-		next = s.llmAuditProfile(*transition.NextProfileID)
+		next = s.llmAuditProfileFor(agentKey, *transition.NextProfileID)
 	}
 	mode := "automatic"
 	kind := "llm_switch"
@@ -862,13 +908,20 @@ func (s *Server) emitTaskLLMTransition(t *Task, transition db.TaskLLMTransition,
 		summary += "，配置链已耗尽"
 	}
 	metadata, _ := json.Marshal(llmActivityMetadata{LLMTransition: llmTransitionAudit{
-		Mode: mode, Reason: cause.Error(), Previous: previous, Next: next,
+		AgentKey: agentKey, Mode: mode, Reason: cause.Error(), Previous: previous, Next: next,
 	}})
 	s.engine.emitActivity(t, db.Activity{Worker: "system", Kind: kind, IsError: transition.ChainExhausted, Summary: summary, Detail: cause.Error(), Metadata: metadata})
 	log.Printf("[llm-failover] task %s: %s", t.ID, summary)
 }
 
 func (s *Server) llmAuditProfile(id int64) *llmAuditProfile {
+	return s.llmAuditProfileFor("", id)
+}
+
+// llmAuditProfileFor snapshots a profile plus the effective effort this role runs
+// it at. agentKey=="" (manual task-level switch) leaves effort unrecorded rather
+// than guessing one.
+func (s *Server) llmAuditProfileFor(agentKey string, id int64) *llmAuditProfile {
 	if id <= 0 || s.m == nil || s.m.pg == nil {
 		return nil
 	}
@@ -876,7 +929,11 @@ func (s *Server) llmAuditProfile(id int64) *llmAuditProfile {
 	if err != nil || p == nil {
 		return &llmAuditProfile{ID: id, Name: fmt.Sprintf("配置 #%d", id)}
 	}
-	return &llmAuditProfile{ID: p.ID, Name: p.Name, Format: p.Format, Model: p.Model}
+	out := &llmAuditProfile{ID: p.ID, Name: p.Name, Format: p.Format, Model: p.Model}
+	if agentKey != "" {
+		out.Effort, out.EffortSource = s.resolveEffort(agentKey, p)
+	}
+	return out
 }
 
 func llmAuditProfileLabel(profile *llmAuditProfile) string {

@@ -153,7 +153,7 @@ func newSideHTTPFixture(t *testing.T) *sideHTTPFixture {
 	s.cfgMu.Lock()
 	s.llmCfg = cfg
 	s.llmOn = true
-	s.llmDirect = bindSideProvider(p, cfg, 0, "fixture")
+	s.llmDirect = bindSideProvider(p, cfg, 0, "fixture", "")
 	s.cfgMu.Unlock()
 	token, err := signJWT(s.currentJWTKey())
 	if err != nil {
@@ -194,7 +194,7 @@ func (f *sideHTTPFixture) conversation(t *testing.T) (sidequestion.Parent, strin
 }
 func (f *sideHTTPFixture) checkpoint(t *testing.T, p sidequestion.Parent) sidequestion.Snapshot {
 	t.Helper()
-	snap := sidequestion.Snapshot{Parent: p, RunID: time.Now().UnixNano(), Version: 1, CapturedAt: time.Now().UTC(), Model: sideModel(f.s.llmCfg, 0, "fixture"), Request: llm.CompletionRequest{MaxTokens: 128, Messages: []llm.Message{llm.UserText("main context marker")}}}
+	snap := sidequestion.Snapshot{Parent: p, RunID: time.Now().UnixNano(), Version: 1, CapturedAt: time.Now().UTC(), Model: sideModel(f.s.llmCfg, 0, "fixture", ""), Request: llm.CompletionRequest{MaxTokens: 128, Messages: []llm.Message{llm.UserText("main context marker")}}}
 	if err := f.m.pg.SaveSideSnapshot(t.Context(), snap); err != nil {
 		t.Fatal(err)
 	}
@@ -356,7 +356,7 @@ func TestSideHTTPGlobalLimitTaskWorkerAndDeletion(t *testing.T) {
 func TestSideCheckpointPersistsBeforeAdmissionAndRestart(t *testing.T) {
 	f := newSideHTTPFixture(t)
 	p, path := f.conversation(t)
-	bound := bindSideProvider(f.provider, f.s.llmCfg, 0, "fixture")
+	bound := bindSideProvider(f.provider, f.s.llmCfg, 0, "fixture", "")
 	ctx, deps := sidequestion.Attach(f.s.ctx, p, harness.QueryDeps{}, bound)
 	mainCtx, stopMain := context.WithCancel(ctx)
 	done := make(chan struct{})
@@ -426,8 +426,8 @@ func TestSideRejectsDeletedOrChangedCachedProfile(t *testing.T) {
 	if !ok {
 		t.Fatal("profile unavailable")
 	}
-	f.s.provByProfile = map[int64]*provEntry{id: {prov: f.provider, cfg: cfg}}
-	model := sideModel(cfg, id, p.Name)
+	f.s.provByProfile = map[provKey]*provEntry{{profileID: id, effort: cfg.ReasoningEffort}: {prov: f.provider, cfg: cfg}}
+	model := sideModel(cfg, id, p.Name, "")
 	if _, err = f.s.sideProvider(model); err != nil {
 		t.Fatal(err)
 	}
@@ -521,7 +521,7 @@ func TestSideRestoredWorkerRuntimePublishesNewCheckpoint(t *testing.T) {
 	}
 	p := sidequestion.Parent{TaskID: id, ExplorationID: task.ExpID, IntentID: iid}
 	close(f.provider.release)
-	bound := bindSideProvider(f.provider, f.s.llmCfg, 0, "fixture")
+	bound := bindSideProvider(f.provider, f.s.llmCfg, 0, "fixture", "")
 	ctx, deps := sidequestion.Attach(runtime.ctx, p, harness.QueryDeps{}, bound)
 	_, _, _, err = deps.CallModelSync(ctx, llm.CompletionRequest{Messages: []llm.Message{llm.UserText("after restart context")}})
 	if err != nil {
