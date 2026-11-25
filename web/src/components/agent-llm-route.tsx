@@ -422,7 +422,8 @@ export function AgentLLMRoutePanel({ agentKey, active }: { agentKey: string; act
                     </Badge>
                     {t.previous || t.next || t.mode ? (
                       <span className="text-xs">
-                        {t.previous?.name || "默认"} → {t.next?.name || "（链耗尽）"}
+                        {t.previous?.name || "默认"} →{" "}
+                        {t.next?.name || (t.mode === "exhausted" ? "（链耗尽）" : "（目标未记录）")}
                       </span>
                     ) : (
                       <span className="text-muted-foreground text-[11px]">

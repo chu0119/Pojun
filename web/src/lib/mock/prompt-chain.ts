@@ -9,9 +9,8 @@ const effortOverrides = new Map<string, string>();
 const promptEdits = new Map<number, { prompt: string; mode: string; inherit: boolean }>();
 
 export function setMockEffortOverride(agentKey: string, profileId: number, effort: string) {
-  const key = `${agentKey}:${profileId}`;
-  if (effort) effortOverrides.set(key, effort);
-  else effortOverrides.delete(key);
+  // 空串 = 显式清除（保留一个哨兵，避免回落到演示默认的 “high”）。
+  effortOverrides.set(`${agentKey}:${profileId}`, effort);
 }
 
 export function getMockEffortOverride(agentKey: string, profileId: number): string | undefined {
@@ -112,23 +111,24 @@ export function mockPromptChain(agentKey: string): AgentPromptChain {
     }
   }
   const override = getMockEffortOverride(agentKey, baseProfileId);
+  const cleared = override === "";
 
   return {
     agent_key: agentKey,
     agent_kind: agentKey === "worker" || agentKey === "planner" ? "builtin" : "custom",
     llm: {
       profile_id: 1,
-      name: "主模型 · 长上下文",
-      model: "gpt-5.2-codex",
-      format: "openai-responses",
+      name: "Claude Opus 4.8",
+      model: "claude-opus-4-8",
+      format: "anthropic",
       source: "agent_binding",
       source_label: "显式绑定",
       prompt_mode: edit?.mode || "append",
       prompt_chars: edit ? edit.prompt.length : 412,
       prompt_apply_inherited: edit ? edit.inherit : false,
       prompt_active: edit ? !!edit.mode && edit.prompt.length > 0 : true,
-      effort: override ?? "high",
-      effort_source: override === undefined ? "override" : override ? "override" : "unset",
+      effort: cleared ? "" : (override ?? "high"),
+      effort_source: cleared ? "unset" : "override",
     },
     segments,
     tools: {
