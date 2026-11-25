@@ -53,6 +53,11 @@ type promptChainLLM struct {
 	PromptChars          int    `json:"prompt_chars"`
 	PromptApplyInherited bool   `json:"prompt_apply_inherited"`
 	PromptActive         bool   `json:"prompt_active"`
+	// Effort is the reasoning effort this agent would send on this profile
+	// (override → profile → unset), from the same resolver the runtime uses. The
+	// chain view must not invent a second rule.
+	Effort       string `json:"effort,omitempty"`
+	EffortSource string `json:"effort_source,omitempty"`
 }
 
 type promptChainTool struct {
@@ -224,6 +229,7 @@ func (s *Server) buildAgentPromptChain(pg *db.DB, a *db.Agent, profileParam stri
 	}
 	if profile != nil {
 		llm.Name, llm.Model, llm.Format = profile.Name, profile.Model, profile.Format
+		llm.Effort, llm.EffortSource = s.resolveEffort(a.Key, profile)
 	}
 
 	def := agent.DefaultPromptFor(a.Key)
@@ -267,11 +273,29 @@ func (s *Server) buildAgentPromptChain(pg *db.DB, a *db.Agent, profileParam stri
 	if a.Key == "worker" {
 		proxyAddr = s.m.ProxyDisplayAddr()
 	}
-	segments = append(segments, agent.StaticTailSegments(a.Key, agent.TailOptions{
-		WorkDir: workDir, RunDir: runDir,
-		ProxyAddr: proxyAddr, CAEnabled: s.m.TrafficEnabled(),
-		IncludeHostTools: true, GoalScope: false,
-	})...)
+	// Build the tails through the SAME constructors the runtime builders use, so
+	// this projection cannot drift from the live assembly on which fields an
+	// agent's tails interpolate. Inputs are the preview's stand-ins (placeholder
+	// dirs, display-only proxy); that approximation is the irreducible part.
+	var tailOpts agent.TailOptions
+	switch a.Key {
+	case "planner":
+		tailOpts = agent.PlannerTailOptions(workDir)
+	case "worker":
+		caCert := ""
+		if s.m.TrafficEnabled() {
+			caCert = "<ca.pem>"
+		}
+		tailOpts = agent.WorkerTailOptions(proxyAddr, caCert, runDir)
+	case "mainagent":
+		tailOpts = agent.MainAgentTailOptions(workDir)
+	case "goals":
+		// The static view has no task context here, so the scope tail stays gated.
+		tailOpts = agent.GoalsTailOptions(false)
+	default:
+		tailOpts = agent.ChatTailOptions(workDir)
+	}
+	segments = append(segments, agent.StaticTailSegments(a.Key, tailOpts)...)
 	if proxyAddr != "" {
 		warnings = append(warnings, "静态视图中的出口代理地址可能已脱敏或为运行时占位；实际出口以运行为准")
 	}

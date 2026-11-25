@@ -1,3 +1,20 @@
+// This file is the anti-drift gate between the read-only prompt-chain
+// projection and the real runtime assembly.
+//
+// The projection side and the runtime side share ONE TailOptions definition —
+// the agent.TailOptions struct — so the set of fields an agent's tails
+// interpolate is declared in a single place. On the runtime side this test now
+// also builds its expectation through the same exported constructors the real
+// builders use (PlannerTailOptions / WorkerTailOptions / MainAgentTailOptions /
+// ChatTailOptions), instead of a hand-written literal that could silently drift
+// away from the first.
+//
+// What this does NOT make exactly equivalent: each side still passes its own
+// SIMULATED inputs — a placeholder work/run directory and a display-only proxy
+// address. The preview cannot know the real per-run directory, so those
+// stand-in values are a known and irreducible approximation of the live run.
+// This test pins the segment text those inputs produce; it is not a claim that
+// preview and runtime are fully equivalent.
 package server
 
 import (
@@ -5,6 +22,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/chu0119/pojun/agent"
 	"github.com/chu0119/pojun/db"
@@ -81,6 +99,7 @@ func TestAgentPromptChainMatchesRuntimeAssembly(t *testing.T) {
 	td := t.TempDir()
 	s := New(context.Background(), m, td, td, td)
 	pg := m.pg
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
 
 	for _, key := range []string{"planner", "worker", "mainagent", "pentest"} {
 		a, err := pg.GetAgentByKey(key)
@@ -93,7 +112,7 @@ func TestAgentPromptChainMatchesRuntimeAssembly(t *testing.T) {
 		for _, mode := range []string{"prepend", "append", "replace"} {
 			text := "PROFILE-OVERLAY-" + mode
 			id, err := pg.SaveProfile(&db.LLMProfile{
-				Name: "chain-probe-" + key + "-" + mode, Format: "openai",
+				Name: "chain-probe-" + key + "-" + mode + "-" + suffix, Format: "openai",
 				Model: "probe-model", APIKey: "probe-key", Streaming: true,
 			})
 			if err != nil {
@@ -118,12 +137,28 @@ func TestAgentPromptChainMatchesRuntimeAssembly(t *testing.T) {
 			if a.Key == "worker" {
 				proxyAddr = s.m.ProxyDisplayAddr()
 			}
+			// Build TailOptions through the same agent-package constructors the
+			// runtime builders use, so this test cannot diverge from the real
+			// assembly on which fields an agent's tails interpolate.
+			var opts agent.TailOptions
+			switch a.Key {
+			case "planner":
+				opts = agent.PlannerTailOptions(workDir)
+			case "worker":
+				// CAEnabled is derived from cert presence, mirroring the runtime;
+				// the preview only knows whether traffic capture is on.
+				caCert := ""
+				if s.m.TrafficEnabled() {
+					caCert = "<ca.pem>"
+				}
+				opts = agent.WorkerTailOptions(proxyAddr, caCert, runDir)
+			case "mainagent":
+				opts = agent.MainAgentTailOptions(workDir)
+			default: // conversational roles (pentest here)
+				opts = agent.ChatTailOptions(workDir)
+			}
 			want, _ := agent.RuntimeSystem(
-				a.Key, agent.DefaultPromptFor(a.Key), agent.PreviewVarsFor(a.Key), pp,
-				agent.TailOptions{
-					WorkDir: workDir, RunDir: runDir, ProxyAddr: proxyAddr,
-					CAEnabled: s.m.TrafficEnabled(), IncludeHostTools: true,
-				},
+				a.Key, agent.DefaultPromptFor(a.Key), agent.PreviewVarsFor(a.Key), pp, opts,
 			)
 			if got := chainStaticText(chain); got != want {
 				t.Fatalf("%s/%s: chain projection drifted from the runtime assembly\n%s", key, mode, firstRuneDiff(got, want))
@@ -163,7 +198,11 @@ func TestProfilePromptSourceBoundaries(t *testing.T) {
 		t.Cleanup(func() { _ = pg.DeleteProfile(id) })
 		return id
 	}
-	pBind, pChain, pPin, pGlobal := mkProfile("boundary-bind"), mkProfile("boundary-chain"), mkProfile("boundary-pin"), mkProfile("boundary-global")
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	pBind := mkProfile("boundary-bind-" + suffix)
+	pChain := mkProfile("boundary-chain-" + suffix)
+	pPin := mkProfile("boundary-pin-" + suffix)
+	pGlobal := mkProfile("boundary-global-" + suffix)
 
 	planner, err := pg.GetAgentByKey("planner")
 	if err != nil || planner == nil {
