@@ -414,7 +414,7 @@ func workerSystemWith(proxyAddr, caCert, dataDir, runDir string, pp ProfilePromp
 	// chain projection via RuntimeSystem.
 	out, _ := RuntimeSystem("worker", workerDefaultTmpl,
 		WorkerVars{ProxyAddr: proxyAddr, DataDir: dataDir, Now: nowStr()}, pp,
-		TailOptions{RunDir: runDir, ProxyAddr: proxyAddr, CAEnabled: caCert != "", IncludeHostTools: true})
+		WorkerTailOptions(proxyAddr, caCert, runDir))
 	return out
 }
 

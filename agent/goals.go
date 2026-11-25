@@ -138,7 +138,7 @@ func DecomposeGoalsWithProvider(ctx context.Context, prov llm.Provider, dataDir,
 	goalScope := as != nil && taskID > 0
 	sys, _ := RuntimeSystem("goals", goalsDefaultTmpl,
 		GoalsVars{DataDir: dataDir, Now: nowStr()}, ProfilePromptFrom(ctx),
-		TailOptions{GoalScope: goalScope})
+		GoalsTailOptions(goalScope))
 	tools := []actool.CoreTool{tsx.setGoals(), tsx.setConstraints()}
 	if goalScope {
 		tools = append(tools, tsx.addTaskScope())

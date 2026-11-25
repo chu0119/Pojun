@@ -40,6 +40,11 @@ func JoinPromptSegments(parts []PromptSegment) string {
 // TailOptions supplies the few runtime values the static code-owned tails
 // interpolate. Empty strings become visible placeholders, so a preview never
 // claims a path that the production run does not use.
+//
+// The concrete values each runtime builder uses live in tail_options.go
+// (PlannerTailOptions / WorkerTailOptions / MainAgentTailOptions /
+// ChatTailOptions); the builders and the anti-drift tests call those
+// constructors, so the struct literal is written once, not per site.
 type TailOptions struct {
 	WorkDir string
 	RunDir  string

@@ -150,7 +150,7 @@ func mainAgentSystemWith(goal, dataDir, workDir string, pp ProfilePrompt) string
 	// 清单同样要给它。所有尾巴都来自共享装配（RuntimeSystem）。
 	out, _ := RuntimeSystem("mainagent", mainAgentDefaultTmpl,
 		MainVars{Goal: goal, DataDir: dataDir, Now: nowStr()}, pp,
-		TailOptions{WorkDir: workDir, IncludeHostTools: true})
+		MainAgentTailOptions(workDir))
 	return out
 }
 

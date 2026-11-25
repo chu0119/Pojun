@@ -92,7 +92,7 @@ func chatSystemWith(agentKey, dataDir, workDir string, pp ProfilePrompt) string 
 	// 报告附录）全部由 StaticTailSegments 统一声明，经 RuntimeSystem 与运行时共用，
 	// 避免页面投影与真实装配各写一份。
 	out, _ := RuntimeSystem(agentKey, DefaultPromptFor(agentKey),
-		chatVars{DataDir: dataDir, Now: nowStr()}, pp, TailOptions{WorkDir: workDir})
+		chatVars{DataDir: dataDir, Now: nowStr()}, pp, ChatTailOptions(workDir))
 	return out
 }
 

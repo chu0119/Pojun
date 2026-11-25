@@ -468,7 +468,7 @@ func plannerSystemWith(goal, dataDir, workDir string, pp ProfilePrompt) string {
 	// cannot drift.
 	out, _ := RuntimeSystem("planner", plannerDefaultTmpl,
 		PlannerVars{Goal: goal, DataDir: dataDir, Now: nowStr()}, pp,
-		TailOptions{WorkDir: workDir})
+		PlannerTailOptions(workDir))
 	return out
 }
 
