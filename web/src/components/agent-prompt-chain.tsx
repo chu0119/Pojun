@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
+import { EFFORT_LEVELS, fromStore, toStore } from "@/lib/effort";
 import {
   estimateTextWidth,
   fitText,
@@ -1412,7 +1413,7 @@ function ChainGraph({
                   tabIndex={0}
                   aria-label="被替换的提示词正文"
                   data-anchor="body"
-                  className={cn("cursor-pointer outline-none", dimmed("body") && "opacity-40")}
+                  className={cn("cursor-pointer outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground", dimmed("body") && "opacity-40")}
                   onClick={() => onOpen({ kind: "segment", key: chain.segments.find((s) => s.kind === "body")?.key ?? "body" }, "body")}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {
@@ -1676,7 +1677,7 @@ function RowNode({
       tabIndex={0}
       data-anchor={row.id}
       aria-label={`${row.title}，${row.chars === null ? "" : row.unknown ? "运行时未采集" : row.present ? `${row.chars} 字符` : "未生效"}`}
-      className={cn("cursor-pointer outline-none", phase === "future" && "opacity-50", phase === "past" && "opacity-90", phase === "related" && "opacity-75")}
+      className={cn("cursor-pointer outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground", phase === "future" && "opacity-50", phase === "past" && "opacity-90", phase === "related" && "opacity-75")}
       onClick={onOpen}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -1786,7 +1787,7 @@ function LLMRail({
       tabIndex={0}
       data-anchor="llm"
       aria-label="LLM 配置解析"
-      className={cn("cursor-pointer outline-none", dimmed && "opacity-40")}
+      className={cn("cursor-pointer outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground", dimmed && "opacity-40")}
       onClick={onOpen}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -1844,7 +1845,7 @@ function SkillsRail({
       tabIndex={0}
       data-anchor="skills"
       aria-label="Skill 绑定"
-      className={cn("cursor-pointer outline-none", dimmed && "opacity-40")}
+      className={cn("cursor-pointer outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground", dimmed && "opacity-40")}
       onClick={onOpen}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -1894,7 +1895,7 @@ function ToolsRail({
       tabIndex={0}
       data-anchor="tools"
       aria-label="工具 schema"
-      className={cn("cursor-pointer outline-none", dimmed && "opacity-40")}
+      className={cn("cursor-pointer outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground", dimmed && "opacity-40")}
       onClick={onOpen}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -1977,7 +1978,7 @@ function MCPRail({
             tabIndex={0}
             data-anchor={id}
             aria-label={`MCP ${m.name}，${healthLabel(m.health)}`}
-            className={cn("cursor-pointer outline-none", dimmed(id) && "opacity-40")}
+            className={cn("cursor-pointer outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground", dimmed(id) && "opacity-40")}
             onClick={() => onOpen({ kind: "mcp", id: m.id }, id)}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {
@@ -2025,7 +2026,7 @@ function Quarantine({
       tabIndex={0}
       data-anchor="excluded"
       aria-label="未进入主干的项"
-      className={cn("cursor-pointer outline-none", dimmed && "opacity-40")}
+      className={cn("cursor-pointer outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground", dimmed && "opacity-40")}
       onClick={onOpen}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -2051,8 +2052,6 @@ function Quarantine({
   );
 }
 
-
-const EFFORT_CHOICES = ["", "low", "medium", "high", "xhigh", "max"] as const;
 
 type Stage = { id: string; label: string; target: Target; offTrunk?: boolean };
 
@@ -2295,14 +2294,13 @@ function ConfigActions({
           </label>
           <select
             className="w-full rounded border bg-background px-1.5 py-1 text-xs"
-            value={chain.llm.effort_source === "override" ? (chain.llm.effort ?? "") : ""}
+            value={fromStore(chain.llm.effort_source === "override" ? (chain.llm.effort ?? "") : "")}
             disabled={busy}
-            onChange={(e) => void setEffort(e.target.value)}
+            onChange={(e) => void setEffort(toStore(e.target.value))}
           >
-            <option value="">继承配置（默认）</option>
-            {EFFORT_CHOICES.filter(Boolean).map((v) => (
-              <option key={v} value={v}>
-                {v}
+            {EFFORT_LEVELS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
               </option>
             ))}
           </select>
