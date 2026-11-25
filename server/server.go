@@ -878,6 +878,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/tokens/usage", s.pgUsageStats)            // 全局 llm_usage 聚合（仪表盘新版视图）
 	mux.HandleFunc("GET /api/tokens/cost", s.pgUsageCost)              // 成本估算（内置参考价，?task= 看单任务）
 	mux.HandleFunc("POST /api/tasks/{id}/auth-check", s.taskAuthCheck) // 登录凭据自检（真实发一次登录请求）
+	// 任务级多角色凭据池（#24）：秘密只进 DB；列表只回 has_* 标记。
+	mux.HandleFunc("GET /api/tasks/{id}/credentials", s.pgTaskCredentials)
+	mux.HandleFunc("POST /api/tasks/{id}/credentials", s.pgCreateTaskCredential)
+	mux.HandleFunc("PUT /api/tasks/{id}/credentials/{cid}", s.pgUpdateTaskCredential)
+	mux.HandleFunc("DELETE /api/tasks/{id}/credentials/{cid}", s.pgDeleteTaskCredential)
+	mux.HandleFunc("POST /api/tasks/{id}/credentials/{cid}/check", s.pgCheckTaskCredential)
 	// 证据附件（v0.5.0）：列表 / 单文件下载 / 证据包 zip。
 	mux.HandleFunc("GET /api/tasks/{id}/artifacts", s.listTaskArtifacts)
 	mux.HandleFunc("PATCH /api/tasks/{id}/artifacts/{aid}", s.patchTaskArtifact)    // 改归属（任务级 ↔ 漏洞）

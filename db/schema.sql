@@ -620,6 +620,28 @@ ALTER TABLE tasks ADD COLUMN IF NOT EXISTS queued_at TIMESTAMPTZ;
 -- 任务级目标登录凭据（v0.4.8）：worker 先登录再测；password/totp_secret 只在
 -- DB 内保存，任何 API 响应都脱敏（见 db/task_auth.go）。NULL=未配置。
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS auth_config JSONB;
+
+-- 任务级多角色测试凭据池（#24）：每个任务可配置 admin/user_a/user_b 等命名凭据。
+-- config 复用 TaskAuthConfig 的 DBValue 形态（含秘密；API DTO 只回 has_* 标记）。
+-- status: pending | ok | failed | locked；secret_hash 用于凭据变更后自动复位熔断。
+CREATE TABLE IF NOT EXISTS task_credentials (
+    id             BIGSERIAL PRIMARY KEY,
+    task_id        BIGINT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    role           TEXT NOT NULL,
+    config         JSONB NOT NULL DEFAULT '{}',
+    status         TEXT NOT NULL DEFAULT 'pending',
+    last_checked_at TIMESTAMPTZ,
+    last_error     TEXT NOT NULL DEFAULT '',
+    failure_count  INT NOT NULL DEFAULT 0,
+    locked_until   TIMESTAMPTZ,
+    secret_hash    TEXT NOT NULL DEFAULT '',
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ck_task_credential_role CHECK (role ~ '^[A-Za-z][A-Za-z0-9_-]{0,31}$'),
+    CONSTRAINT ck_task_credential_status CHECK (status IN ('pending','ok','failed','locked')),
+    CONSTRAINT uq_task_credential_role UNIQUE (task_id, role)
+);
+CREATE INDEX IF NOT EXISTS idx_task_credentials_task ON task_credentials(task_id);
 -- 任务构建时出口回执（issue #39）：最近一次 Agent 装配时实际注入的出口配置快照。
 -- 写入端已完成脱敏（不含代理用户名/密码），只读派生数据；NULL=尚未构建或归档已作废。
 -- 刻意不进 taskCols/scanTask：任务列表热路径不需要解析它，读取走窄查询。

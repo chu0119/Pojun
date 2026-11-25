@@ -41,6 +41,8 @@ import (
 	"time"
 
 	actool "github.com/Autumn-27/norma/tool"
+
+	"github.com/chu0119/pojun/db"
 )
 
 // SetEgressProxy 注入出站代理（与 Bash 子进程的 HTTP_PROXY 同源）。
@@ -664,20 +666,21 @@ func (t *ToolSet) sessionLogin() actool.CoreTool {
 			"返回 status、是否拿到 Set-Cookie（cookie_names）与正文片段——2xx 且 cookie_names 非空基本可判定登录成功；"+
 			"若返回登录页/401，换 auth_mode 或换资产上的另一条凭据（auth_index）。",
 		obj(map[string]any{
-			"session":      str("会话名（字母数字-_），后续请求用它复用登录态"),
-			"url":          str("登录接口绝对 URL"),
-			"method":       str("HTTP 方法，默认 POST"),
-			"asset_id":     intp("凭据登记在哪个资产上（可选；优先使用）"),
-			"auth_index":   intp("用该资产上的第几条凭据（从 0 开始，顺序同 list_assets 的 auth 数组；无效条目会明确报错）"),
-			"username":     str("用户名（可选，asset_id 为空时用）"),
-			"password":     str("密码（可选）"),
-			"token":        str("token/会话值（可选）"),
-			"auth_mode":    str("form|json|basic|bearer|cookie，默认 form"),
-			"user_field":   str("表单用户名字段名，默认 username"),
-			"pass_field":   str("表单密码字段名，默认 password"),
-			"extra_fields": str("额外字段，'k=v&k2=v2' 形式（可选）"),
-			"header":       str("附加请求头，每行 'Key: Value'（可选，如 X-Requested-With: XMLHttpRequest）；传 User-Agent 可覆盖默认 Chrome UA"),
-		}, "session", "url"),
+			"session":       str("会话名（字母数字-_），后续请求用它复用登录态"),
+			"url":           str("登录接口绝对 URL"),
+			"method":        str("HTTP 方法，默认 POST"),
+			"credential_id": intp("任务级多角色凭据 ID（#24；优先于 asset_id/显式字段；秘密由平台解析，不进入对话）"),
+			"asset_id":      intp("凭据登记在哪个资产上（可选；优先使用）"),
+			"auth_index":    intp("用该资产上的第几条凭据（从 0 开始，顺序同 list_assets 的 auth 数组；无效条目会明确报错）"),
+			"username":      str("用户名（可选，asset_id 为空时用）"),
+			"password":      str("密码（可选）"),
+			"token":         str("token/会话值（可选）"),
+			"auth_mode":     str("form|json|basic|bearer|cookie，默认 form"),
+			"user_field":    str("表单用户名字段名，默认 username"),
+			"pass_field":    str("表单密码字段名，默认 password"),
+			"extra_fields":  str("额外字段，'k=v&k2=v2' 形式（可选）"),
+			"header":        str("附加请求头，每行 'Key: Value'（可选，如 X-Requested-With: XMLHttpRequest）；传 User-Agent 可覆盖默认 Chrome UA"),
+		}, "session"),
 		func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
 			var a struct {
 				Session      string `json:"session"`
@@ -696,8 +699,8 @@ func (t *ToolSet) sessionLogin() actool.CoreTool {
 				Header       string `json:"header"`
 			}
 			_ = json.Unmarshal(in, &a)
-			if strings.TrimSpace(a.Session) == "" || strings.TrimSpace(a.URL) == "" {
-				return actool.Errorf("session 与 url 必填"), nil
+			if strings.TrimSpace(a.Session) == "" || (a.CredentialID <= 0 && strings.TrimSpace(a.URL) == "") {
+				return actool.Errorf("session 必填；使用显式登录时 url 必填（credential_id 会提供登录地址）"), nil
 			}
 			jarPath := t.sessionJarPath(a.Session)
 			if jarPath == "" {
@@ -705,8 +708,71 @@ func (t *ToolSet) sessionLogin() actool.CoreTool {
 			}
 			user, pass, token := strings.TrimSpace(a.Username), a.Password, strings.TrimSpace(a.Token)
 			authKindLabel := "explicit"
-			var breakerKey, breakerHash string // 非空 = 走预置凭据熔断（issue #24）
-			if a.AssetID > 0 {
+			var breakerKey, breakerHash string // 非空 = 走资产预置凭据熔断（issue #24）
+			var taskCred *db.TaskCredential
+			if a.CredentialID > 0 {
+				if t.taskCredResolver == nil {
+					return actool.Errorf("任务级凭据池未启用"), nil
+				}
+				cred, err := t.taskCredResolver.ResolveTaskCredential(ctx, t.taskID, a.CredentialID)
+				if err != nil {
+					return actool.Errorf("读取任务凭据失败: " + err.Error()), nil
+				}
+				if cred == nil || cred.Config == nil || !cred.Config.Enabled {
+					return actool.Errorf("任务凭据不存在或未启用"), nil
+				}
+				if cred.LockedUntil != nil && cred.LockedUntil.After(time.Now()) {
+					return actool.Errorf(fmt.Sprintf("任务凭据 #%d(%s) 已因连续登录失败熔断到 %s；请换角色或通知操作员更新凭据", cred.ID, cred.Role, cred.LockedUntil.Format(time.RFC3339))), nil
+				}
+				cfg := cred.Config
+				taskCred = cred
+				// 预置凭据的登录地址由平台配置决定，不允许模型把凭据带到任意 URL。
+				a.URL = cfg.LoginURL
+				if strings.TrimSpace(cfg.Method) != "" {
+					a.Method = cfg.Method
+				}
+				if strings.TrimSpace(a.AuthMode) == "" {
+					a.AuthMode = cfg.AuthMode
+				}
+				if strings.TrimSpace(a.UserField) == "" {
+					a.UserField = cfg.UsernameField
+				}
+				if strings.TrimSpace(a.PassField) == "" {
+					a.PassField = cfg.PasswordField
+				}
+				user, pass, token = cfg.Username, cfg.Password, cfg.Token
+				if cfg.ExtraFields != nil {
+					var pairs []string
+					for k, v := range cfg.ExtraFields {
+						pairs = append(pairs, k+"="+v)
+					}
+					a.ExtraFields = strings.Join(pairs, "&")
+				}
+				if cfg.Headers != nil {
+					var lines []string
+					for k, v := range cfg.Headers {
+						lines = append(lines, k+": "+v)
+					}
+					a.Header = strings.Join(lines, "\n")
+				}
+				mode := strings.ToLower(strings.TrimSpace(cfg.AuthMode))
+				if mode == "" {
+					mode = "form"
+				}
+				if cfg.HasTOTP && (mode == "form" || mode == "json") {
+					code, terr := totpCode(cfg.TOTPSecret, time.Now())
+					if terr != nil {
+						return actool.Errorf("TOTP 生成失败: " + terr.Error()), nil
+					}
+					if a.ExtraFields == "" {
+						a.ExtraFields = "totp=" + code
+					} else if !strings.Contains(a.ExtraFields, "totp=") {
+						a.ExtraFields += "&totp=" + code
+					}
+				}
+				authKindLabel = fmt.Sprintf("任务凭据#%d(%s)", cred.ID, cred.Role)
+			}
+			if a.AssetID > 0 && a.CredentialID <= 0 {
 				if t.as == nil {
 					return actool.Errorf("asset_id 需要 AssetStore（当前环境未启用）"), nil
 				}
@@ -842,6 +908,13 @@ func (t *ToolSet) sessionLogin() actool.CoreTool {
 				"body_sha256":  out.SHA256,
 				"auth_source":  authKindLabel,
 				"auth_mode":    mode,
+			}
+			if taskCred != nil && t.taskCredResolver != nil {
+				if note, rerr := t.taskCredResolver.RecordTaskCredentialLogin(ctx, t.taskID, taskCred.ID, out.Status); rerr != nil {
+					res["credential_health_note"] = "凭据健康状态回写失败：" + rerr.Error()
+				} else if note != "" {
+					res["credential_health_note"] = note
+				}
 			}
 			if len(out.SetCookies) == 0 {
 				res["note"] = "响应没有 Set-Cookie：可能是 token 走响应体的系统（从 body 里取 token，再 http_request 用 Authorization 头），也可能登录失败（看 status/body）。"

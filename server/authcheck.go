@@ -60,14 +60,19 @@ func runAuthCheck(cfg *db.TaskAuthConfig, proxyAddr, caCert string) authCheckRes
 		res.Detail = "未配置登录凭据"
 		return res
 	}
-	fields := map[string]string{
-		cfg.UsernameField: cfg.Username,
-		cfg.PasswordField: cfg.Password,
+	mode := strings.ToLower(strings.TrimSpace(cfg.AuthMode))
+	if mode == "" {
+		mode = "form"
+	}
+	fields := map[string]string{}
+	if mode == "form" || mode == "json" {
+		fields[cfg.UsernameField] = cfg.Username
+		fields[cfg.PasswordField] = cfg.Password
 	}
 	for k, v := range cfg.ExtraFields {
 		fields[k] = v
 	}
-	if cfg.HasTOTP {
+	if cfg.HasTOTP && (mode == "form" || mode == "json") {
 		code, err := totpCode(cfg.TOTPSecret, time.Now())
 		if err != nil {
 			res.Detail = err.Error()
@@ -76,45 +81,68 @@ func runAuthCheck(cfg *db.TaskAuthConfig, proxyAddr, caCert string) authCheckRes
 		res.UsedTOTP = true
 		// 动态码字段名未单独配置时按常见命名填 totp/code/otp。
 		names := []string{"totp", "otp", "code"}
-		placed := false
 		for _, n := range names {
 			if _, exists := fields[n]; !exists {
 				fields[n] = code
-				placed = true
 				break
 			}
 		}
-		_ = placed
 	}
 
 	var req *http.Request
 	var err error
-	if cfg.Method == "GET" {
-		q := url.Values{}
-		for k, v := range fields {
-			q.Set(k, v)
+	switch mode {
+	case "basic":
+		req, err = http.NewRequest(cfg.Method, cfg.LoginURL, nil)
+		if err == nil {
+			if cfg.Token != "" && cfg.Username == "" {
+				req.Header.Set("Authorization", "Basic "+cfg.Token)
+			} else {
+				req.SetBasicAuth(cfg.Username, cfg.Password)
+			}
 		}
-		u := cfg.LoginURL
-		if strings.Contains(u, "?") {
-			u += "&" + q.Encode()
+	case "bearer":
+		req, err = http.NewRequest(cfg.Method, cfg.LoginURL, nil)
+		if err == nil {
+			req.Header.Set("Authorization", "Bearer "+cfg.Token)
+		}
+	case "cookie":
+		req, err = http.NewRequest(cfg.Method, cfg.LoginURL, nil)
+		if err == nil {
+			tok := cfg.Token
+			if !strings.Contains(tok, "=") {
+				tok = "session=" + tok
+			}
+			req.Header.Set("Cookie", tok)
+		}
+	default:
+		if cfg.Method == "GET" {
+			q := url.Values{}
+			for k, v := range fields {
+				q.Set(k, v)
+			}
+			u := cfg.LoginURL
+			if strings.Contains(u, "?") {
+				u += "&" + q.Encode()
+			} else {
+				u += "?" + q.Encode()
+			}
+			req, err = http.NewRequest(http.MethodGet, u, nil)
+		} else if cfg.ContentType == "form" {
+			form := url.Values{}
+			for k, v := range fields {
+				form.Set(k, v)
+			}
+			req, err = http.NewRequest(http.MethodPost, cfg.LoginURL, strings.NewReader(form.Encode()))
+			if err == nil {
+				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			}
 		} else {
-			u += "?" + q.Encode()
-		}
-		req, err = http.NewRequest(http.MethodGet, u, nil)
-	} else if cfg.ContentType == "form" {
-		form := url.Values{}
-		for k, v := range fields {
-			form.Set(k, v)
-		}
-		req, err = http.NewRequest(http.MethodPost, cfg.LoginURL, strings.NewReader(form.Encode()))
-		if err == nil {
-			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		}
-	} else {
-		body, _ := json.Marshal(fields)
-		req, err = http.NewRequest(http.MethodPost, cfg.LoginURL, bytes.NewReader(body))
-		if err == nil {
-			req.Header.Set("Content-Type", "application/json")
+			body, _ := json.Marshal(fields)
+			req, err = http.NewRequest(http.MethodPost, cfg.LoginURL, bytes.NewReader(body))
+			if err == nil {
+				req.Header.Set("Content-Type", "application/json")
+			}
 		}
 	}
 	if err != nil {

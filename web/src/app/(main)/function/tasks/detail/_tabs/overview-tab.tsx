@@ -41,6 +41,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { ArtifactDataViewerDialog } from "@/components/artifact-data-viewer";
+import { TaskCredentialDialog } from "@/components/task-credential-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ZoomableImageDialog } from "@/components/zoomable-image-dialog";
@@ -66,6 +67,7 @@ import type {
   TaskGoal,
   TaskArtifact,
   TaskAuthConfigView,
+  TaskCredential,
   TaskNode,
   TaskScopeRow,
 } from "@/lib/types";
@@ -1928,22 +1930,28 @@ function TaskEgressCard({ taskId, status }: { taskId: string; status?: string })
 // 回显只含状态码/命中说明，不含密码）。未配置凭据时整卡不渲染。
 function TaskAuthCard({ taskId }: { taskId: string }) {
   const [cfg, setCfg] = React.useState<TaskAuthConfigView | null>(null);
+  const [creds, setCreds] = React.useState<TaskCredential[]>([]);
   const [result, setResult] = React.useState<AuthCheckResult | null>(null);
   const [busy, setBusy] = React.useState(false);
-  React.useEffect(() => {
-    let alive = true;
-    api
-      .task(taskId)
-      .then((t) => {
-        if (alive) setCfg(t.auth_config ?? null);
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
+  const [dialogOpen, setDialogOpen] = React.useState(false);
+  const [editing, setEditing] = React.useState<TaskCredential | null>(null);
+  const [checkingId, setCheckingId] = React.useState<number | null>(null);
+
+  const load = React.useCallback(async () => {
+    try {
+      const [t, list] = await Promise.all([api.task(taskId), api.taskCredentials(taskId).catch(() => ({ credentials: [] }))]);
+      setCfg(t.auth_config ?? null);
+      setCreds(list.credentials);
+    } catch {
+      // transient errors leave the last successful view in place
+    }
   }, [taskId]);
-  if (!cfg?.enabled) return null;
-  const check = async () => {
+
+  React.useEffect(() => {
+    void load();
+  }, [load]);
+
+  const checkLegacy = async () => {
     setBusy(true);
     try {
       setResult(await api.taskAuthCheck(taskId));
@@ -1953,32 +1961,138 @@ function TaskAuthCard({ taskId }: { taskId: string }) {
       setBusy(false);
     }
   };
+
+  const checkCredential = async (c: TaskCredential) => {
+    setCheckingId(c.id);
+    try {
+      const r = await api.checkTaskCredential(taskId, c.id);
+      setCreds((prev) => prev.map((x) => (x.id === c.id ? r.credential : x)));
+      toast.success(`凭据 ${c.role}：${r.result.detail}`);
+    } catch (e) {
+      toast.error(`自检失败：${(e as Error).message}`);
+    } finally {
+      setCheckingId(null);
+    }
+  };
+
+  const removeCredential = async (c: TaskCredential) => {
+    if (!window.confirm(`删除凭据「${c.role}」？`)) return;
+    try {
+      await api.deleteTaskCredential(taskId, c.id);
+      setCreds((prev) => prev.filter((x) => x.id !== c.id));
+      toast.success("凭据已删除");
+    } catch (e) {
+      toast.error(`删除失败：${(e as Error).message}`);
+    }
+  };
+
+  const statusBadge = (s: string) => {
+    if (s === "ok") return <Badge variant="secondary">可用</Badge>;
+    if (s === "locked") return <Badge variant="destructive">已熔断</Badge>;
+    if (s === "failed") return <Badge variant="destructive">失败</Badge>;
+    return <Badge variant="outline">未验证</Badge>;
+  };
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base">
+        <CardTitle className="flex flex-wrap items-center gap-2 text-base">
           <KeyRoundIcon className="size-4 text-primary" /> 目标登录凭据
-          <Button size="sm" variant="outline" className="ml-auto" disabled={busy} onClick={() => void check()}>
-            {busy ? "验证中…" : "测试登录"}
+          {creds.length > 0 ? <Badge variant="secondary">多角色 · {creds.length}</Badge> : null}
+          {creds.length === 0 && cfg?.enabled ? <Badge variant="outline">旧单账号</Badge> : null}
+          <Button
+            size="sm"
+            variant="outline"
+            className="ml-auto"
+            onClick={() => {
+              setEditing(null);
+              setDialogOpen(true);
+            }}
+          >
+            添加角色
           </Button>
+          {creds.length === 0 && cfg?.enabled ? (
+            <Button size="sm" variant="outline" disabled={busy} onClick={() => void checkLegacy()}>
+              {busy ? "验证中…" : "测试登录"}
+            </Button>
+          ) : null}
         </CardTitle>
         <CardDescription>
-          登录接口 {cfg.method} {cfg.login_url} · 用户名 {cfg.username || "—"}
-          {cfg.has_password ? " · 密码已保存（不回显）" : ""}
-          {cfg.has_totp ? " · 含 TOTP" : ""}。worker 会用它在会话内登录后再测试。
+          {creds.length > 0
+            ? "多角色凭据池：worker 只看到 credential_id / 角色 / 健康状态，session_login 由平台解析秘密；连续鉴权失败会自动熔断。"
+            : cfg?.enabled
+              ? `旧版单账号：${cfg.method} ${cfg.login_url} · 用户名 ${cfg.username || "—"}${cfg.has_password ? " · 密码已保存（不回显）" : ""}${cfg.has_totp ? " · 含 TOTP" : ""}`
+              : "未配置登录凭据。可添加 admin / user_a / user_b 等多角色，供越权对照使用。"}
         </CardDescription>
       </CardHeader>
-      {result && (
-        <CardContent className="text-sm">
-          <span className={result.ok ? "text-emerald-600" : "text-red-600"}>
-            {result.ok ? "登录成功" : "登录未通过"}
-          </span>
-          <span className="text-muted-foreground">
-            {" "}
-            · {result.detail} · {result.elapsed_ms}ms
-          </span>
-        </CardContent>
-      )}
+      <CardContent className="flex flex-col gap-3 text-sm">
+        {creds.length > 0 ? (
+          <div className="flex flex-col gap-2">
+            {creds.map((c) => (
+              <div key={c.id} className="flex flex-wrap items-center gap-2 rounded-md border p-2.5">
+                <span className="font-mono text-xs text-muted-foreground">#{c.id}</span>
+                <span className="font-medium">{c.role}</span>
+                {statusBadge(c.status)}
+                <span className="text-muted-foreground text-xs">
+                  {c.auth_mode || "form"} · {c.method} {c.login_url}
+                </span>
+                {c.last_error ? (
+                  <span className="max-w-full truncate text-destructive text-xs" title={c.last_error}>
+                    {c.last_error}
+                  </span>
+                ) : null}
+                <div className="ml-auto flex gap-1">
+                  <Button size="sm" variant="ghost" disabled={checkingId === c.id} onClick={() => void checkCredential(c)}>
+                    {checkingId === c.id ? "验证中…" : "自检"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      setEditing(c);
+                      setDialogOpen(true);
+                    }}
+                  >
+                    编辑
+                  </Button>
+                  <Button size="sm" variant="ghost" className="text-destructive" onClick={() => void removeCredential(c)}>
+                    删除
+                  </Button>
+                </div>
+              </div>
+            ))}
+            {cfg?.enabled ? (
+              <p className="text-muted-foreground text-xs">
+                多角色池存在时，旧版单账号配置不会注入 worker；可在多角色池稳定后手动清理旧配置。
+              </p>
+            ) : null}
+          </div>
+        ) : cfg?.enabled && result ? (
+          <div className="text-sm">
+            <span className={result.ok ? "text-emerald-600" : "text-red-600"}>
+              {result.ok ? "登录成功" : "登录未通过"}
+            </span>
+            <span className="text-muted-foreground">
+              {" "}
+              · {result.detail} · {result.elapsed_ms}ms
+            </span>
+          </div>
+        ) : null}
+      </CardContent>
+
+      <TaskCredentialDialog
+        open={dialogOpen}
+        taskId={taskId}
+        credential={editing}
+        onOpenChange={setDialogOpen}
+        onSaved={(c) => {
+          setCreds((prev) => {
+            const idx = prev.findIndex((x) => x.id === c.id);
+            if (idx < 0) return [...prev, c];
+            return prev.map((x) => (x.id === c.id ? c : x));
+          });
+        }}
+      />
     </Card>
   );
 }

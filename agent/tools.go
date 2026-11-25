@@ -112,7 +112,10 @@ type ToolSet struct {
 	as     *db.AssetStore   // asset store (optional; nil = asset tools not available)
 	cs     *db.CompanyStore // company store (optional)
 	ts     *db.ExplorationStore
-	worker string
+	// taskCredResolver resolves task-level named credentials (#24) without
+	// exposing secrets to the model. nil = feature unavailable (tests/legacy).
+	taskCredResolver TaskCredentialResolver
+	worker           string
 	taskID int64 // PG tasks.id; 0 when unknown (tests / orchestrator cross-task reads)
 	// coverageDisabled mirrors tasks.coverage_enabled=false. Stored inverted so the
 	// zero value (all existing ToolSet constructions) means ENABLED — matching the
@@ -283,6 +286,9 @@ func (t *ToolSet) SetProgramProfile(p *db.ProgramProfile) {
 
 // SetArtifactRecorder 注入证据附件存储（host 实现）。
 func (t *ToolSet) SetArtifactRecorder(r ArtifactRecorder) { t.artifactRecorder = r }
+
+// SetTaskCredentialResolver 注入任务级多角色凭据解析器（#24）。
+func (t *ToolSet) SetTaskCredentialResolver(r TaskCredentialResolver) { t.taskCredResolver = r }
 
 // SetRunDir 注入本次运行的工作目录（save_evidence 的相对路径基准）。
 func (t *ToolSet) SetRunDir(dir string) { t.runDir = dir }

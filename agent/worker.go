@@ -83,6 +83,8 @@ type Worker struct {
 	// taskAuthBlock 是任务级登录凭据的渲染块（v0.4.8，由 host 在装配时设置）。
 	// 非空则注入 system prompt：worker 先登录、再在会话内测试。
 	taskAuthBlock string
+	// taskCredResolver 解析任务级命名凭据池（#24）；nil=仅支持旧单账号/资产凭据。
+	taskCredResolver TaskCredentialResolver
 	// injectConstraints resolves whether this task's operation constraints get
 	// injected into the worker system prompt. Read per run so the settings toggle
 	// takes effect without rebuilding the agent. nil = inject (default).
@@ -165,6 +167,9 @@ func (w *Worker) SetRunTimeout(run time.Duration) {
 
 // SetTaskAuthBlock 设置任务级登录凭据渲染块（host 装配时调用；空串=不注入）。
 func (w *Worker) SetTaskAuthBlock(block string) { w.taskAuthBlock = block }
+
+// SetTaskCredentialResolver 注入任务级多角色凭据解析器（#24）。
+func (w *Worker) SetTaskCredentialResolver(r TaskCredentialResolver) { w.taskCredResolver = r }
 
 // SetArtifactRecorder 注入证据附件存储（host 实现）。
 func (w *Worker) SetArtifactRecorder(r ArtifactRecorder) { w.artifactRecorder = r }
@@ -585,6 +590,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	defer span.End()
 	tsx := NewToolSet(ts, name)
 	tsx.SetEgressProxy(w.proxyAddr, w.proxyCACert) // 原生 http_request/session_login 与 Bash 同源出口
+	tsx.SetTaskCredentialResolver(w.taskCredResolver)
 	tsx.SetScopeFlags(w.scopeGuard, w.scopeInheritWrites, w.crossTaskNotifyDedup)
 	tsx.SetFindingRecorder(w.findingRecorder)
 	tsx.SetTaskID(taskID)

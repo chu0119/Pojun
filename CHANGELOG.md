@@ -1,5 +1,7 @@
 # 更新日志
 
+本项目的重要变更记录在此文件中，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
+
 ## [Unreleased]
 
 ### 修复：附件配额与落盘清理闭环（#59）
@@ -8,14 +10,21 @@
 - 去重前置于配额检查，重复登记幂等；任务级 advisory lock 内完成去重/配额/插入；
 - 配额查询失败 fail-closed；scan 走同一配额并在触顶时停止。
 
+### 新增：任务级多角色测试凭据池（#24）
+
+- 新增 `task_credentials` 表与 `/api/tasks/{id}/credentials` CRUD/自检接口；支持角色命名、
+  form/JSON/Basic/Bearer/Cookie 与 TOTP，旧单账号 `tasks.auth_config` 保持兼容。
+- 秘密只进 DB；planner/worker prompt 只暴露 credential_id/角色/登录地址/健康状态。
+- `session_login(credential_id=...)` 由平台解析 URL 与秘密；连续 2 次 401/403 熔断 30 分钟，
+  凭据变更后自动复位。
+- 任务总览支持逐条添加/编辑/删除/自检。
+
 ### 新增：未引用流量 TTL 清理（#25）
 
 - 新增 `traffic_retention_days`（默认 0=关闭）、`GET/POST /api/traffic/retention`；
 - 支持 dry-run 预览、手动执行与后台 6h 清理；
 - 保护集从 evidence snapshot / finding regression / finding timeline / 探索图读取，
   查询失败立即中止；删除复用 FTS/bodies/blob_refs/exchanges 与增量 vacuum。
-
-本项目的重要变更记录在此文件中，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
 ## [0.4.119] - 2026-11-25
 ### 新增：确定性回归库（P2-7）

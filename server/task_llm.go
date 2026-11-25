@@ -742,19 +742,31 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 	wk.SetProxy(wkProxy, wkCA)
 	wk.SetWebSearch(s.webSearchFor("worker"))
 	wk.SetConstraintInject(s.constraintInjectWorker) // 操作约束注入 worker(可配置,默认开)
-	// 任务级登录凭据（v0.4.8）：装配时读一次并注入 worker system prompt。
-	// 认证配置当前只在创建任务时录入；若以后加编辑接口，需要在保存后 invalidate
-	// 本任务的 agent bundle 让下一轮重新装配。
+	// 任务级登录凭据（v0.4.8 / #24）：装配时读一次，下一轮重新装配。
+	// 多角色池存在时只注入 ID/角色/健康状态摘要（秘密不进 prompt）；
+	// 旧单账号配置仍按原 PromptBlock 注入，保持兼容。
+	authBlock := ""
 	if s.m.PG() != nil {
 		if id64, err := strconv.ParseInt(t.ID, 10, 64); err == nil {
-			if pgTask, err2 := s.m.PG().GetTask(id64); err2 == nil && pgTask != nil && pgTask.AuthConfig != nil && pgTask.AuthConfig.Enabled {
-				wk.SetTaskAuthBlock(pgTask.AuthConfig.PromptBlock())
+			creds, cerr := s.m.PG().ListTaskCredentials(context.Background(), id64)
+			if cerr != nil {
+				log.Printf("[credentials] task %s 读取多角色凭据失败: %v", t.ID, cerr)
+			} else if len(creds) > 0 {
+				authBlock = taskCredentialsPromptBlock(creds)
+			}
+			if authBlock == "" {
+				if pgTask, err2 := s.m.PG().GetTask(id64); err2 == nil && pgTask != nil && pgTask.AuthConfig != nil && pgTask.AuthConfig.Enabled {
+					authBlock = pgTask.AuthConfig.PromptBlock()
+				}
 			}
 		}
 	}
+	wk.SetTaskAuthBlock(authBlock)
+	wk.SetTaskCredentialResolver(s)
 	pl := agent.NewPlanner(plannerRuntime, "task-router", s.m.dir, tx, plannerRuntime.CompactionWindow(), s.agentMaxTurns("planner"))
 	pl.SetScopeFlags(scopeGuard, scopeInherit, notifyDedup)
 	pl.SetProgramProfile(programProfile)
+	pl.SetTaskAuthBlock(authBlock)              // #24：只含凭据 ID/角色/健康状态，不含秘密
 	pl.SetIntentQueueLimit(s.intentQueueBudget) // 派发节流（v0.4.68）：本轮新增上限
 	pl.SetFindingRecorder(s.evidenceStore())
 	pl.SetCompactionWindowResolver(plannerRuntime.CompactionWindow)

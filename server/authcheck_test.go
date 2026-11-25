@@ -130,3 +130,32 @@ func stringsContains(s, sub string) bool {
 	}
 	return false
 }
+
+// #24：basic/bearer/cookie 三种 Token 模式也要走同一套自检。
+func TestRunAuthCheckTokenModes(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Header.Get("Authorization") == "Bearer tok":
+			w.WriteHeader(http.StatusOK)
+		case r.Header.Get("Authorization") == "Basic dXNlcjpwYXNz":
+			w.WriteHeader(http.StatusOK)
+		case r.Header.Get("Cookie") == "session=ok":
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusUnauthorized)
+		}
+	}))
+	defer srv.Close()
+
+	cases := []*db.TaskAuthConfig{
+		{Enabled: true, LoginURL: srv.URL, Method: "GET", AuthMode: "bearer", Token: "tok"},
+		{Enabled: true, LoginURL: srv.URL, Method: "GET", AuthMode: "basic", Username: "user", Password: "pass"},
+		{Enabled: true, LoginURL: srv.URL, Method: "GET", AuthMode: "cookie", Token: "session=ok"},
+	}
+	for _, cfg := range cases {
+		res := runAuthCheck(cfg, "", "")
+		if !res.OK {
+			t.Fatalf("mode %s failed: %+v", cfg.AuthMode, res)
+		}
+	}
+}

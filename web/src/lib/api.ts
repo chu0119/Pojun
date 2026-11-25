@@ -86,6 +86,9 @@ import type {
   LLMModelMeta,
   LLMCheckResult,
   AuthCheckResult,
+  TaskCredential,
+  TaskCredentialCheck,
+  TaskCredentialInput,
   TaskAuthConfigInput,
   TaskArtifact,
   TaskCostEstimate,
@@ -807,6 +810,19 @@ export const api = {
   taskCost: (task: string) => get<TaskCostEstimate>(`/tokens/cost${tq(task)}`),
   // 登录凭据自检：用任务配置的真实登录请求验证凭据是否可用。
   taskAuthCheck: (taskId: string) => post<AuthCheckResult>(`/tasks/${taskId}/auth-check`, {}),
+  // 任务级多角色凭据池（#24）：列表/创建/编辑/删除/逐条自检。
+  taskCredentials: (taskId: string) =>
+    get<{ credentials: TaskCredential[] | null }>(`/tasks/${taskId}/credentials`).then((r) => ({
+      credentials: arr(r.credentials),
+    })),
+  createTaskCredential: (taskId: string, input: TaskCredentialInput) =>
+    post<TaskCredential>(`/tasks/${taskId}/credentials`, input),
+  updateTaskCredential: (taskId: string, credentialId: number, input: TaskCredentialInput) =>
+    put<TaskCredential>(`/tasks/${taskId}/credentials/${credentialId}`, input),
+  deleteTaskCredential: (taskId: string, credentialId: number) =>
+    del<{ ok: boolean }>(`/tasks/${taskId}/credentials/${credentialId}`),
+  checkTaskCredential: (taskId: string, credentialId: number) =>
+    post<TaskCredentialCheck>(`/tasks/${taskId}/credentials/${credentialId}/check`, {}),
   // 任务证据附件：列表 / 下载地址（图片直链同源带 cookie，可直接当 img src）。
   taskArtifacts: (taskId: string) =>
     get<{ artifacts: TaskArtifact[] }>(`/tasks/${taskId}/artifacts`).then((r) => arr(r.artifacts)),

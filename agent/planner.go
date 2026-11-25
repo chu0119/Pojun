@@ -48,6 +48,7 @@ type Planner struct {
 	noaEnabledFn         func() bool                            // resolver: use experimental noa compaction? (nil = off)
 	maxTokensFn          func() int                             // resolver: per-reply output cap (nil/0 = send no cap)
 	programProfile       *db.ProgramProfile                     // SRC/众测 profile（nil = 不渲染）
+	taskAuthBlock        string                                 // 多角色凭据摘要（#24，无明文）
 	compactor            *Compactor                             // cold-node compaction (§7); nil = disabled
 
 	// todos keeps ONE plan-scratchpad per task (keyed by exploration id) so the
@@ -70,6 +71,9 @@ func (p *Planner) SetScopeFlags(scopeGuard, scopeInheritWrites, crossTaskNotifyD
 
 // SetProgramProfile 注入任务级 SRC/众测 profile（v0.4.112）；nil=不渲染、零行为变化。
 func (p *Planner) SetProgramProfile(profile *db.ProgramProfile) { p.programProfile = profile }
+
+// SetTaskAuthBlock 注入多角色凭据摘要（#24）；只含 ID/角色/状态/登录地址，不含秘密。
+func (p *Planner) SetTaskAuthBlock(block string) { p.taskAuthBlock = block }
 
 func (p *Planner) SetCompactionWindowResolver(fn func() int) { p.windowFn = fn }
 
@@ -524,6 +528,9 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 		sysBody += constraintBlock(ts) // 操作约束(若有)注入系统提示,框定探索边界
 	}
 	sysBody += ProgramProfileBlock(p.programProfile)
+	if p.taskAuthBlock != "" {
+		sysBody += p.taskAuthBlock // 多角色凭据只暴露 ID/角色/健康状态，不含明文
+	}
 	// 自主推进：完成优先（目标未达成不得以「边际收益」收场）。
 	sysBody += autopilotTail(ctx, autopilotPlannerGuidance)
 	// 派发节奏（v0.4.68）：本轮新增上限 + 退役护栏说明。
