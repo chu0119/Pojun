@@ -2,6 +2,16 @@
 
 本项目的重要变更记录在此文件中，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [Unreleased]
+### 修复：终态经验落库 UTF-8 截断（#75）
+
+- `buildReflectionLesson` / `shortReflectionReason` / `firstLineText` 原先按字节
+  `s[:N]` 截断，中文/emoji 落在多字节中间时生成非法 UTF-8，PostgreSQL 报
+  `invalid byte sequence for encoding "UTF8"`（SQLSTATE 22021），导致终态经验写入失败。
+- 改为按 UTF-8 rune 边界截断；`terminal_reason/hypothesis/success_criteria/summary/lesson`
+  入库前统一 `strings.ToValidUTF8` 兜底；新增中文/emoji 边界与非法字节回归测试。
+- Windows `start.bat` 改为 Docker Desktop 启动器（#73），不再引用旧的 `artex.exe`。
+
 ## [0.4.121] - 2026-11-25
 ### 新增：LLM 配置独立提示词与 Agent 装配链只读视图
 

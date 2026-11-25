@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/chu0119/pojun/agent"
 	"github.com/chu0119/pojun/db"
@@ -44,19 +45,25 @@ func (e *Engine) recordIntentReflection(t *Task, intent *db.Node, state, stopRea
 		calls, errs = 0, 0
 	}
 	success := state == "done" && wrote.Total() > 0
+	// PostgreSQL text/jsonb rejects invalid UTF-8. Lesson truncation already keeps
+	// rune boundaries, but other fields can inherit bytes from tool output or a
+	// stop reason; sanitize every text column as a final guard.
+	summary = sanitizeReflectionText(summary)
+	criteria := sanitizeReflectionText(p.SuccessCriteria)
+	reason := sanitizeReflectionText(stopReason)
 	r := db.IntentReflection{
 		IntentID:        intent.ID,
 		Dimension:       dim,
 		TerminalState:   state,
-		TerminalReason:  stopReason,
+		TerminalReason:  reason,
 		WroteBack:       wrote.Total(),
 		ToolCalls:       calls,
 		ToolErrors:      errs,
 		Success:         success,
-		Hypothesis:      p.Hypothesis,
-		SuccessCriteria: p.SuccessCriteria,
+		Hypothesis:      sanitizeReflectionText(p.Hypothesis),
+		SuccessCriteria: criteria,
 		Summary:         summary,
-		Lesson:          buildReflectionLesson(state, stopReason, summary, p.SuccessCriteria, wrote, calls, errs),
+		Lesson:          buildReflectionLesson(state, reason, summary, criteria, wrote, calls, errs),
 		AssetIDs:        p.AssetIDs,
 		Payload:         intent.Payload,
 	}
@@ -98,23 +105,40 @@ func buildReflectionLesson(state, reason, summary, criteria string, wrote agent.
 }
 
 func shortReflectionReason(s string) string {
-	s = strings.TrimSpace(s)
+	s = sanitizeReflectionText(strings.TrimSpace(s))
 	if s == "" {
 		return "-"
 	}
 	if i := strings.IndexAny(s, ":： "); i > 0 {
 		s = s[:i]
 	}
-	if len(s) > 80 {
-		s = s[:80]
-	}
-	return s
+	return truncateUTF8Bytes(s, 80)
 }
 
 func firstLineText(s string, max int) string {
-	s = strings.TrimSpace(strings.SplitN(s, "\n", 2)[0])
-	if max > 0 && len(s) > max {
-		s = s[:max]
+	s = sanitizeReflectionText(strings.TrimSpace(strings.SplitN(s, "\n", 2)[0]))
+	return truncateUTF8Bytes(s, max)
+}
+
+// sanitizeReflectionText makes a string safe for PostgreSQL text columns.
+// JSON decoding usually replaces invalid bytes already, but stop reasons and
+// tool-derived summaries can still carry them; U+FFFD is the least surprising
+// replacement and keeps the surrounding content readable.
+func sanitizeReflectionText(s string) string {
+	return strings.ToValidUTF8(s, "\uFFFD")
+}
+
+// truncateUTF8Bytes returns at most maxBytes bytes without splitting a rune.
+// A plain s[:max] on Chinese/emoji text can end in the middle of a multi-byte
+// sequence, which PostgreSQL rejects with SQLSTATE 22021. Sanitize before
+// calling this so invalid bytes cannot survive the backtracking loop.
+func truncateUTF8Bytes(s string, maxBytes int) string {
+	if maxBytes <= 0 || len(s) <= maxBytes {
+		return s
 	}
-	return s
+	n := maxBytes
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
