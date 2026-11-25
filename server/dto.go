@@ -637,7 +637,7 @@ type LLMProfileDTO struct {
 	// 厂商预设来源（llmpresets.ID）。'' = 手动配置或旧数据；前端据此在编辑时
 	// 显示厂商标识。纯增量字段，旧客户端忽略。
 	PresetID string `json:"preset_id"`
-	// 独立提示词（v0.4.120）：纯文本，只在该配置被显式绑定到 Agent，或开启
+	// 独立提示词（v0.4.121）：纯文本，只在该配置被显式绑定到 Agent，或开启
 	// prompt_apply_inherited 后被任务链/全局选路选中时注入。'' = 未配置。
 	Prompt               string `json:"prompt"`
 	PromptMode           string `json:"prompt_mode"`
