@@ -745,12 +745,31 @@ function normalizeChain(data: AgentPromptChainData): AgentPromptChainData {
     excluded: [],
     total: 0,
   };
+  // Mock mode (NEXT_PUBLIC_MOCK=1) returns {} for unknown routes. Keep the tab
+  // on an honest empty shell instead of crashing on chain.llm.name.
+  const llm = data.llm ?? {
+    profile_id: null,
+    name: "",
+    model: "",
+    format: "",
+    source: "none",
+    source_label: "未解析",
+    prompt_mode: "",
+    prompt_chars: 0,
+    prompt_apply_inherited: false,
+    prompt_active: false,
+  };
   return {
     ...data,
+    agent_key: data.agent_key ?? "",
+    agent_kind: data.agent_kind ?? "builtin",
+    llm,
+    totals: data.totals ?? { segments: 0, chars: 0, est_tokens: 0 },
     segments: data.segments ?? [],
     mcp: (data.mcp ?? []).map((m) => ({ ...m, tools: m.tools ?? [] })),
     skills: (data.skills ?? []).map((s) => ({ ...s, mcp_gated: s.mcp_gated ?? [] })),
     warnings: data.warnings ?? [],
+    static_only: data.static_only ?? true,
     tools: {
       ...tools,
       builtin: tools.builtin ?? [],
