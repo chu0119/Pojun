@@ -12,12 +12,22 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+import Link from "next/link";
+
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
+import {
+  estimateTextWidth,
+  fitText,
+  layoutSignalFlow,
+  type ChainMode,
+  type Rect,
+} from "@/lib/chain-layout";
 import type {
   AgentPromptChain as AgentPromptChainData,
+  LLMProfile,
   PromptChainMCP,
   PromptChainSegment,
   PromptChainTool,
@@ -176,32 +186,50 @@ type Row = {
   sink?: boolean;
   h: number;
   gapBefore?: number;
+  x: number;
+  w: number;
   y: number;
   target: Target;
 };
 
 type Tray = { x: number; y: number; w: number; h: number };
 
+// 文本按真实字体栈测量，保证裁切点与渲染一致。
+const FONT_STACK_SANS =
+  '-apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif';
+const FONT_STACK_MONO =
+  '"SFMono-Regular", "Cascadia Mono", "Segoe UI Mono", Consolas, "Courier New", monospace';
+let measureCtx: CanvasRenderingContext2D | null = null;
+function measureText(text: string, style: { px: number; mono?: boolean }): number {
+  if (typeof document === "undefined") return estimateTextWidth(text, style);
+  if (!measureCtx) measureCtx = document.createElement("canvas").getContext("2d");
+  if (!measureCtx) return estimateTextWidth(text, style);
+  measureCtx.font = `${style.px}px ${style.mono ? FONT_STACK_MONO : FONT_STACK_SANS}`;
+  return measureCtx.measureText(text).width;
+}
+
 type Layout = {
+  mode: ChainMode;
+  w: number;
   rows: Row[];
   byId: Map<string, Row>;
-  llm: { x: number; y: number; w: number; h: number };
-  skillsY: number;
-  skillsH: number;
-  tools: { x: number; y: number; w: number; h: number };
-  mcpY: number;
-  qY: number;
-  qH: number;
+  llm: Rect;
+  skills: Rect;
+  tools: Rect;
+  mcp: Rect;
+  tray: Tray | null;
+  quarantine: Rect | null;
+  trunkX: number;
+  center: { x: number; w: number };
   height: number;
-  boundaryY: number;
-  hasBoundary: boolean;
+  boundary: { y: number; x1: number; x2: number } | null;
   measureMax: number;
+  rowTitleMaxW: number;
   profileRow?: Row;
   runtimeRow?: Row;
   deferredRow?: Row;
   modelRow: Row;
   codeRow?: Row;
-  tray: Tray | null;
 };
 
 function targetTitle(chain: AgentPromptChainData, target: Target) {
@@ -278,7 +306,7 @@ function anchorFor(chain: AgentPromptChainData, target: Target): string {
   }
 }
 
-function buildLayout(chain: AgentPromptChainData): Layout {
+function buildLayout(chain: AgentPromptChainData, width: number): Layout {
   const find = (kind: string) => chain.segments.find((s) => s.kind === kind);
   const profile = find("profile_prompt");
   const body = find("body");
@@ -299,7 +327,7 @@ function buildLayout(chain: AgentPromptChainData): Layout {
   const replaceActive = mode === "replace" && profileActive;
 
   const rows: Row[] = [];
-  const push = (row: Omit<Row, "y">) => rows.push({ ...row, y: 0 });
+  const push = (row: Omit<Row, "y" | "x" | "w">) => rows.push({ ...row, x: 0, w: 0, y: 0 });
 
   push({
     id: "agent",
@@ -494,64 +522,68 @@ function buildLayout(chain: AgentPromptChainData): Layout {
     target: { kind: "model" },
   });
 
-  let y = 100;
-  rows.forEach((row, index) => {
-    if (index > 0) y += row.gapBefore ?? 24;
-    row.y = y;
-    y += row.h;
+  const excluded = chain.tools.excluded.length;
+  const outOfIndex = chain.skills.filter((s) => !s.in_index).length;
+  const quarantine = excluded > 0 || outOfIndex > 0;
+  const quarantineH = quarantine
+    ? 30 + Math.min(excluded, 4) * 13 + (outOfIndex > 0 ? 18 : 0) + 10
+    : 0;
+
+  // 几何全部由容器宽度推导（chain-layout 纯模块）；这里只负责把语义行映射回去。
+  const geom = layoutSignalFlow({
+    width,
+    rows: rows.map((row) => ({
+      id: row.id,
+      h: row.h,
+      gapBefore: row.gapBefore,
+      title: row.title,
+      sub: row.sub,
+      tag: row.tag,
+      chars: row.chars,
+    })),
+    skills: chain.skills.length,
+    mcpCount: chain.mcp.length,
+    hasTray: replaceActive && !!body,
+    quarantineH,
+  });
+  rows.forEach((row) => {
+    const g = geom.byId.get(row.id);
+    if (!g) return;
+    row.x = g.x;
+    row.w = g.w;
+    row.y = g.y;
   });
 
   const byId = new Map(rows.map((row) => [row.id, row]));
   const modelRow = byId.get("model") as Row;
   const codeRow = byId.get("code");
-
-  const llm = { x: 20, y: 96, w: 290, h: 146 };
-  const skillsY = llm.y + llm.h + 14;
-  const skillsH = 40 + Math.min(chain.skills.length, 6) * 15;
-  const tools = { x: 680, y: 96, w: 300, h: 104 };
-  const mcpY = tools.y + tools.h + 14;
-  const mcpH = chain.mcp.length > 0 ? 18 + chain.mcp.length * 38 : 40;
-  const skillsBottom = skillsY + skillsH;
-  const tray: Tray | null =
-    replaceActive && body ? { x: 20, y: skillsBottom + 14, w: 290, h: 64 } : null;
-  const leftBottom = tray ? tray.y + tray.h : skillsBottom;
-  const rightBottom = mcpY + mcpH;
-  const modelBottom = modelRow.y + modelRow.h;
-
-  const excluded = chain.tools.excluded.length;
-  const outOfIndex = chain.skills.filter((s) => !s.in_index).length;
-  const quarantine = excluded > 0 || outOfIndex > 0;
-  const qH = quarantine
-    ? 30 + Math.min(excluded, 4) * 13 + (outOfIndex > 0 ? 18 : 0) + 10
-    : 0;
-  const qY = Math.max(leftBottom, rightBottom, modelBottom) + 24;
-  const height = Math.max(760, qY + qH + 40);
-  const boundaryY = codeRow ? codeRow.y - 20 : 0;
   const measureMax = Math.max(
     1,
     ...rows.filter((row) => row.id !== "model" && row.present && (row.chars ?? 0) > 0).map((row) => row.chars ?? 0),
   );
 
   return {
+    mode: geom.mode,
+    w: geom.w,
     rows,
     byId,
-    llm,
-    skillsY,
-    skillsH,
-    tools,
-    mcpY,
-    qY,
-    qH,
-    height,
-    boundaryY,
-    hasBoundary: !!codeRow,
+    llm: geom.llm,
+    skills: geom.skills,
+    tools: geom.tools,
+    mcp: geom.mcp,
+    tray: geom.tray,
+    quarantine: geom.quarantine,
+    trunkX: geom.trunkX,
+    center: geom.center,
+    height: geom.h,
+    boundary: geom.boundary,
     measureMax,
+    rowTitleMaxW: geom.rowTitleMaxW,
     profileRow: byId.get("profile"),
     runtimeRow: byId.get("runtime"),
     deferredRow: byId.get("deferred"),
     modelRow,
     codeRow,
-    tray,
   };
 }
 
@@ -787,10 +819,12 @@ export function AgentPromptChain({
   agentKey,
   active,
   reloadKey,
+  profileId,
 }: {
   agentKey: string;
   active: boolean;
   reloadKey?: number;
+  profileId?: string;
 }) {
   const [chain, setChain] = React.useState<AgentPromptChainData | null>(null);
   const [loading, setLoading] = React.useState(false);
@@ -810,7 +844,7 @@ export function AgentPromptChain({
     setLoading(true);
     setError("");
     try {
-      const data = await api.agentPromptChain(agentKey);
+      const data = await api.agentPromptChain(agentKey, profileId);
       if (reqRef.current === seq) {
         setChain(normalizeChain(data));
         setPath([]);
@@ -824,7 +858,7 @@ export function AgentPromptChain({
     } finally {
       if (reqRef.current === seq) setLoading(false);
     }
-  }, [agentKey]);
+  }, [agentKey, profileId]);
 
   React.useEffect(() => {
     if (active) void load();
@@ -986,6 +1020,7 @@ export function AgentPromptChain({
         onTruncate={truncatePath}
         onCopyStatic={() => void copyStatic()}
         onCopyText={(text, what) => void copyText(text, what)}
+        onReload={() => void load()}
       />
 
       <div className="flex flex-wrap items-center gap-2 text-muted-foreground text-[11px]">
@@ -1008,6 +1043,74 @@ export function AgentPromptChain({
   );
 }
 
+function MiniMap({
+  layout,
+  zoom,
+  view,
+  offsetRight,
+  onJump,
+}: {
+  layout: Layout;
+  zoom: number;
+  view: { left: number; top: number; w: number; h: number };
+  offsetRight: number;
+  onJump: (left: number, top: number) => void;
+}) {
+  const mw = 168;
+  const mh = Math.max(44, Math.min(120, Math.round((layout.height / layout.w) * mw)));
+  const sx = mw / layout.w;
+  const sy = mh / layout.height;
+  const boxes: { r: Rect; className: string }[] = [
+    { r: layout.llm, className: "fill-fuchsia-500/35" },
+    { r: layout.skills, className: "fill-emerald-500/35" },
+    { r: layout.tools, className: "fill-sky-500/35" },
+    { r: layout.mcp, className: "fill-sky-500/25" },
+    ...layout.rows.map((r) => ({ r, className: "fill-muted-foreground/45" })),
+    ...(layout.tray ? [{ r: layout.tray, className: "fill-destructive/40" }] : []),
+    ...(layout.quarantine ? [{ r: layout.quarantine, className: "fill-destructive/20" }] : []),
+  ];
+  const vx = (view.left / zoom) * sx;
+  const vy = (view.top / zoom) * sy;
+  const vw = Math.min(mw, (view.w / zoom) * sx);
+  const vh = Math.min(mh, (view.h / zoom) * sy);
+  return (
+    <div
+      className="pointer-events-none absolute bottom-2 z-10 hidden rounded-md border bg-background/90 p-1 shadow-sm backdrop-blur md:block"
+      style={{ right: offsetRight }}
+    >
+      <svg
+        width={mw}
+        height={mh}
+        viewBox={`0 0 ${mw} ${mh}`}
+        className="pointer-events-auto cursor-pointer"
+        role="img"
+        aria-label="全链路缩略图，点击跳转"
+        onClick={(e) => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          const fx = e.clientX - rect.left;
+          const fy = e.clientY - rect.top;
+          const targetX = fx / sx - view.w / zoom / 2;
+          const targetY = fy / sy - view.h / zoom / 2;
+          onJump(Math.max(0, targetX) * zoom, Math.max(0, targetY) * zoom);
+        }}
+      >
+        <rect x={0} y={0} width={mw} height={mh} className="fill-card" />
+        {boxes.map((b, i) => (
+          <rect
+            key={i}
+            x={b.r.x * sx}
+            y={b.r.y * sy}
+            width={Math.max(1, b.r.w * sx)}
+            height={Math.max(1, b.r.h * sy)}
+            className={b.className}
+          />
+        ))}
+        <rect x={vx} y={vy} width={vw} height={vh} className="fill-foreground/10 stroke-foreground" strokeWidth={1} />
+      </svg>
+    </div>
+  );
+}
+
 function ChainGraph({
   chain,
   path,
@@ -1018,6 +1121,7 @@ function ChainGraph({
   onTruncate,
   onCopyStatic,
   onCopyText,
+  onReload,
 }: {
   chain: AgentPromptChainData;
   path: PathEntry[];
@@ -1028,42 +1132,88 @@ function ChainGraph({
   onTruncate: (index: number) => void;
   onCopyStatic: () => void;
   onCopyText: (text: string, what: string) => void;
+  onReload: () => void;
 }) {
-  const layout = React.useMemo(() => buildLayout(chain), [chain]);
   const wrapRef = React.useRef<HTMLDivElement>(null);
   const canvasRef = React.useRef<HTMLDivElement>(null);
   const backRef = React.useRef<HTMLButtonElement>(null);
   const [frameW, setFrameW] = React.useState(990);
-  const [narrow, setNarrow] = React.useState(false);
   const open = path.length > 0;
   const last = path[path.length - 1];
   const anchor = last?.anchor ?? null;
+  // 几何由容器实测宽推导：1 SVG 单位 = 1 CSS px，默认视图不缩放。
+  const layout = React.useMemo(() => buildLayout(chain, frameW), [chain, frameW]);
+  const narrow = layout.mode === "one";
+  const anchorIdx = anchor ? layout.rows.findIndex((r) => r.id === anchor) : -1;
+  const [zoom, setZoom] = React.useState(1);
+  const zoomRef = React.useRef(1);
+  zoomRef.current = zoom;
+  const [view, setView] = React.useState({ left: 0, top: 0, w: 0, h: 0 });
 
-  const fit = React.useCallback(() => {
-    const wrap = wrapRef.current;
-    const canvas = canvasRef.current;
-    if (!wrap || !canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const top = wrap.getBoundingClientRect().top + window.scrollY;
-    const reserved = path.length > 0 && !narrow ? 380 : 0;
-    const availW = rect.width - 16 - reserved;
-    const availH = Math.max(420, window.innerHeight - top - 24);
-    const scale = Math.max(1, Math.min(1.3, availW / 990, availH / layout.height));
-    setFrameW(Math.round(990 * scale));
-    setNarrow(rect.width < 760);
-  }, [layout.height, narrow, path.length]);
+  const syncView = React.useCallback(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    setView({ left: el.scrollLeft, top: el.scrollTop, w: el.clientWidth, h: el.clientHeight });
+  }, []);
+
+  // 缩放只改渲染尺寸，文字仍是矢量与固定 CSS px，不靠缩小字号容纳。
+  const applyZoom = React.useCallback(
+    (next: number, ax?: number, ay?: number) => {
+      const el = canvasRef.current;
+      const z = Math.min(2.5, Math.max(0.5, Math.round(next * 100) / 100));
+      if (!el) {
+        setZoom(z);
+        return;
+      }
+      const px = ax ?? el.clientWidth / 2;
+      const py = ay ?? el.clientHeight / 2;
+      const cx = (el.scrollLeft + px) / zoomRef.current;
+      const cy = (el.scrollTop + py) / zoomRef.current;
+      setZoom(z);
+      requestAnimationFrame(() => {
+        el.scrollLeft = cx * z - px;
+        el.scrollTop = cy * z - py;
+        syncView();
+      });
+    },
+    [syncView],
+  );
 
   React.useEffect(() => {
-    fit();
-    const onResize = () => fit();
-    window.addEventListener("resize", onResize);
-    const ro = wrapRef.current ? new ResizeObserver(() => fit()) : null;
-    if (ro && wrapRef.current) ro.observe(wrapRef.current);
+    const el = canvasRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      applyZoom(zoomRef.current * Math.exp(-e.deltaY * 0.002), e.clientX - rect.left, e.clientY - rect.top);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [applyZoom]);
+
+  React.useEffect(() => {
+    syncView();
+  }, [syncView, frameW, layout.height]);
+
+  React.useEffect(() => {
+    // 测量画布本身（面板并排时画布宽度已扣除面板），而不是外层容器。
+    const el = canvasRef.current;
+    if (!el) return;
+    const measure = () => {
+      const node = canvasRef.current;
+      if (!node) return;
+      setFrameW(Math.max(320, Math.round(node.clientWidth - 16)));
+    };
+    measure();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
+    ro?.observe(el);
+    window.addEventListener("resize", measure);
     return () => {
-      window.removeEventListener("resize", onResize);
+      window.removeEventListener("resize", measure);
       ro?.disconnect();
     };
-  }, [fit]);
+  }, [path.length, open]);
 
   React.useEffect(() => {
     if (!open) {
@@ -1078,12 +1228,12 @@ function ChainGraph({
       el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
       const cr = canvas.getBoundingClientRect();
       const er = el.getBoundingClientRect();
-      const visibleRight = cr.right - (narrow ? 0 : 380) - 12;
+      const visibleRight = cr.right - 12;
       if (er.right > visibleRight) canvas.scrollLeft += er.right - visibleRight;
       else if (er.left < cr.left + 12) canvas.scrollLeft -= cr.left + 12 - er.left;
     });
     return () => cancelAnimationFrame(raf);
-  }, [open, anchor, narrow, frameW]);
+  }, [open, anchor, frameW]);
 
   React.useEffect(() => {
     if (open) backRef.current?.focus({ preventScroll: true });
@@ -1132,21 +1282,57 @@ function ChainGraph({
             </button>
           </React.Fragment>
         ))}
-        <span className="ml-auto pl-2 text-[10px] text-muted-foreground">
-          Esc 返回上一级 · 点击空白回到全局预览
+        <span className="ml-auto hidden pl-2 text-[10px] text-muted-foreground sm:inline">
+          Esc 返回上一级
+        </span>
+        <span className="ml-auto flex items-center gap-0.5 pl-1 sm:ml-1">
+          <button
+            type="button"
+            className="rounded px-1 py-0.5 hover:bg-muted/60"
+            aria-label="缩小"
+            onClick={() => applyZoom(zoom - 0.15)}
+          >
+            −
+          </button>
+          <span className="w-9 text-center tabular-nums text-[10px] text-muted-foreground">{Math.round(zoom * 100)}%</span>
+          <button
+            type="button"
+            className="rounded px-1 py-0.5 hover:bg-muted/60"
+            aria-label="放大"
+            onClick={() => applyZoom(zoom + 0.15)}
+          >
+            +
+          </button>
+          <button type="button" className="rounded px-1 py-0.5 hover:bg-muted/60" onClick={() => applyZoom(1)}>
+            1:1
+          </button>
+          <button
+            type="button"
+            className="rounded px-1 py-0.5 hover:bg-muted/60"
+            onClick={() => {
+              const el = canvasRef.current;
+              if (!el) return;
+              applyZoom(Math.min(1, (el.clientWidth - 16) / layout.w));
+              el.scrollTo({ left: 0, top: 0 });
+            }}
+          >
+            适应
+          </button>
         </span>
       </div>
 
-      <div ref={wrapRef} className="relative min-w-0 overflow-hidden rounded-lg border bg-card/40">
+      <div ref={wrapRef} className="relative flex min-w-0 overflow-hidden rounded-lg border bg-card/40">
         <div
           ref={canvasRef}
-          className="overflow-auto p-2"
-          style={open && !narrow ? { paddingRight: 380 } : undefined}
+          onScroll={syncView}
+          className="min-w-0 flex-1 overflow-auto p-2"
         >
-          <div style={{ width: frameW }} className="mx-auto">
+          <div style={{ width: layout.w * zoom }} className="mx-auto">
             <svg
-              viewBox={`0 0 990 ${layout.height}`}
-              className="block h-auto w-full select-none"
+              viewBox={`0 0 ${layout.w} ${layout.height}`}
+              width={layout.w * zoom}
+              height={layout.height * zoom}
+              className="block max-w-none select-none"
               role="group"
               aria-label={`${chain.agent_key} 装配链门控信号流`}
               onClick={(e) => {
@@ -1162,12 +1348,12 @@ function ChainGraph({
                 </pattern>
               </defs>
 
-              {layout.hasBoundary && (
+              {layout.boundary && (
                 <rect
-                  x={330}
-                  y={layout.boundaryY + 2}
-                  width={325}
-                  height={Math.max(0, layout.height - layout.boundaryY - 2)}
+                  x={layout.boundary.x1}
+                  y={layout.boundary.y + 2}
+                  width={Math.max(0, layout.boundary.x2 - layout.boundary.x1)}
+                  height={Math.max(0, layout.height - layout.boundary.y - 2)}
                   className="fill-background"
                   opacity={0.32}
                   pointerEvents="none"
@@ -1175,9 +1361,9 @@ function ChainGraph({
               )}
 
               <line
-                x1={370}
-                y1={136}
-                x2={370}
+                x1={layout.trunkX}
+                y1={layout.rows[0] ? layout.rows[0].y + layout.rows[0].h : 136}
+                x2={layout.trunkX}
                 y2={layout.modelRow.y + layout.modelRow.h / 2}
                 className="stroke-border"
                 strokeWidth={2}
@@ -1188,9 +1374,9 @@ function ChainGraph({
                 return (
                   <line
                     key={`stub-${row.id}`}
-                    x1={370}
+                    x1={layout.trunkX}
                     y1={row.y + row.h / 2}
-                    x2={390}
+                    x2={layout.center.x}
                     y2={row.y + row.h / 2}
                     className="stroke-border"
                     strokeWidth={1.2}
@@ -1230,23 +1416,33 @@ function ChainGraph({
                 </g>
               )}
 
-              {layout.rows.map((row) => (
+              {layout.rows.map((row, i) => (
                 <RowNode
                   key={row.id}
                   row={row}
                   maxChars={layout.measureMax}
                   anchor={anchor === row.id}
-                  dimmed={dimmed(row.id)}
+                  phase={
+                    !anchor
+                      ? "none"
+                      : anchorIdx < 0
+                        ? "related"
+                        : i === anchorIdx
+                          ? "current"
+                          : i < anchorIdx
+                            ? "past"
+                            : "future"
+                  }
                   onOpen={() => onOpen(row.target, row.id)}
                 />
               ))}
 
-              {layout.hasBoundary && (
+              {layout.boundary && (
                 <g className="pointer-events-none">
-                  <line x1={330} y1={layout.boundaryY} x2={655} y2={layout.boundaryY} className="stroke-foreground/60" strokeWidth={2} />
-                  <line x1={330} y1={layout.boundaryY - 4} x2={330} y2={layout.boundaryY + 4} className="stroke-foreground/60" strokeWidth={2} />
-                  <line x1={655} y1={layout.boundaryY - 4} x2={655} y2={layout.boundaryY + 4} className="stroke-foreground/60" strokeWidth={2} />
-                  <text x={655} y={layout.boundaryY - 6} textAnchor="end" className="fill-foreground/70 text-[8px]">
+                  <line x1={layout.boundary.x1} y1={layout.boundary.y} x2={layout.boundary.x2} y2={layout.boundary.y} className="stroke-foreground/60" strokeWidth={2} />
+                  <line x1={layout.boundary.x1} y1={layout.boundary.y - 4} x2={layout.boundary.x1} y2={layout.boundary.y + 4} className="stroke-foreground/60" strokeWidth={2} />
+                  <line x1={layout.boundary.x2} y1={layout.boundary.y - 4} x2={layout.boundary.x2} y2={layout.boundary.y + 4} className="stroke-foreground/60" strokeWidth={2} />
+                  <text x={layout.boundary.x2} y={layout.boundary.y - 6} textAnchor="end" className="fill-foreground/70 text-[8px]">
                     硬边界 · 配置层到此为止
                   </text>
                 </g>
@@ -1281,45 +1477,47 @@ function ChainGraph({
                 onOpen={onOpen}
               />
 
-              {layout.profileRow && (
+              {layout.mode !== "one" && layout.profileRow && (
                 <path
-                  d={`M310,${layout.llm.y + 64} H320 V${layout.profileRow.y - 18}`}
+                  d={`M${layout.llm.x + layout.llm.w},${layout.llm.y + 64} H${layout.center.x - 50} V${layout.profileRow.y - 18}`}
                   className={cn("fill-none", layout.profileRow.present ? "stroke-fuchsia-500" : "stroke-destructive")}
                   strokeWidth={1.6}
                   strokeDasharray={layout.profileRow.present ? undefined : "4 3"}
                   opacity={0.85}
                 />
               )}
-              {layout.byId.get("skill") && (
+              {layout.mode !== "one" && layout.byId.get("skill") && (
                 <path
-                  d={`M310,${layout.skillsY + 22} H330 V${layout.byId.get("skill")!.y + layout.byId.get("skill")!.h / 2} H370`}
+                  d={`M${layout.skills.x + layout.skills.w},${layout.skills.y + 22} H${layout.center.x - 40} V${layout.byId.get("skill")!.y + layout.byId.get("skill")!.h / 2} H${layout.center.x}`}
                   className="fill-none stroke-emerald-500"
                   strokeWidth={1.2}
                   opacity={0.6}
                   markerEnd="url(#ppm-arrow)"
                 />
               )}
-              <path
-                d={`M680,${layout.tools.y + 24} H665 V${layout.modelRow.y + 17} H630`}
-                className="fill-none stroke-sky-500"
-                strokeWidth={1.2}
-                opacity={0.55}
-                markerEnd="url(#ppm-arrow)"
-              />
-              {chain.mcp.length > 0 && (
+              {layout.mode !== "one" && (
+                <path
+                  d={`M${layout.tools.x},${layout.tools.y + 24} H${layout.center.x + layout.center.w + 35} V${layout.modelRow.y + 17} H${layout.center.x + layout.center.w}`}
+                  className="fill-none stroke-sky-500"
+                  strokeWidth={1.2}
+                  opacity={0.55}
+                  markerEnd="url(#ppm-arrow)"
+                />
+              )}
+              {layout.mode !== "one" && chain.mcp.length > 0 && (
                 <line
-                  x1={665}
-                  y1={layout.mcpY + 18}
-                  x2={665}
+                  x1={layout.center.x + layout.center.w + 35}
+                  y1={layout.mcp.y + 18}
+                  x2={layout.center.x + layout.center.w + 35}
                   y2={layout.tools.y + layout.tools.h}
                   className="stroke-sky-500"
                   strokeWidth={1}
                   opacity={0.35}
                 />
               )}
-              {layout.runtimeRow && (
+              {layout.mode !== "one" && layout.runtimeRow && (
                 <path
-                  d={`M630,${layout.runtimeRow.y + layout.runtimeRow.h / 2} H665 V${layout.modelRow.y + 12} H630`}
+                  d={`M${layout.center.x + layout.center.w},${layout.runtimeRow.y + layout.runtimeRow.h / 2} H${layout.center.x + layout.center.w + 35} V${layout.modelRow.y + 12} H${layout.center.x + layout.center.w}`}
                   className="fill-none stroke-muted-foreground"
                   strokeDasharray="1 3"
                   strokeWidth={1.1}
@@ -1327,9 +1525,9 @@ function ChainGraph({
                   markerEnd="url(#ppm-arrow)"
                 />
               )}
-              {layout.deferredRow && (
+              {layout.mode !== "one" && layout.deferredRow && (
                 <path
-                  d={`M630,${layout.deferredRow.y + layout.deferredRow.h / 2} H665 V${layout.modelRow.y + 40} H630`}
+                  d={`M${layout.center.x + layout.center.w},${layout.deferredRow.y + layout.deferredRow.h / 2} H${layout.center.x + layout.center.w + 35} V${layout.modelRow.y + 40} H${layout.center.x + layout.center.w}`}
                   className="fill-none stroke-muted-foreground"
                   strokeDasharray="1 3"
                   strokeWidth={1.1}
@@ -1349,7 +1547,7 @@ function ChainGraph({
               {layout.profileRow && (
                 <g>
                   <rect
-                    x={320}
+                    x={layout.trunkX - 50}
                     y={layout.profileRow.y - 26}
                     width={100}
                     height={16}
@@ -1358,7 +1556,7 @@ function ChainGraph({
                     strokeDasharray={layout.profileRow.present ? undefined : "3 2"}
                   />
                   <text
-                    x={370}
+                    x={layout.trunkX}
                     y={layout.profileRow.y - 15}
                     textAnchor="middle"
                     className={cn("text-[8px]", layout.profileRow.present ? "fill-fuchsia-600 dark:fill-fuchsia-400" : "fill-destructive")}
@@ -1369,28 +1567,43 @@ function ChainGraph({
               )}
               {layout.runtimeRow && (
                 <g>
-                  <rect x={322} y={layout.runtimeRow.y - 26} width={96} height={16} rx={8} className="fill-card stroke-border" />
-                  <text x={370} y={layout.runtimeRow.y - 15} textAnchor="middle" className="fill-muted-foreground text-[8px]">
+                  <rect x={layout.trunkX - 48} y={layout.runtimeRow.y - 26} width={96} height={16} rx={8} className="fill-card stroke-border" />
+                  <text x={layout.trunkX} y={layout.runtimeRow.y - 15} textAnchor="middle" className="fill-muted-foreground text-[8px]">
                     运行时注入
                   </text>
                 </g>
               )}
               <g>
-                <rect x={306} y={layout.modelRow.y - 26} width={128} height={16} rx={8} className="fill-card stroke-border" />
-                <text x={370} y={layout.modelRow.y - 15} textAnchor="middle" className="fill-muted-foreground text-[8px]">
+                <rect x={layout.trunkX - 64} y={layout.modelRow.y - 26} width={128} height={16} rx={8} className="fill-card stroke-border" />
+                <text x={layout.trunkX} y={layout.modelRow.y - 15} textAnchor="middle" className="fill-muted-foreground text-[8px]">
                   第二 system（按需）
                 </text>
               </g>
 
-              <text x={20} y={layout.height - 18} className="fill-muted-foreground text-[8px]">
+              <text x={16} y={layout.height - 18} className="fill-muted-foreground text-[8px]">
                 运行时注入在任务执行时生成；本视图只给位置与条件，不展开正文、不连接 MCP、不含凭据。
               </text>
-              <text x={970} y={layout.height - 18} textAnchor="end" className="fill-muted-foreground text-[8px]">
+              <text x={layout.w - 20} y={layout.height - 18} textAnchor="end" className="fill-muted-foreground text-[8px]">
                 只读 · 静态
               </text>
             </svg>
           </div>
         </div>
+
+        {layout.height > 640 && (
+          <MiniMap
+            offsetRight={open && !narrow ? 372 : 8}
+            layout={layout}
+            zoom={zoom}
+            view={view}
+            onJump={(left, top) => {
+              const el = canvasRef.current;
+              if (!el) return;
+              el.scrollTo({ left, top });
+              syncView();
+            }}
+          />
+        )}
 
         {open && (
           <ChainDetail
@@ -1402,6 +1615,7 @@ function ChainGraph({
             onDrill={onDrill}
             onCopyStatic={onCopyStatic}
             onCopyText={onCopyText}
+            onReload={onReload}
             narrow={narrow}
           />
         )}
@@ -1414,13 +1628,13 @@ function RowNode({
   row,
   maxChars,
   anchor,
-  dimmed,
+  phase,
   onOpen,
 }: {
   row: Row;
   maxChars: number;
   anchor: boolean;
-  dimmed: boolean;
+  phase: "none" | "related" | "past" | "current" | "future";
   onOpen: () => void;
 }) {
   const color = COLOR[row.color];
@@ -1428,15 +1642,19 @@ function RowNode({
     row.chars === null ? "" : row.gated || row.unknown ? "—" : `${fmt(row.chars)}c`;
   const measure =
     row.present && row.chars !== null && row.chars > 0
-      ? Math.max(2, Math.round((row.chars / maxChars) * 220))
+      ? Math.max(2, Math.round((row.chars / maxChars) * (row.w - 40)))
       : 0;
+  // 文案按当前行宽裁切，不再用「18 个字」这类与容器无关的魔法数。
+  const charsW = chars ? Math.max(26, measureText(chars, { px: 8, mono: true }) + 8) : 0;
+  const title = fitText(row.title, row.w - 20 - charsW, { px: 11 }, measureText);
+  const sub = fitText(row.sub, Math.max(60, row.w * 0.55), { px: 8 }, measureText);
   return (
     <g
       role="button"
       tabIndex={0}
       data-anchor={row.id}
       aria-label={`${row.title}，${row.chars === null ? "" : row.unknown ? "运行时未采集" : row.present ? `${row.chars} 字符` : "未生效"}`}
-      className={cn("cursor-pointer outline-none", dimmed && "opacity-40")}
+      className={cn("cursor-pointer outline-none", phase === "future" && "opacity-50", phase === "past" && "opacity-90", phase === "related" && "opacity-75")}
       onClick={onOpen}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -1445,10 +1663,11 @@ function RowNode({
         }
       }}
     >
+      <title>{`${row.title} · ${row.sub}${row.chars === null ? "" : ` · ${row.chars} 字符`}`}</title>
       <rect
-        x={390}
+        x={row.x}
         y={row.y}
-        width={240}
+        width={row.w}
         height={row.h}
         className={cn(
           "fill-card",
@@ -1458,33 +1677,33 @@ function RowNode({
         strokeDasharray={row.unknown ? "1 3" : row.gated ? "4 3" : undefined}
       />
       {row.unknown && (
-        <rect x={391} y={row.y + 1} width={238} height={row.h - 2} fill="url(#ppm-hatch)" className="pointer-events-none" />
+        <rect x={row.x + 1} y={row.y + 1} width={row.w - 2} height={row.h - 2} fill="url(#ppm-hatch)" className="pointer-events-none" />
       )}
-      <rect x={390} y={row.y} width={4} height={row.h} className={color.fill} opacity={row.present ? 1 : 0.4} />
-      <text x={400} y={row.y + 14} className={cn("font-mono text-[8px]", color.text)}>{row.tag}</text>
-      <text x={620} y={row.y + 14} textAnchor="end" className="fill-muted-foreground font-mono text-[8px] tabular-nums">
+      <rect x={row.x} y={row.y} width={4} height={row.h} className={color.fill} opacity={row.present ? 1 : 0.4} />
+      <text x={row.x + 10} y={row.y + 14} className={cn("font-mono text-[8px]", color.text)}>{row.tag}</text>
+      <text x={row.x + row.w - 10} y={row.y + 14} textAnchor="end" className="fill-muted-foreground font-mono text-[8px] tabular-nums">
         {chars}
       </text>
       <text
-        x={400}
+        x={row.x + 10}
         y={row.y + 29}
         className={cn("fill-foreground text-[11px]", row.struck && "line-through opacity-60")}
       >
-        {trimText(row.title, 18)}
+        {title}
       </text>
       {row.unknown ? (
         <g>
           {Array.from({ length: row.sockets ?? 1 }).map((_, i) => (
-            <rect key={i} x={620 - 11 - i * 9} y={row.y + row.h - 11} width={6} height={6} className="fill-none stroke-muted-foreground" strokeWidth={1} />
+            <rect key={i} x={row.x + row.w - 11 - i * 9} y={row.y + row.h - 11} width={6} height={6} className="fill-none stroke-muted-foreground" strokeWidth={1} />
           ))}
         </g>
       ) : (
-        <text x={620} y={row.y + 28} textAnchor="end" className="fill-muted-foreground text-[8px]">
-          {trimText(row.sub, 14)}
+        <text x={row.x + row.w - 10} y={row.y + 28} textAnchor="end" className="fill-muted-foreground text-[8px]">
+          {sub}
         </text>
       )}
       {measure > 0 && (
-        <rect x={400} y={row.y + row.h - 4} width={measure} height={2} className={color.fill} opacity={0.4} />
+        <rect x={row.x + 10} y={row.y + row.h - 4} width={measure} height={2} className={color.fill} opacity={0.4} />
       )}
     </g>
   );
@@ -1595,7 +1814,8 @@ function SkillsRail({
   const shown = chain.skills.slice(0, 6);
   const hidden = chain.skills.length - shown.length;
   const inIndex = chain.skills.filter((s) => s.in_index).length;
-  const { skillsY: y, skillsH: h } = layout;
+  const { x, y, w, h } = layout.skills;
+  const nameMaxW = w - 50;
   return (
     <g
       role="button"
@@ -1611,20 +1831,21 @@ function SkillsRail({
         }
       }}
     >
-      <rect x={20} y={y} width={290} height={h} className={cn("fill-card", active ? "stroke-foreground" : "stroke-border")} strokeWidth={active ? 2 : 1} />
-      <rect x={20} y={y} width={4} height={h} className="fill-emerald-500" />
-      <text x={32} y={y + 15} className="fill-emerald-600 font-mono text-[8px] dark:fill-emerald-400">Skill 绑定 · {chain.skills.length}</text>
-      <text x={300} y={y + 15} textAnchor="end" className="fill-muted-foreground text-[8px]">已进速查 {inIndex} / {chain.skills.length}</text>
+      <rect x={x} y={y} width={w} height={h} className={cn("fill-card", active ? "stroke-foreground" : "stroke-border")} strokeWidth={active ? 2 : 1} />
+      <rect x={x} y={y} width={4} height={h} className="fill-emerald-500" />
+      <text x={x + 12} y={y + 15} className="fill-emerald-600 font-mono text-[8px] dark:fill-emerald-400">Skill 绑定 · {chain.skills.length}</text>
+      <text x={x + w - 10} y={y + 15} textAnchor="end" className="fill-muted-foreground text-[8px]">已进速查 {inIndex} / {chain.skills.length}</text>
       {shown.length === 0 && (
-        <text x={32} y={y + 31} className="fill-muted-foreground text-[8px]">（无 Skill）</text>
+        <text x={x + 12} y={y + 31} className="fill-muted-foreground text-[8px]">（无 Skill）</text>
       )}
       {shown.map((s, i) => (
-        <text key={s.name} x={32} y={y + 33 + i * 15} className={cn("text-[8px]", s.in_index ? "fill-foreground" : "fill-muted-foreground")}>
-          {s.in_index ? "●" : "○"} {trimText(s.name, 22)}
+        <text key={s.name} x={x + 12} y={y + 33 + i * 15} className={cn("text-[8px]", s.in_index ? "fill-foreground" : "fill-muted-foreground")}>
+          <title>{s.name}</title>
+          {s.in_index ? "●" : "○"} {fitText(s.name, nameMaxW, { px: 8 }, measureText)}
         </text>
       ))}
       {hidden > 0 && (
-        <text x={300} y={y + h - 6} textAnchor="end" className="fill-muted-foreground text-[7px]">+{hidden}</text>
+        <text x={x + w - 10} y={y + h - 6} textAnchor="end" className="fill-muted-foreground text-[7px]">+{hidden}</text>
       )}
     </g>
   );
@@ -1663,7 +1884,9 @@ function ToolsRail({
       <rect x={x} y={y} width={w} height={h} className={cn("fill-card", active ? "stroke-foreground" : "stroke-border")} strokeWidth={active ? 2 : 1} />
       <rect x={x} y={y} width={4} height={h} className="fill-sky-500" />
       <text x={x + 12} y={y + 15} className="fill-sky-600 font-mono text-[8px] dark:fill-sky-400">工具 · {t.total}</text>
-      <text x={x + w - 12} y={y + 15} textAnchor="end" className="fill-muted-foreground text-[8px]">随请求单独下发，不进 system</text>
+      <text x={x + w - 12} y={y + 15} textAnchor="end" className="fill-muted-foreground text-[8px]">
+        {fitText("随请求单独下发，不进 system", Math.max(80, w - 120), { px: 8 }, measureText)}
+      </text>
       <text x={x + 12} y={y + 33} className="fill-muted-foreground text-[8px]">
         内置 {t.builtin.length} · 自定义 {t.custom.length} · 流量 {t.traffic.length} · Shell {t.shell.length}
       </text>
@@ -1688,7 +1911,9 @@ function MCPRail({
   dimmed: (id: string) => boolean;
   onOpen: (target: Target, anchor?: string) => void;
 }) {
-  const { tools, mcpY } = layout;
+  const { mcp } = layout;
+  const tools = mcp;
+  const mcpY = mcp.y;
   const disabled = chain.mcp.filter((m) => !m.enabled).length;
   return (
     <g>
@@ -1742,8 +1967,11 @@ function MCPRail({
             <rect x={tools.x} y={y} width={tools.w} height={34} className={cn("fill-card", active ? "stroke-foreground" : "stroke-border")} strokeWidth={active ? 2 : 1} />
             {m.cache_stale && <rect x={tools.x + tools.w - 3} y={y} width={3} height={34} className="fill-amber-500" opacity={0.7} />}
             <circle cx={tools.x + 12} cy={y + 17} r={3} className={tone} strokeWidth={1} />
-            <text x={tools.x + 24} y={y + 13} className="fill-foreground text-[10px]">{trimText(m.name, 22)}</text>
-            <text x={tools.x + 24} y={y + 27} className="fill-muted-foreground text-[8px]">{trimText(`${m.transport} · ${status}`, 44)}</text>
+            <text x={tools.x + 24} y={y + 13} className="fill-foreground text-[10px]">
+              <title>{m.name}</title>
+              {fitText(m.name, tools.w - 120, { px: 10 }, measureText)}
+            </text>
+            <text x={tools.x + 24} y={y + 27} className="fill-muted-foreground text-[8px]">{fitText(`${m.transport} · ${status}`, tools.w - 120, { px: 8 }, measureText)}</text>
             <text x={tools.x + tools.w - 10} y={y + 13} textAnchor="end" className="fill-muted-foreground text-[7px]">{cached}</text>
           </g>
         );
@@ -1767,8 +1995,8 @@ function Quarantine({
 }) {
   const excluded = chain.tools.excluded;
   const outOfIndex = chain.skills.filter((s) => !s.in_index);
-  if (layout.qH <= 0) return null;
-  const { qY: y, qH: h } = layout;
+  if (!layout.quarantine) return null;
+  const { x, y, w, h } = layout.quarantine;
   return (
     <g
       role="button"
@@ -1784,19 +2012,343 @@ function Quarantine({
         }
       }}
     >
-      <rect x={20} y={y} width={650} height={h} className={cn("fill-card", active ? "stroke-foreground" : "stroke-destructive")} strokeDasharray="5 4" strokeWidth={active ? 2 : 1} />
-      <text x={32} y={y + 16} className="fill-destructive font-mono text-[8px]">未进入主干 · {excluded.length + outOfIndex.length}</text>
+      <rect x={x} y={y} width={w} height={h} className={cn("fill-card", active ? "stroke-foreground" : "stroke-destructive")} strokeDasharray="5 4" strokeWidth={active ? 2 : 1} />
+      <text x={x + 12} y={y + 16} className="fill-destructive font-mono text-[8px]">未进入主干 · {excluded.length + outOfIndex.length}</text>
       {excluded.slice(0, 4).map((t, i) => (
-        <text key={t.key} x={32} y={y + 32 + i * 13} className="fill-destructive text-[8px]">
-          ✕ {t.key} — {trimText(t.reason, 52)}
+        <text key={t.key} x={x + 12} y={y + 32 + i * 13} className="fill-destructive text-[8px]">
+          <title>{`${t.key} — ${t.reason}`}</title>
+          ✕ {fitText(`${t.key} — ${t.reason}`, w - 24, { px: 8 }, measureText)}
         </text>
       ))}
       {outOfIndex.length > 0 && (
-        <text x={32} y={y + h - 12} className="fill-muted-foreground text-[8px]">
+        <text x={x + 12} y={y + h - 12} className="fill-muted-foreground text-[8px]">
           索引外 Skill：{outOfIndex.map((s) => s.name).join("、")}（仍可 Skill(name=...) 加载）
         </text>
       )}
     </g>
+  );
+}
+
+
+const EFFORT_CHOICES = ["", "low", "medium", "high", "xhigh", "max"] as const;
+
+type Stage = { id: string; label: string; target: Target; offTrunk?: boolean };
+
+function stageTargets(chain: AgentPromptChainData): Stage[] {
+  const find = (kind: string) => chain.segments.find((s) => s.kind === kind);
+  const out: Stage[] = [{ id: "agent", label: "Agent", target: { kind: "model" } }];
+  const profile = find("profile_prompt");
+  if (profile && chain.llm.prompt_mode) {
+    out.push({ id: "profile", label: "独立提示词", target: { kind: "segment", key: profile.key } });
+  }
+  const body = find("body");
+  if (body && chain.llm.prompt_mode !== "replace") {
+    out.push({ id: "body", label: "正文", target: { kind: "segment", key: body.key } });
+  }
+  const skill = find("skill_index");
+  if (skill) out.push({ id: "skill", label: "技能速查", target: { kind: "segment", key: skill.key } });
+  if (chain.segments.some((s) => s.kind === "code_tail" && s.present)) {
+    out.push({ id: "code", label: "代码硬尾", target: { kind: "code" } });
+  }
+  if (chain.segments.some((s) => s.kind === "code_tail" && !s.present)) {
+    out.push({ id: "gated", label: "门控未生效", target: { kind: "code" } });
+  }
+  const host = find("host");
+  if (host) out.push({ id: "host", label: "本机工具", target: { kind: "segment", key: host.key } });
+  if (chain.segments.some((s) => !s.available && s.kind !== "deferred_tools")) {
+    out.push({ id: "runtime", label: "运行时注入", target: { kind: "runtime" } });
+  }
+  if (chain.tools.deferred_names.length > 0) {
+    out.push({ id: "deferred", label: "延迟工具", target: { kind: "deferred" } });
+  }
+  out.push({ id: "model", label: "模型请求", target: { kind: "model" } });
+  out.push({ id: "llm", label: "LLM 配置", target: { kind: "llm" }, offTrunk: true });
+  out.push({ id: "skills", label: "Skill 轨", target: { kind: "skills" }, offTrunk: true });
+  out.push({ id: "tools", label: "工具轨", target: { kind: "tools" }, offTrunk: true });
+  out.push({ id: "mcp", label: "MCP 轨", target: { kind: "mcp", id: chain.mcp[0]?.id ?? 0 }, offTrunk: true });
+  return out;
+}
+
+function activeStage(chain: AgentPromptChainData, target: Target): string {
+  switch (target.kind) {
+    case "code":
+      return "code";
+    case "runtime":
+      return "runtime";
+    case "deferred":
+      return "deferred";
+    case "model":
+      return "model";
+    case "llm":
+      return "llm";
+    case "skills":
+      return "skills";
+    case "tools":
+      return "tools";
+    case "mcp":
+      return "mcp";
+    case "segment": {
+      const seg = chain.segments.find((s) => s.key === target.key);
+      switch (seg?.kind) {
+        case "profile_prompt":
+          return "profile";
+        case "body":
+          return "body";
+        case "skill_index":
+          return "skill";
+        case "host":
+          return "host";
+        default:
+          return "agent";
+      }
+    }
+    default:
+      return "agent";
+  }
+}
+
+// 全链路态势：把当前点选节点放回它在装配顺序里的位置，前后段一眼可见。
+function FocusStages({
+  chain,
+  target,
+  onDrill,
+}: {
+  chain: AgentPromptChainData;
+  target: Target;
+  onDrill: (t: Target) => void;
+}) {
+  const stages = stageTargets(chain);
+  const activeId = activeStage(chain, target);
+  const activeIdx = stages.findIndex((s) => s.id === activeId);
+  return (
+    <div className="mb-3 rounded-md border bg-muted/20 p-2">
+      <div className="mb-1.5 font-mono text-[9px] text-muted-foreground uppercase tracking-[0.12em]">
+        全链路态势 · 第 {activeIdx + 1} / {stages.length} 段
+      </div>
+      <div className="flex flex-wrap items-center gap-1">
+        {stages.map((stage, i) => {
+          const active = stage.id === activeId;
+          const past = activeIdx < 0 ? false : i < activeIdx;
+          return (
+            <React.Fragment key={stage.id}>
+              {i > 0 && <span className="text-[9px] text-muted-foreground/60">→</span>}
+              <button
+                type="button"
+                title={`${stage.label}${stage.offTrunk ? "（侧轨）" : ""}`}
+                onClick={() => onDrill(stage.target)}
+                className={cn(
+                  "rounded border px-1.5 py-0.5 text-[10px] transition-colors",
+                  active
+                    ? "border-foreground bg-foreground font-medium text-background"
+                    : stage.offTrunk
+                      ? "border-dashed text-muted-foreground hover:bg-muted/60"
+                      : past
+                        ? "text-muted-foreground hover:bg-muted/60"
+                        : "text-foreground/80 hover:bg-muted/60",
+                )}
+              >
+                {stage.label}
+              </button>
+            </React.Fragment>
+          );
+        })}
+      </div>
+      <p className="mt-1.5 text-[10px] text-muted-foreground">
+        高亮为当前节点；左侧标签是它之前已经进入提示词的段，右侧是之后仍会追加/按需进入的段。
+      </p>
+    </div>
+  );
+}
+
+// 右侧面板的可配置区：思考强度覆盖 + 独立提示词直接编辑 + 各段配置入口。
+function ConfigActions({
+  chain,
+  target,
+  onReload,
+}: {
+  chain: AgentPromptChainData;
+  target: Target;
+  onReload: () => void;
+}) {
+  const [profiles, setProfiles] = React.useState<LLMProfile[]>([]);
+  const [busy, setBusy] = React.useState(false);
+  const [prompt, setPrompt] = React.useState("");
+  const [mode, setMode] = React.useState<string>("");
+  const [inherit, setInherit] = React.useState(false);
+  const pid = chain.llm.profile_id ?? 0;
+  const profile = pid ? profiles.find((p) => Number(p.id) === pid) : undefined;
+
+  React.useEffect(() => {
+    api
+      .llmProfiles()
+      .then(setProfiles)
+      .catch(() => setProfiles([]));
+  }, []);
+
+  React.useEffect(() => {
+    if (!profile) return;
+    setPrompt(profile.prompt ?? "");
+    setMode(profile.prompt_mode ?? "");
+    setInherit(!!profile.prompt_apply_inherited);
+  }, [profile]);
+
+  const isPromptSurface =
+    target.kind === "llm" ||
+    (target.kind === "segment" &&
+      chain.segments.some(
+        (s) => s.key === target.key && (s.kind === "profile_prompt" || s.kind === "body"),
+      ));
+
+  const setEffort = async (value: string) => {
+    if (!pid) return;
+    setBusy(true);
+    try {
+      if (!value) await api.deleteAgentEffortOverride(chain.agent_key, pid);
+      else await api.setAgentEffortOverride(chain.agent_key, pid, value);
+      toast.success("已更新思考强度覆盖（下一次模型调用生效）");
+      onReload();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const savePrompt = async () => {
+    if (!profile) return;
+    setBusy(true);
+    try {
+      await api.saveLLMProfile({
+        id: Number(profile.id),
+        name: profile.name,
+        format: profile.format,
+        model: profile.model,
+        base_url: profile.base_url,
+        proxy: profile.proxy,
+        rate_per_second: profile.rate_per_second,
+        rate_per_minute: profile.rate_per_minute,
+        context_window_k: profile.context_window_k,
+        thinking_type: profile.thinking_type,
+        reasoning_effort: profile.reasoning_effort,
+        priority: profile.priority,
+        pool_exclude: profile.pool_exclude,
+        streaming: profile.streaming,
+        max_tokens: profile.max_tokens,
+        max_tokens_field: profile.max_tokens_field,
+        session_header_key: profile.session_header_key,
+        user_agent: profile.user_agent,
+        preset_id: profile.preset_id,
+        prompt,
+        prompt_mode: mode,
+        prompt_apply_inherited: inherit,
+      });
+      toast.success("已保存配置提示词；运行中的会话沿用原 system prompt");
+      onReload();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const links: { label: string; href: string }[] = [
+    { label: "Agent 配置", href: `/system/agents/detail?key=${encodeURIComponent(chain.agent_key)}` },
+    { label: "LLM 配置", href: "/system/llm" },
+    { label: "Skill", href: "/system/skills" },
+    { label: "工具", href: "/system/tools" },
+    { label: "MCP", href: "/system/mcp" },
+  ];
+
+  return (
+    <div className="mb-3 rounded-md border border-sky-500/30 bg-sky-500/[0.03] p-2">
+      <div className="mb-1.5 font-mono text-[9px] text-sky-600 uppercase tracking-[0.12em] dark:text-sky-400">
+        可配置 · 下一次模型调用生效
+      </div>
+
+      {isPromptSurface && pid > 0 && (
+        <div className="mb-2">
+          <label className="mb-1 block text-[10px] text-muted-foreground">
+            思考强度覆盖（{chain.agent_key} × 本配置）
+          </label>
+          <select
+            className="w-full rounded border bg-background px-1.5 py-1 text-xs"
+            value={chain.llm.effort_source === "override" ? (chain.llm.effort ?? "") : ""}
+            disabled={busy}
+            onChange={(e) => void setEffort(e.target.value)}
+          >
+            <option value="">继承配置（默认）</option>
+            {EFFORT_CHOICES.filter(Boolean).map((v) => (
+              <option key={v} value={v}>
+                {v}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-[9px] text-muted-foreground">
+            当前生效：{chain.llm.effort || "未设置"}（
+            {chain.llm.effort_source === "override"
+              ? "overrides 覆盖"
+              : chain.llm.effort_source === "profile"
+                ? "配置自身"
+                : "未设置"}
+            ）
+          </p>
+        </div>
+      )}
+
+      {isPromptSurface && profile && (
+        <details className="mb-2 rounded border bg-background/60 p-1.5" open={target.kind === "segment"}>
+          <summary className="cursor-pointer text-[10px] text-muted-foreground">
+            独立提示词（{profile.name} #{profile.id}）
+            {profile.prompt_apply_inherited ? " · 继承时也生效" : ""}
+          </summary>
+          <div className="mt-1.5 grid gap-1.5">
+            <textarea
+              className="min-h-24 w-full resize-y rounded border bg-background px-1.5 py-1 font-mono text-[11px]"
+              value={prompt}
+              placeholder="纯文本，不做模板变量渲染"
+              onChange={(e) => setPrompt(e.target.value)}
+            />
+            <div className="flex flex-wrap items-center gap-2 text-[10px]">
+              <select
+                className="rounded border bg-background px-1 py-0.5"
+                value={mode}
+                onChange={(e) => setMode(e.target.value)}
+              >
+                <option value="">不注入</option>
+                <option value="prepend">prepend（正文最前）</option>
+                <option value="append">append（硬尾之前）</option>
+                <option value="replace">replace（替换正文）</option>
+              </select>
+              <label className="inline-flex items-center gap-1">
+                <input type="checkbox" checked={inherit} onChange={(e) => setInherit(e.target.checked)} />
+                继承时也生效
+              </label>
+              <span className="ml-auto font-mono text-muted-foreground">{prompt.length} 字符</span>
+            </div>
+            <button
+              type="button"
+              className="justify-self-start rounded bg-foreground px-2 py-1 font-medium text-[10px] text-background disabled:opacity-50"
+              disabled={busy}
+              onClick={() => void savePrompt()}
+            >
+              保存提示词
+            </button>
+          </div>
+        </details>
+      )}
+
+      <div className="flex flex-wrap gap-1">
+        {links.map((l) => (
+          <Link
+            key={l.href}
+            href={l.href}
+            className="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+          >
+            {l.label} ↗
+          </Link>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -1809,6 +2361,7 @@ function ChainDetail({
   onDrill,
   onCopyStatic,
   onCopyText,
+  onReload,
   narrow,
 }: {
   chain: AgentPromptChainData;
@@ -1819,6 +2372,7 @@ function ChainDetail({
   onDrill: (target: Target) => void;
   onCopyStatic: () => void;
   onCopyText: (text: string, what: string) => void;
+  onReload: () => void;
   narrow: boolean;
 }) {
   const entry = path[path.length - 1];
@@ -1832,8 +2386,8 @@ function ChainDetail({
   return (
     <aside
       className={cn(
-        "absolute inset-y-0 right-0 z-20 flex max-w-full flex-col border-l bg-card shadow-2xl",
-        narrow ? "w-full" : "w-[360px]",
+        "z-20 flex max-w-full flex-col border-l bg-card shadow-2xl",
+        narrow ? "absolute inset-y-0 right-0 w-full" : "relative w-[360px] shrink-0",
       )}
       aria-label="装配链只读详情"
     >
@@ -1857,6 +2411,8 @@ function ChainDetail({
         <h3 className="truncate text-sm font-medium" title={entry.title}>{entry.title}</h3>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        <FocusStages chain={chain} target={target} onDrill={onDrill} />
+        <ConfigActions chain={chain} target={target} onReload={onReload} />
         {target.kind === "segment" && (
           <SegmentDetail
             seg={chain.segments.find((s) => s.key === target.key)}
