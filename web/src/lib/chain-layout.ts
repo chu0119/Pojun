@@ -93,6 +93,7 @@ export function fitText(
   if (measure(text, style) <= maxW) return text;
   const ell = "…";
   const ellW = measure(ell, style);
+  if (ellW > maxW) return "";
   const chars = Array.from(text);
   let out = "";
   let w = 0;
@@ -258,8 +259,9 @@ export function layoutSignalFlow(input: SignalFlowInput): SignalFlowGeometry {
     const rightBottom = mcp.y + mcp.h;
     const qY = Math.max(leftBottom, rightBottom, bottom) + 24;
     if (input.quarantineH > 0) {
-      const qRight = Math.max(centerX + centerW, tools.x + tools.w);
-      quarantine = { x: Math.max(0, centerX - 60), y: qY, w: qRight - Math.max(0, centerX - 60) + 20, h: input.quarantineH };
+      const qLeft = Math.max(0, centerX - 60);
+      const qRight = Math.min(W - 4, Math.max(centerX + centerW, tools.x + tools.w) + 20);
+      quarantine = { x: qLeft, y: qY, w: Math.max(80, qRight - qLeft), h: input.quarantineH };
     }
     h = Math.max(760, (quarantine ? quarantine.y + quarantine.h : qY) + 40);
     notesY = h - 18;

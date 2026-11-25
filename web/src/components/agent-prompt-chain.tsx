@@ -1088,9 +1088,15 @@ function MiniMap({
         width={mw}
         height={mh}
         viewBox={`0 0 ${mw} ${mh}`}
-        className="pointer-events-auto cursor-pointer"
-        role="img"
-        aria-label="全链路缩略图，点击跳转"
+        className="pointer-events-auto cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground"
+        role="button"
+        tabIndex={0}
+        aria-label="全链路缩略图，点击或回车跳转到视口中心"
+        onKeyDown={(e) => {
+          if (e.key !== "Enter" && e.key !== " ") return;
+          e.preventDefault();
+          onJump(view.left, view.top);
+        }}
         onClick={(e) => {
           const rect = e.currentTarget.getBoundingClientRect();
           const fx = e.clientX - rect.left;
@@ -1383,29 +1389,32 @@ function ChainGraph({
                 />
               )}
 
-              <line
-                x1={layout.trunkX}
-                y1={layout.rows[0] ? layout.rows[0].y + layout.rows[0].h : 136}
-                x2={layout.trunkX}
-                y2={layout.modelRow.y + layout.modelRow.h / 2}
-                className="stroke-border"
-                strokeWidth={2}
-              />
+              {layout.mode !== "one" && (
+                <line
+                  x1={layout.trunkX}
+                  y1={layout.rows[0] ? layout.rows[0].y + layout.rows[0].h : 136}
+                  x2={layout.trunkX}
+                  y2={layout.modelRow.y + layout.modelRow.h / 2}
+                  className="stroke-border"
+                  strokeWidth={2}
+                />
+              )}
 
-              {layout.rows.map((row) => {
-                if (row.id === "agent") return null;
-                return (
-                  <line
-                    key={`stub-${row.id}`}
-                    x1={layout.trunkX}
-                    y1={row.y + row.h / 2}
-                    x2={layout.center.x}
-                    y2={row.y + row.h / 2}
-                    className="stroke-border"
-                    strokeWidth={1.2}
-                  />
-                );
-              })}
+              {layout.mode !== "one" &&
+                layout.rows.map((row) => {
+                  if (row.id === "agent") return null;
+                  return (
+                    <line
+                      key={`stub-${row.id}`}
+                      x1={layout.trunkX}
+                      y1={row.y + row.h / 2}
+                      x2={layout.center.x}
+                      y2={row.y + row.h / 2}
+                      className="stroke-border"
+                      strokeWidth={1.2}
+                    />
+                  );
+                })}
 
               {layout.tray && (
                 <g
@@ -1520,7 +1529,7 @@ function ChainGraph({
               )}
               {layout.mode !== "one" && (
                 <path
-                  d={`M${layout.tools.x},${layout.tools.y + 24} H${layout.center.x + layout.center.w + 35} V${layout.modelRow.y + 17} H${layout.center.x + layout.center.w}`}
+                  d={`M${layout.tools.x},${layout.tools.y + 24} H${Math.min(layout.center.x + layout.center.w + 35, layout.w - 6)} V${layout.modelRow.y + 17} H${layout.center.x + layout.center.w}`}
                   className="fill-none stroke-sky-500"
                   strokeWidth={1.2}
                   opacity={0.55}
@@ -1529,9 +1538,9 @@ function ChainGraph({
               )}
               {layout.mode !== "one" && chain.mcp.length > 0 && (
                 <line
-                  x1={layout.center.x + layout.center.w + 35}
+                  x1={Math.min(layout.center.x + layout.center.w + 35, layout.w - 6)}
                   y1={layout.mcp.y + 18}
-                  x2={layout.center.x + layout.center.w + 35}
+                  x2={Math.min(layout.center.x + layout.center.w + 35, layout.w - 6)}
                   y2={layout.tools.y + layout.tools.h}
                   className="stroke-sky-500"
                   strokeWidth={1}
@@ -1540,7 +1549,7 @@ function ChainGraph({
               )}
               {layout.mode !== "one" && layout.runtimeRow && (
                 <path
-                  d={`M${layout.center.x + layout.center.w},${layout.runtimeRow.y + layout.runtimeRow.h / 2} H${layout.center.x + layout.center.w + 35} V${layout.modelRow.y + 12} H${layout.center.x + layout.center.w}`}
+                  d={`M${layout.center.x + layout.center.w},${layout.runtimeRow.y + layout.runtimeRow.h / 2} H${Math.min(layout.center.x + layout.center.w + 35, layout.w - 6)} V${layout.modelRow.y + 12} H${layout.center.x + layout.center.w}`}
                   className="fill-none stroke-muted-foreground"
                   strokeDasharray="1 3"
                   strokeWidth={1.1}
@@ -1550,7 +1559,7 @@ function ChainGraph({
               )}
               {layout.mode !== "one" && layout.deferredRow && (
                 <path
-                  d={`M${layout.center.x + layout.center.w},${layout.deferredRow.y + layout.deferredRow.h / 2} H${layout.center.x + layout.center.w + 35} V${layout.modelRow.y + 40} H${layout.center.x + layout.center.w}`}
+                  d={`M${layout.center.x + layout.center.w},${layout.deferredRow.y + layout.deferredRow.h / 2} H${Math.min(layout.center.x + layout.center.w + 35, layout.w - 6)} V${layout.modelRow.y + 40} H${layout.center.x + layout.center.w}`}
                   className="fill-none stroke-muted-foreground"
                   strokeDasharray="1 3"
                   strokeWidth={1.1}
@@ -1570,7 +1579,7 @@ function ChainGraph({
               {layout.profileRow && (
                 <g>
                   <rect
-                    x={layout.trunkX - 50}
+                    x={layout.mode === "one" ? layout.center.x : layout.trunkX - 50}
                     y={layout.profileRow.y - 26}
                     width={100}
                     height={16}
@@ -1579,7 +1588,7 @@ function ChainGraph({
                     strokeDasharray={layout.profileRow.present ? undefined : "3 2"}
                   />
                   <text
-                    x={layout.trunkX}
+                    x={layout.mode === "one" ? layout.center.x + 50 : layout.trunkX}
                     y={layout.profileRow.y - 15}
                     textAnchor="middle"
                     className={cn("text-[8px]", layout.profileRow.present ? "fill-fuchsia-600 dark:fill-fuchsia-400" : "fill-destructive")}
@@ -1590,15 +1599,15 @@ function ChainGraph({
               )}
               {layout.runtimeRow && (
                 <g>
-                  <rect x={layout.trunkX - 48} y={layout.runtimeRow.y - 26} width={96} height={16} rx={8} className="fill-card stroke-border" />
-                  <text x={layout.trunkX} y={layout.runtimeRow.y - 15} textAnchor="middle" className="fill-muted-foreground text-[8px]">
+                  <rect x={layout.mode === "one" ? layout.center.x : layout.trunkX - 48} y={layout.runtimeRow.y - 26} width={96} height={16} rx={8} className="fill-card stroke-border" />
+                  <text x={layout.mode === "one" ? layout.center.x + 48 : layout.trunkX} y={layout.runtimeRow.y - 15} textAnchor="middle" className="fill-muted-foreground text-[8px]">
                     运行时注入
                   </text>
                 </g>
               )}
               <g>
-                <rect x={layout.trunkX - 64} y={layout.modelRow.y - 26} width={128} height={16} rx={8} className="fill-card stroke-border" />
-                <text x={layout.trunkX} y={layout.modelRow.y - 15} textAnchor="middle" className="fill-muted-foreground text-[8px]">
+                <rect x={layout.mode === "one" ? layout.center.x : layout.trunkX - 64} y={layout.modelRow.y - 26} width={128} height={16} rx={8} className="fill-card stroke-border" />
+                <text x={layout.mode === "one" ? layout.center.x + 64 : layout.trunkX} y={layout.modelRow.y - 15} textAnchor="middle" className="fill-muted-foreground text-[8px]">
                   第二 system（按需）
                 </text>
               </g>
@@ -1669,8 +1678,9 @@ function RowNode({
       : 0;
   // 文案按当前行宽裁切，不再用「18 个字」这类与容器无关的魔法数。
   const charsW = chars ? Math.max(26, measureText(chars, { px: 8, mono: true }) + 8) : 0;
-  const title = fitText(row.title, row.w - 20 - charsW, { px: 11 }, measureText);
-  const sub = fitText(row.sub, Math.max(60, row.w * 0.55), { px: 8 }, measureText);
+  const sub = fitText(row.sub, Math.max(60, row.w * 0.5), { px: 8 }, measureText);
+  const subW = Math.min(measureText(sub, { px: 8 }), row.w * 0.5);
+  const title = fitText(row.title, Math.max(40, row.w - 20 - charsW - subW - 8), { px: 11 }, measureText);
   return (
     <g
       role="button"

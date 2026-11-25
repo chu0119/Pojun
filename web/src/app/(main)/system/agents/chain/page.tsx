@@ -38,12 +38,11 @@ function useFillHeight(ref: React.RefObject<HTMLElement | null>) {
       raf = requestAnimationFrame(read);
     };
     read();
+    // 只跟随视口尺寸；不要监听 scroll——rect.top 随滚动变化会让外壳高度单调增长。
     window.addEventListener("resize", schedule);
-    window.addEventListener("scroll", schedule, { passive: true });
     return () => {
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", schedule);
-      window.removeEventListener("scroll", schedule);
     };
   }, [ref]);
   return height;
