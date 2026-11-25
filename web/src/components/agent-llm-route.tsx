@@ -34,6 +34,7 @@ const SOURCE_LABEL: Record<string, string> = {
 };
 const CHAIN_STATUS_LABEL: Record<string, string> = {
   ready: "就绪",
+  quota_exhausted: "额度耗尽",
   exhausted: "已耗尽",
   skipped: "已跳过",
   invalid: "配置无效",
@@ -463,7 +464,16 @@ export function AgentLLMRoutePanel({ agentKey, active }: { agentKey: string; act
                       taskId: taskId || undefined,
                       before: route.history.earliest_cursor,
                     });
-                    setRoute({ ...route, history: { ...more.history, items: [...more.history.items, ...route.history.items] } });
+                    setRoute((cur) => {
+                      // 期间用户可能已切换 Agent / 任务：此时丢弃这次分页结果，
+                      // 避免把旧 Agent 的历史拼到新视图上（闭包里的 route 可能已过期）。
+                      if (!cur || cur.agent.key !== agentKey) return cur;
+                      if ((cur.task?.id ?? 0) !== (more.task?.id ?? 0)) return cur;
+                      return {
+                        ...cur,
+                        history: { ...more.history, items: [...more.history.items, ...cur.history.items] },
+                      };
+                    });
                   } catch (e) {
                     toast.error(`加载更早记录失败：${(e as Error).message}`);
                   }

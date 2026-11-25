@@ -102,14 +102,23 @@ test("两列模式：工具与 MCP 落到主干下方，不与左轨并排挤压
 });
 
 test("硬边界落在代码硬尾所在行之前，并横跨主干区", () => {
-  const g = lay(1280);
+  // 默认行里没有 "code"，必须显式构造，否则断言会被整体跳过而空转。
+  const g = lay(1280, {
+    rows: [
+      { id: "body", h: 44, title: "提示词正文", sub: "DB 模板", tag: "正文", chars: 3000 },
+      { id: "code", h: 52, gapBefore: 40, title: "代码硬尾", sub: "代码固定", tag: "硬尾", chars: 900 },
+      { id: "host", h: 36, gapBefore: 24, title: "本机工具", sub: "宿主注入", tag: "工具", chars: 640 },
+    ],
+  });
   const code = g.byId.get("code");
-  if (code) {
-    assert.ok(g.boundary);
-    assert.equal(g.boundary.y, code.y - 20);
-    assert.ok(g.boundary.x1 < g.center.x);
-    assert.ok(g.boundary.x2 > g.center.x + g.center.w);
-  }
+  assert.ok(code, "测试需要 code 行，否则该用例没有意义");
+  assert.ok(g.boundary, "存在 code 行时必须产出 boundary");
+  assert.equal(g.boundary.y, code.y - 20);
+  assert.ok(g.boundary.x1 < g.center.x, "boundary 应从主干左侧起");
+  assert.ok(g.boundary.x2 > g.center.x + g.center.w, "boundary 应越过主干右侧");
+  assert.ok(g.boundary.x1 >= 0 && g.boundary.x2 <= g.w, "boundary 不得越出画布");
+  // 无 code 行时不应产出边界。
+  assert.equal(lay(1280).boundary, null);
 });
 
 test("画布高度覆盖所有块", () => {

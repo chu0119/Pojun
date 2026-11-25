@@ -695,7 +695,8 @@ function SituationStrip({
   const mcpFailed = activeMCP.filter((m) => m.health === "failed").length;
   const mcpNever = activeMCP.filter((m) => m.health === "never_checked").length;
   const mcpStale = activeMCP.filter((m) => m.cache_stale).length;
-  const runtimeCount = chain.segments.filter((s) => !s.available).length;
+  // 图表把 deferred_tools 排除在主干之外（按需第二 system），计数口径要一致。
+  const runtimeCount = chain.segments.filter((s) => !s.available && s.kind !== "deferred_tools").length;
   const overlayValue = llm.prompt_active
     ? `${modeLabel(llm.prompt_mode)} · ${llm.prompt_chars}c · 生效`
     : llm.prompt_mode
@@ -732,7 +733,9 @@ function SituationStrip({
         <SituationUnit label="SCALE" value={`${chain.totals.segments} 段 · ${fmt(chain.totals.chars)}c · ≈${fmt(chain.totals.est_tokens)} tok`} onClick={() => onOpen({ kind: "model" })} />
         <SituationUnit
           label="INTEGRITY"
-          value={`${chain.warnings.length} 告警 · ${excluded} 排除 · MCP ${mcpOk}/${activeMCP.length} 正常`}
+          value={`${chain.warnings.length} 告警 · ${excluded} 排除 · ${
+            activeMCP.length > 0 ? `MCP ${mcpOk}/${activeMCP.length} 正常` : "未绑定 MCP"
+          }`}
           onClick={() => onOpen({ kind: "excluded" })}
         />
         <SituationUnit
@@ -872,6 +875,13 @@ export function AgentPromptChain({
   React.useEffect(() => {
     if (active) void load();
   }, [active, load, reloadKey]);
+
+  // 切换 Agent / profile 预设时先清掉旧图：否则加载期间会短暂显示上一个 Agent 的装配链
+  // （以及它的 PROFILE/OVERLAY 指标），看起来像是切换没生效。
+  React.useEffect(() => {
+    setChain(null);
+    setPath([]);
+  }, [agentKey, profileId]);
 
   const copyText = React.useCallback(async (text: string, what: string) => {
     if (!text) {
@@ -1089,8 +1099,11 @@ function MiniMap({
   const PAD = 8; // 画布 p-2
   const vx = ((view.left + PAD) / zoom) * sx;
   const vy = ((view.top + PAD) / zoom) * sy;
-  const vw = Math.min(mw, ((view.w - PAD * 2) / zoom) * sx);
-  const vh = Math.min(mh, ((view.h - PAD * 2) / zoom) * sy);
+  // 视口尚未测量时（view.w/h 为 0）内容宽会算成负值，SVG 会报 “negative value is not valid”，
+  // 因此先夹到 [0, mw] 并跳过该帧的视口框。
+  const ready = view.w > 0 && view.h > 0;
+  const vw = Math.max(0, Math.min(mw, ((view.w - PAD * 2) / zoom) * sx));
+  const vh = Math.max(0, Math.min(mh, ((view.h - PAD * 2) / zoom) * sy));
   return (
     <div
       className="pointer-events-none absolute bottom-2 z-10 hidden rounded-md border bg-background/90 p-1 shadow-sm backdrop-blur md:block"
@@ -1107,7 +1120,11 @@ function MiniMap({
         onKeyDown={(e) => {
           if (e.key !== "Enter" && e.key !== " ") return;
           e.preventDefault();
-          onJump(view.left, view.top);
+          // 键盘激活没有坐标：跳到整图中心，而不是原样重设当前位置（那是无效操作）。
+          onJump(
+            Math.max(0, (layout.w * zoom) / 2 - view.w / 2),
+            Math.max(0, (layout.height * zoom) / 2 - view.h / 2),
+          );
         }}
         onClick={(e) => {
           const rect = e.currentTarget.getBoundingClientRect();
@@ -1129,7 +1146,9 @@ function MiniMap({
             className={b.className}
           />
         ))}
-        <rect x={vx} y={vy} width={vw} height={vh} className="fill-foreground/10 stroke-foreground" strokeWidth={1} />
+        {ready && (
+          <rect x={vx} y={vy} width={vw} height={vh} className="fill-foreground/10 stroke-foreground" strokeWidth={1} />
+        )}
       </svg>
     </div>
   );
@@ -1253,9 +1272,7 @@ function ChainGraph({
   }, [path.length, open]);
 
   React.useEffect(() => {
-    if (!open) {
-      canvasRef.current?.scrollTo({ left: 0, top: 0 });
-    }
+    // 关闭面板时不强制回到左上角：用户可能正对着图上的某段做对照，滚动位置属于他的上下文。
     if (!open || !anchor) return;
     const raf = requestAnimationFrame(() => {
       const canvas = canvasRef.current;
@@ -1291,6 +1308,21 @@ function ChainGraph({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onBack]);
+
+  // 关闭详情后把焦点还给刚点过的图上节点：键盘用户不至于掉回 body、再从头 Tab 一遍。
+  const lastAnchorRef = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (anchor) lastAnchorRef.current = anchor;
+  }, [anchor]);
+  React.useEffect(() => {
+    if (open) return;
+    const a = lastAnchorRef.current;
+    if (!a) return;
+    const raf = requestAnimationFrame(() => {
+      canvasRef.current?.querySelector<SVGElement>(`[data-anchor="${a}"]`)?.focus();
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [open]);
 
   const dimmed = (id: string) => !!anchor && anchor !== id;
 
@@ -1434,7 +1466,7 @@ function ChainGraph({
                   tabIndex={0}
                   aria-label="被替换的提示词正文"
                   data-anchor="body"
-                  className={cn("cursor-pointer outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground", dimmed("body") && "opacity-40")}
+                  className={cn("cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground", dimmed("body") && "opacity-40")}
                   onClick={() => onOpen({ kind: "segment", key: chain.segments.find((s) => s.kind === "body")?.key ?? "body" }, "body")}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {
@@ -1523,7 +1555,7 @@ function ChainGraph({
 
               {layout.mode !== "one" && layout.profileRow && (
                 <path
-                  d={`M${layout.llm.x + layout.llm.w},${layout.llm.y + 64} H${layout.center.x - 50} V${layout.profileRow.y - 18}`}
+                  d={`M${layout.llm.x + layout.llm.w},${layout.llm.y + 64} H${layout.mode === "wide" ? layout.center.x - 50 : layout.center.x - 10} V${layout.profileRow.y - 18}`}
                   className={cn("fill-none", layout.profileRow.present ? "stroke-fuchsia-500" : "stroke-destructive")}
                   strokeWidth={1.6}
                   strokeDasharray={layout.profileRow.present ? undefined : "4 3"}
@@ -1532,7 +1564,7 @@ function ChainGraph({
               )}
               {layout.mode !== "one" && layout.byId.get("skill") && (
                 <path
-                  d={`M${layout.skills.x + layout.skills.w},${layout.skills.y + 22} H${layout.center.x - 40} V${layout.byId.get("skill")!.y + layout.byId.get("skill")!.h / 2} H${layout.center.x}`}
+                  d={`M${layout.skills.x + layout.skills.w},${layout.skills.y + 22} H${layout.mode === "wide" ? layout.center.x - 40 : layout.center.x - 10} V${layout.byId.get("skill")!.y + layout.byId.get("skill")!.h / 2} H${layout.center.x}`}
                   className="fill-none stroke-emerald-500"
                   strokeWidth={1.2}
                   opacity={0.6}
@@ -1591,7 +1623,7 @@ function ChainGraph({
               {layout.profileRow && (
                 <g>
                   <rect
-                    x={layout.mode === "one" ? layout.center.x : layout.trunkX - 50}
+                    x={layout.mode === "wide" ? layout.trunkX - 50 : layout.center.x}
                     y={layout.profileRow.y - 26}
                     width={100}
                     height={16}
@@ -1600,7 +1632,7 @@ function ChainGraph({
                     strokeDasharray={layout.profileRow.present ? undefined : "3 2"}
                   />
                   <text
-                    x={layout.mode === "one" ? layout.center.x + 50 : layout.trunkX}
+                    x={layout.mode === "wide" ? layout.trunkX : layout.center.x + 50}
                     y={layout.profileRow.y - 15}
                     textAnchor="middle"
                     className={cn("text-[8px]", layout.profileRow.present ? "fill-fuchsia-600 dark:fill-fuchsia-400" : "fill-destructive")}
@@ -1611,15 +1643,15 @@ function ChainGraph({
               )}
               {layout.runtimeRow && (
                 <g>
-                  <rect x={layout.mode === "one" ? layout.center.x : layout.trunkX - 48} y={layout.runtimeRow.y - 26} width={96} height={16} rx={8} className="fill-card stroke-border" />
-                  <text x={layout.mode === "one" ? layout.center.x + 48 : layout.trunkX} y={layout.runtimeRow.y - 15} textAnchor="middle" className="fill-muted-foreground text-[8px]">
+                  <rect x={layout.mode === "wide" ? layout.trunkX - 48 : layout.center.x} y={layout.runtimeRow.y - 26} width={96} height={16} rx={8} className="fill-card stroke-border" />
+                  <text x={layout.mode === "wide" ? layout.trunkX : layout.center.x + 48} y={layout.runtimeRow.y - 15} textAnchor="middle" className="fill-muted-foreground text-[8px]">
                     运行时注入
                   </text>
                 </g>
               )}
               <g>
-                <rect x={layout.mode === "one" ? layout.center.x : layout.trunkX - 64} y={layout.modelRow.y - 26} width={128} height={16} rx={8} className="fill-card stroke-border" />
-                <text x={layout.mode === "one" ? layout.center.x + 64 : layout.trunkX} y={layout.modelRow.y - 15} textAnchor="middle" className="fill-muted-foreground text-[8px]">
+                <rect x={layout.mode === "wide" ? layout.trunkX - 64 : layout.center.x} y={layout.modelRow.y - 26} width={128} height={16} rx={8} className="fill-card stroke-border" />
+                <text x={layout.mode === "wide" ? layout.trunkX : layout.center.x + 64} y={layout.modelRow.y - 15} textAnchor="middle" className="fill-muted-foreground text-[8px]">
                   第二 system（按需）
                 </text>
               </g>
@@ -1699,7 +1731,7 @@ function RowNode({
       tabIndex={0}
       data-anchor={row.id}
       aria-label={`${row.title}，${row.chars === null ? "" : row.unknown ? "运行时未采集" : row.present ? `${row.chars} 字符` : "未生效"}`}
-      className={cn("cursor-pointer outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground", phase === "future" && "opacity-50", phase === "past" && "opacity-90", phase === "related" && "opacity-75")}
+      className={cn("cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground", phase === "future" && "opacity-50", phase === "past" && "opacity-90", phase === "related" && "opacity-75")}
       onClick={onOpen}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -1809,7 +1841,7 @@ function LLMRail({
       tabIndex={0}
       data-anchor="llm"
       aria-label="LLM 配置解析"
-      className={cn("cursor-pointer outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground", dimmed && "opacity-40")}
+      className={cn("cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground", dimmed && "opacity-40")}
       onClick={onOpen}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -1867,7 +1899,7 @@ function SkillsRail({
       tabIndex={0}
       data-anchor="skills"
       aria-label="Skill 绑定"
-      className={cn("cursor-pointer outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground", dimmed && "opacity-40")}
+      className={cn("cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground", dimmed && "opacity-40")}
       onClick={onOpen}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -1917,7 +1949,7 @@ function ToolsRail({
       tabIndex={0}
       data-anchor="tools"
       aria-label="工具 schema"
-      className={cn("cursor-pointer outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground", dimmed && "opacity-40")}
+      className={cn("cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground", dimmed && "opacity-40")}
       onClick={onOpen}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -2000,7 +2032,7 @@ function MCPRail({
             tabIndex={0}
             data-anchor={id}
             aria-label={`MCP ${m.name}，${healthLabel(m.health)}`}
-            className={cn("cursor-pointer outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground", dimmed(id) && "opacity-40")}
+            className={cn("cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground", dimmed(id) && "opacity-40")}
             onClick={() => onOpen({ kind: "mcp", id: m.id }, id)}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {
@@ -2048,7 +2080,7 @@ function Quarantine({
       tabIndex={0}
       data-anchor="excluded"
       aria-label="未进入主干的项"
-      className={cn("cursor-pointer outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground", dimmed && "opacity-40")}
+      className={cn("cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground", dimmed && "opacity-40")}
       onClick={onOpen}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -2080,16 +2112,34 @@ type Stage = { id: string; label: string; target: Target; offTrunk?: boolean };
 function stageTargets(chain: AgentPromptChainData): Stage[] {
   const find = (kind: string) => chain.segments.find((s) => s.kind === kind);
   const out: Stage[] = [];
+  const mode = chain.llm.prompt_mode;
   const profile = find("profile_prompt");
-  if (profile && chain.llm.prompt_mode) {
-    out.push({ id: "profile", label: "独立提示词", target: { kind: "segment", key: profile.key } });
-  }
+  const pushProfile = () => {
+    if (profile && mode) {
+      out.push({ id: "profile", label: "独立提示词", target: { kind: "segment", key: profile.key } });
+    }
+  };
   const body = find("body");
-  if (body && chain.llm.prompt_mode !== "replace") {
-    out.push({ id: "body", label: "正文", target: { kind: "segment", key: body.key } });
-  }
+  const pushBody = () => {
+    if (body && mode !== "replace") {
+      out.push({ id: "body", label: "正文", target: { kind: "segment", key: body.key } });
+    }
+  };
   const skill = find("skill_index");
-  if (skill) out.push({ id: "skill", label: "技能速查", target: { kind: "segment", key: skill.key } });
+  const pushSkill = () => {
+    if (skill) out.push({ id: "skill", label: "技能速查", target: { kind: "segment", key: skill.key } });
+  };
+  // 与 agent/prompt.go 的装配顺序一致：prepend = P + body + skills；
+  // append = body + skills + P；replace = P +（正文缺席）+ skills。
+  if (mode === "prepend" || mode === "replace") {
+    pushProfile();
+    pushBody();
+    pushSkill();
+  } else {
+    pushBody();
+    pushSkill();
+    if (mode === "append") pushProfile();
+  }
   if (chain.segments.some((s) => s.kind === "code_tail")) {
     const gated = chain.segments.some((s) => s.kind === "code_tail" && !s.present);
     out.push({ id: "code", label: gated ? "代码硬尾/门控" : "代码硬尾", target: { kind: "code" } });
@@ -2141,12 +2191,18 @@ function activeStage(chain: AgentPromptChainData, target: Target): string {
           return "skill";
         case "host":
           return "host";
+        case "runtime":
+          return "runtime";
+        case "deferred_tools":
+          return "deferred";
+        case "code_tail":
+          return "code";
         default:
-          return "agent";
+          return "";
       }
     }
     default:
-      return "agent";
+      return "";
   }
 }
 
@@ -2166,7 +2222,8 @@ function FocusStages({
   return (
     <div className="mb-3 rounded-md border bg-muted/20 p-2">
       <div className="mb-1.5 font-mono text-[9px] text-muted-foreground uppercase tracking-[0.12em]">
-        全链路态势 · 第 {activeIdx + 1} / {stages.length} 段
+        全链路态势
+        {activeIdx >= 0 ? ` · 第 ${activeIdx + 1} / ${stages.length} 段` : " · 未进入主干（隔离架 / 未使用）"}
       </div>
       <div className="flex flex-wrap items-center gap-1">
         {stages.map((stage, i) => {
@@ -2259,6 +2316,12 @@ function ConfigActions({
 
   const savePrompt = async () => {
     if (!profile) return;
+    // 服务端规则：文本非空而 mode 为空时会强制回落到 prepend（prompt_mode 归一化）。
+    // 前端必须先拦住，避免用户以为“停用”却变成了“正文最前注入”。
+    if (!mode && prompt.trim()) {
+      toast.error("「不注入」需要先清空提示词；非空文本请选择 prepend / append / replace");
+      return;
+    }
     setBusy(true);
     try {
       await api.saveLLMProfile({
@@ -2311,10 +2374,11 @@ function ConfigActions({
 
       {isPromptSurface && pid > 0 && (
         <div className="mb-2">
-          <label className="mb-1 block text-[10px] text-muted-foreground">
+          <label htmlFor="chain-effort-override" className="mb-1 block text-[10px] text-muted-foreground">
             思考强度覆盖（{chain.agent_key} × 本配置）
           </label>
           <select
+            id="chain-effort-override"
             className="w-full rounded border bg-background px-1.5 py-1 text-xs"
             value={fromStore(chain.llm.effort_source === "override" ? (chain.llm.effort ?? "") : "")}
             disabled={busy}
@@ -2363,7 +2427,9 @@ function ConfigActions({
                 value={mode}
                 onChange={(e) => setMode(e.target.value)}
               >
-                <option value="">不注入</option>
+                <option value="" disabled={prompt.trim().length > 0}>
+                  不注入{prompt.trim().length > 0 ? "（需先清空正文）" : ""}
+                </option>
                 <option value="prepend">prepend（正文最前）</option>
                 <option value="append">append（硬尾之前）</option>
                 <option value="replace">replace（替换正文）</option>
