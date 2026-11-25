@@ -7,7 +7,7 @@ export const hostenvStatus: HostenvStatus = {
   installer: {
     available: true,
     reason: "",
-    version: "0.4.121",
+    version: "0.4.122",
     socket: "/run/pojun-hostd.sock",
     proxy: "",
     sources: { apt: "tuna", pypi: "tuna" },

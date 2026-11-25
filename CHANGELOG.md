@@ -2,7 +2,7 @@
 
 本项目的重要变更记录在此文件中，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
-## [Unreleased]
+## [0.4.122] - 2026-11-26
 ### 修复：终态经验落库 UTF-8 截断（#75）
 
 - `buildReflectionLesson` / `shortReflectionReason` / `firstLineText` 原先按字节
