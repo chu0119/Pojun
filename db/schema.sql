@@ -1762,3 +1762,20 @@ CREATE TABLE IF NOT EXISTS credential_access_log (
     at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_credential_audit ON credential_access_log(credential_id, at DESC);
+
+-- ============================================================================
+-- Agent × LLM 配置的 reasoning effort 覆盖（v0.4.121）
+-- effort 原本只属于 llm_profiles.reasoning_effort：同一个 Agent 想换个强度就得
+-- 复制整份配置。本表把「强度」从「配置」里解耦，(agent_key, profile_id) 命中时
+-- 优先于该配置自身的 reasoning_effort；空值不落库（清除覆盖 = 删除该行）。
+-- 只影响请求参数，不改变模型选择、故障转移与配额；故障转移到另一配置时按
+-- (该 Agent, 目标配置) 重新解析，不沿用上一配置的覆盖。
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS agent_profile_effort_overrides (
+    agent_key        TEXT NOT NULL REFERENCES agents(key) ON DELETE CASCADE,
+    profile_id       BIGINT NOT NULL REFERENCES llm_profiles(id) ON DELETE CASCADE,
+    reasoning_effort TEXT NOT NULL,
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (agent_key, profile_id)
+);
+CREATE INDEX IF NOT EXISTS idx_apeo_profile ON agent_profile_effort_overrides(profile_id);
