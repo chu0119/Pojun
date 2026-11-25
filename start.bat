@@ -1,54 +1,166 @@
 @echo off
-rem 控制台切 UTF-8，否则本文件里的中文在 GBK 终端下是乱码。
-chcp 65001 >nul 2>&1
-rem ARTEX 守护启动脚本（Windows）
+rem Pojun - Windows launcher (Docker Desktop / WSL2 backend)
 rem
-rem 用法：
-rem   start.bat                  前台运行（Ctrl-C 停止）
-rem   start.bat -addr :9000      额外参数原样透传给 artex
+rem Usage (double-click or command line):
+rem   start.bat            start containers and open the console
+rem   start.bat status     show container status
+rem   start.bat logs       follow logs (Ctrl-C to exit)
+rem   start.bat stop       stop containers
+rem   start.bat restart    restart containers
 rem
-rem 它只做一件事：把 artex.exe 跑起来，进程退出后按退出码决定要不要再拉起。
-rem
-rem   0      用户正常停止     -> 退出循环
-rem   75     程序请求重启     -> 立刻重跑（页面点了"一键更新"或"回滚"）
-rem   其他   崩溃             -> 退避后重跑（1->2->4…最多 60 秒）
-rem
-rem 下载、SHA256 校验、换装都不在这里，全部由 artex 自己在启动时完成
-rem （selfupdate 包）。脚本保持傻瓜化，详见 start.sh 顶部的说明。
+rem This script does not download or build anything: it only calls Docker
+rem Compose to run the prebuilt image. Native Windows exe is not supported
+rem (hostd / apt toolchain / systemd are Linux-only).
 
-setlocal enabledelayedexpansion
+setlocal EnableExtensions EnableDelayedExpansion
+chcp 65001 >nul 2>&1
 cd /d "%~dp0"
 
-set "BIN=artex.exe"
-if not exist "%BIN%" (
-	echo [artex] 找不到可执行文件 %BIN% 1>&2
+set "COMPOSE=docker compose -f docker-compose.yml -f docker-compose.windows.yml"
+set "URL=http://127.0.0.1:8787"
+
+if /i "%~1"=="stop" goto :stop
+if /i "%~1"=="logs" goto :logs
+if /i "%~1"=="status" goto :status
+if /i "%~1"=="restart" goto :restart
+if /i "%~1"=="help" goto :help
+if /i "%~1"=="--help" goto :help
+
+:start
+call :ensure_docker
+if errorlevel 1 exit /b 1
+call :ensure_env
+if errorlevel 1 exit /b 1
+
+echo [Pojun] Starting containers (first run may pull the image)...
+%COMPOSE% up -d
+if errorlevel 1 goto :compose_failed
+
+call :wait_health
+if errorlevel 1 (
+	echo [Pojun] Health check timed out. Check logs with:
+	echo   start.bat logs
+	pause
 	exit /b 1
 )
 
-set "RESTART_CODE=75"
-set "MAX_DELAY=60"
-set /a delay=1
+echo [Pojun] Console: %URL%
+start "" "%URL%"
+echo [Pojun] Started. "start.bat logs" follows logs; "start.bat stop" stops containers.
+pause
+exit /b 0
 
-:loop
-"%BIN%" %*
-set "code=!ERRORLEVEL!"
+:stop
+call :ensure_docker
+if errorlevel 1 exit /b 1
+%COMPOSE% down
+if errorlevel 1 goto :compose_failed
+echo [Pojun] Stopped.
+pause
+exit /b 0
 
-if "!code!"=="0" (
-	echo [artex] 正常退出
-	exit /b 0
+:logs
+call :ensure_docker
+if errorlevel 1 exit /b 1
+%COMPOSE% logs -f --tail=100
+pause
+exit /b 0
+
+:status
+call :ensure_docker
+if errorlevel 1 exit /b 1
+%COMPOSE% ps
+pause
+exit /b 0
+
+:restart
+call :ensure_docker
+if errorlevel 1 exit /b 1
+%COMPOSE% down
+if errorlevel 1 goto :compose_failed
+goto :start
+
+:compose_failed
+echo [Pojun] Docker Compose command failed. See the output above.
+pause
+exit /b 1
+
+:help
+echo Usage:
+echo   start.bat            start containers and open %URL%
+echo   start.bat status     show container status
+echo   start.bat logs       follow logs
+echo   start.bat stop       stop containers
+echo   start.bat restart    restart containers
+echo.
+echo Requirements: Docker Desktop installed with the WSL2 backend.
+echo On first run .env.example is copied to .env with a random DB password.
+pause
+exit /b 0
+
+rem ---------------------------------------------------------------------------
+rem Make sure the Docker CLI exists and the Docker Desktop engine is ready.
+rem If Desktop is not running, try the standard install path and wait ~2 min.
+rem ---------------------------------------------------------------------------
+:ensure_docker
+where docker >nul 2>&1
+if errorlevel 1 (
+	echo [Pojun] Docker CLI not found. Install Docker Desktop:
+	echo   https://www.docker.com/products/docker-desktop/
+	exit /b 1
 )
+docker info >nul 2>&1
+if not errorlevel 1 exit /b 0
 
-if "!code!"=="%RESTART_CODE%" (
-	rem 更新/回滚已就绪：重跑后 artex 会在启动时完成换装。
-	echo [artex] 请求重启（应用新版本）…
-	set /a delay=1
-	goto loop
+echo [Pojun] Docker Desktop is not running; trying to start it...
+if exist "%ProgramFiles%\Docker\Docker\Docker Desktop.exe" (
+	start "" "%ProgramFiles%\Docker\Docker\Docker Desktop.exe"
+) else if exist "%ProgramFiles(x86)%\Docker\Docker\Docker Desktop.exe" (
+	start "" "%ProgramFiles(x86)%\Docker\Docker\Docker Desktop.exe"
+) else (
+	echo [Pojun] Docker Desktop executable not found. Start Docker Desktop manually.
+	exit /b 1
 )
+for /l %%i in (1,1,60) do (
+	docker info >nul 2>&1
+	if not errorlevel 1 exit /b 0
+	ping -n 3 127.0.0.1 >nul
+)
+echo [Pojun] Docker Desktop did not become ready in time.
+echo [Pojun] Start it manually, then re-run this script.
+exit /b 1
 
-echo [artex] 异常退出 ^(code=!code!^)，!delay!s 后重启 1>&2
-rem timeout 在被重定向的控制台里会失败，用 ping 兜底（延时 N 秒需要 N+1 次）。
-set /a pings=!delay!+1
-ping -n !pings! 127.0.0.1 >nul 2>&1
-set /a delay=!delay!*2
-if !delay! gtr %MAX_DELAY% set /a delay=%MAX_DELAY%
-goto loop
+rem ---------------------------------------------------------------------------
+rem First run: copy .env.example to .env and replace the placeholder DB password
+rem with a random value. Never overwrite an existing .env.
+rem ---------------------------------------------------------------------------
+:ensure_env
+if exist ".env" exit /b 0
+if not exist ".env.example" (
+	echo [Pojun] .env.example not found. Are you in the repository root?
+	exit /b 1
+)
+copy /y ".env.example" ".env" >nul
+if errorlevel 1 (
+	echo [Pojun] Failed to create .env.
+	exit /b 1
+)
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$p=(Resolve-Path '.env').Path; $s=Get-Content -Raw -LiteralPath $p; $pw=([guid]::NewGuid().ToString('N')+[guid]::NewGuid().ToString('N')).Substring(0,32); $s=$s -replace 'POSTGRES_PASSWORD=change-me-please',('POSTGRES_PASSWORD='+$pw); [IO.File]::WriteAllText($p,$s,(New-Object Text.UTF8Encoding($false)))"
+if errorlevel 1 (
+	echo [Pojun] Failed to generate .env. Edit .env and set POSTGRES_PASSWORD manually.
+	exit /b 1
+)
+echo [Pojun] Created .env with a generated database password.
+echo [Pojun] Edit .env if you want to set LLM keys or change ports.
+exit /b 0
+
+rem ---------------------------------------------------------------------------
+rem Wait up to ~2 minutes for /api/health to return 200.
+rem ---------------------------------------------------------------------------
+:wait_health
+for /l %%i in (1,1,60) do (
+	powershell -NoProfile -Command "try { $r=Invoke-WebRequest -UseBasicParsing -Uri '%URL%/api/health' -TimeoutSec 2; if($r.StatusCode -eq 200){exit 0} } catch {}; exit 1" >nul 2>&1
+	if not errorlevel 1 exit /b 0
+	ping -n 3 127.0.0.1 >nul
+)
+exit /b 1
