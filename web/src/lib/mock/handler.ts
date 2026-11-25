@@ -2415,7 +2415,13 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
   if (path === "/llm/test")
     return { ok: true, latency_ms: 128, model: String(b.model ?? "claude-opus-4-8"), reply: "OK" };
   if (path === "/llm/profiles" && m === "GET") return { profiles: D.llmProfiles };
-  if (path === "/llm/profiles" && m === "POST") return { id: Number(b.id) || 3 };
+  if (path === "/llm/profiles" && m === "POST") {
+    const pid = Number(b.id) || 0;
+    if (pid > 0) {
+      setMockProfilePrompt(pid, String(b.prompt ?? ""), String(b.prompt_mode ?? ""), Boolean(b.prompt_apply_inherited));
+    }
+    return { id: pid || 3 };
+  }
   if (path === "/llm/profiles/active") return { ok: true };
   if (path === "/llm/pool" && m === "GET") return D.llmPool;
   if (path === "/llm/pool/reset")
@@ -2473,13 +2479,6 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
     if (m === "PUT") setMockEffortOverride(seg[1], pid, String(b.reasoning_effort ?? ""));
     if (m === "DELETE") setMockEffortOverride(seg[1], pid, "");
     return {};
-  }
-  if (path === "/llm/profiles" && m === "POST") {
-    const pid = Number(b.id) || 0;
-    if (pid > 0) {
-      setMockProfilePrompt(pid, String(b.prompt ?? ""), String(b.prompt_mode ?? ""), Boolean(b.prompt_apply_inherited));
-    }
-    return { id: pid || 4 };
   }
   if (seg[0] === "agents" && seg[2] === "llm-effort-overrides") return {}; // 其余方法：演示模式不落库
 

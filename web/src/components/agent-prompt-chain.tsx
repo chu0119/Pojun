@@ -851,9 +851,13 @@ export function AgentPromptChain({
       }
     } catch (e) {
       if (reqRef.current === seq) {
-        setChain(null);
-        if (!keepPath) setPath([]);
-        setError((e as Error).message);
+        if (keepPath) {
+          toast.error(`刷新装配链失败：${(e as Error).message}`);
+        } else {
+          setChain(null);
+          setPath([]);
+          setError((e as Error).message);
+        }
       }
     } finally {
       if (reqRef.current === seq) setLoading(false);
@@ -959,8 +963,8 @@ export function AgentPromptChain({
   }
 
   return (
-    <div className="grid gap-3">
-      <Card>
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
+      <Card className="shrink-0">
         <CardHeader className="pb-2">
           <div className="flex flex-wrap items-center gap-2">
             <CardTitle className="text-sm">装配链 · 门控信号流</CardTitle>
@@ -998,7 +1002,7 @@ export function AgentPromptChain({
       </Card>
 
       {chain.warnings.length > 0 && (
-        <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3">
+        <div className="shrink-0 rounded-md border border-amber-500/40 bg-amber-500/5 p-3">
           <div className="mb-1 flex items-center gap-1.5 font-medium text-amber-700 text-xs dark:text-amber-400">
             <AlertTriangleIcon className="size-3.5" /> 注意
           </div>
@@ -1023,7 +1027,7 @@ export function AgentPromptChain({
         onReload={() => void load(true)}
       />
 
-      <div className="flex flex-wrap items-center gap-2 text-muted-foreground text-[11px]">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 text-muted-foreground text-[11px]">
         <button type="button" className="underline-offset-2 hover:underline" onClick={() => openTarget({ kind: "tools" })}>
           工具 {chain.tools.total}
         </button>
@@ -1069,10 +1073,11 @@ function MiniMap({
     ...(layout.tray ? [{ r: layout.tray, className: "fill-destructive/40" }] : []),
     ...(layout.quarantine ? [{ r: layout.quarantine, className: "fill-destructive/20" }] : []),
   ];
-  const vx = (view.left / zoom) * sx;
-  const vy = (view.top / zoom) * sy;
-  const vw = Math.min(mw, (view.w / zoom) * sx);
-  const vh = Math.min(mh, (view.h / zoom) * sy);
+  const PAD = 8; // 画布 p-2
+  const vx = ((view.left + PAD) / zoom) * sx;
+  const vy = ((view.top + PAD) / zoom) * sy;
+  const vw = Math.min(mw, ((view.w - PAD * 2) / zoom) * sx);
+  const vh = Math.min(mh, ((view.h - PAD * 2) / zoom) * sy);
   return (
     <div
       className="pointer-events-none absolute bottom-2 z-10 hidden rounded-md border bg-background/90 p-1 shadow-sm backdrop-blur md:block"
@@ -1089,9 +1094,9 @@ function MiniMap({
           const rect = e.currentTarget.getBoundingClientRect();
           const fx = e.clientX - rect.left;
           const fy = e.clientY - rect.top;
-          const targetX = fx / sx - view.w / zoom / 2;
-          const targetY = fy / sy - view.h / zoom / 2;
-          onJump(Math.max(0, targetX) * zoom, Math.max(0, targetY) * zoom);
+          const targetX = fx / sx - (view.w - PAD * 2) / zoom / 2;
+          const targetY = fy / sy - (view.h - PAD * 2) / zoom / 2;
+          onJump(Math.max(0, targetX) * zoom - PAD, Math.max(0, targetY) * zoom - PAD);
         }}
       >
         <rect x={0} y={0} width={mw} height={mh} className="fill-card" />
@@ -1143,8 +1148,9 @@ function ChainGraph({
   const anchor = last?.anchor ?? null;
   // 几何由容器实测宽推导：1 SVG 单位 = 1 CSS px，默认视图不缩放。
   const layout = React.useMemo(() => buildLayout(chain, frameW), [chain, frameW]);
-  // 画布过窄时才让详情覆盖全宽；否则始终并排，保留图的语境。
-  const narrow = frameW < 560;
+  // 覆盖判定用外层容器宽（面板不改变它），避免“面板改变画布宽→宽窄翻转”的反馈环。
+  const [wrapW, setWrapW] = React.useState(0);
+  const narrow = wrapW > 0 && wrapW < 760;
   const anchorIdx = anchor ? layout.rows.findIndex((r) => r.id === anchor) : -1;
   const [zoom, setZoom] = React.useState(1);
   const zoomRef = React.useRef(1);
@@ -1198,6 +1204,12 @@ function ChainGraph({
   }, [syncView, frameW, layout.height]);
 
   React.useEffect(() => {
+    setZoom(1);
+    const el = canvasRef.current;
+    if (el) el.scrollTo({ left: 0, top: 0 });
+  }, [chain.agent_key]);
+
+  React.useEffect(() => {
     // 测量画布本身（面板并排时画布宽度已扣除面板），而不是外层容器。
     const el = canvasRef.current;
     if (!el) return;
@@ -1205,11 +1217,14 @@ function ChainGraph({
       const node = canvasRef.current;
       if (!node || node.clientWidth < 100) return; // 布局未就绪时不要落到最小宽
       setFrameW(Math.max(320, Math.round(node.clientWidth - 16)));
+      const wrap = wrapRef.current;
+      if (wrap && wrap.clientWidth > 0) setWrapW(wrap.clientWidth);
     };
     measure();
     const raf = requestAnimationFrame(measure);
     const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
     ro?.observe(el);
+    if (wrapRef.current) ro?.observe(wrapRef.current);
     window.addEventListener("resize", measure);
     return () => {
       cancelAnimationFrame(raf);
@@ -1245,6 +1260,10 @@ function ChainGraph({
   React.useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) {
+        return; // 正在编辑草稿时 Esc 只交给输入控件
+      }
       if (e.key === "Escape") {
         e.preventDefault();
         onBack();
@@ -1257,8 +1276,8 @@ function ChainGraph({
   const dimmed = (id: string) => !!anchor && anchor !== id;
 
   return (
-    <div className="grid gap-2">
-      <div className="sticky top-0 z-20 flex flex-wrap items-center gap-1 rounded-md border bg-background/95 px-2 py-1.5 text-[11px] backdrop-blur">
+    <div className="flex min-h-0 flex-1 flex-col gap-2">
+      <div className="sticky top-0 z-20 flex shrink-0 flex-wrap items-center gap-1 rounded-md border bg-background/95 px-2 py-1.5 text-[11px] backdrop-blur">
         <button
           type="button"
           className={cn(
@@ -1316,7 +1335,7 @@ function ChainGraph({
               const el = canvasRef.current;
               if (!el) return;
               applyZoom(Math.min(1, (el.clientWidth - 16) / layout.w));
-              el.scrollTo({ left: 0, top: 0 });
+              requestAnimationFrame(() => requestAnimationFrame(() => el.scrollTo({ left: 0, top: 0 })));
             }}
           >
             适应
@@ -1324,7 +1343,7 @@ function ChainGraph({
         </span>
       </div>
 
-      <div ref={wrapRef} className="relative flex min-w-0 overflow-hidden rounded-lg border bg-card/40">
+      <div ref={wrapRef} className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-lg border bg-card/40">
         <div
           ref={canvasRef}
           onScroll={syncView}
@@ -2039,7 +2058,7 @@ type Stage = { id: string; label: string; target: Target; offTrunk?: boolean };
 
 function stageTargets(chain: AgentPromptChainData): Stage[] {
   const find = (kind: string) => chain.segments.find((s) => s.kind === kind);
-  const out: Stage[] = [{ id: "agent", label: "Agent", target: { kind: "model" } }];
+  const out: Stage[] = [];
   const profile = find("profile_prompt");
   if (profile && chain.llm.prompt_mode) {
     out.push({ id: "profile", label: "独立提示词", target: { kind: "segment", key: profile.key } });
@@ -2050,11 +2069,9 @@ function stageTargets(chain: AgentPromptChainData): Stage[] {
   }
   const skill = find("skill_index");
   if (skill) out.push({ id: "skill", label: "技能速查", target: { kind: "segment", key: skill.key } });
-  if (chain.segments.some((s) => s.kind === "code_tail" && s.present)) {
-    out.push({ id: "code", label: "代码硬尾", target: { kind: "code" } });
-  }
-  if (chain.segments.some((s) => s.kind === "code_tail" && !s.present)) {
-    out.push({ id: "gated", label: "门控未生效", target: { kind: "code" } });
+  if (chain.segments.some((s) => s.kind === "code_tail")) {
+    const gated = chain.segments.some((s) => s.kind === "code_tail" && !s.present);
+    out.push({ id: "code", label: gated ? "代码硬尾/门控" : "代码硬尾", target: { kind: "code" } });
   }
   const host = find("host");
   if (host) out.push({ id: "host", label: "本机工具", target: { kind: "segment", key: host.key } });
@@ -2302,7 +2319,13 @@ function ConfigActions({
       )}
 
       {isPromptSurface && profile && (
-        <details className="mb-2 rounded border bg-background/60 p-1.5" open={target.kind === "segment"}>
+        <details
+          className="mb-2 rounded border bg-background/60 p-1.5"
+          open={
+            target.kind === "segment" &&
+            chain.segments.some((s) => s.key === target.key && s.kind === "profile_prompt")
+          }
+        >
           <summary className="cursor-pointer text-[10px] text-muted-foreground">
             独立提示词（{profile.name} #{profile.id}）
             {profile.prompt_apply_inherited ? " · 继承时也生效" : ""}
