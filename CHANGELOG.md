@@ -28,6 +28,37 @@
   （planner/worker/mainagent/pentest × prepend/append/replace）与覆盖来源边界测试
   （Agent 绑定 / 任务链 / 会话 pin / 全局配置）。
 
+### 新增：思考强度与 LLM 配置解耦
+
+- **数据层**：新表 `agent_profile_effort_overrides(agent_key, profile_id, reasoning_effort)`
+  （幂等迁移，双 FK 级联，CHECK 限定枚举）。可给某个 Agent 在某份 LLM 配置上单独指定
+  强度，无需复制配置；配置的 `reasoning_effort` 仍是其自身默认值。
+- **解析**：`override → profile → 未设置`，运行时 provider、装配链投影、路由视图与审计
+  共用同一纯函数；空 agent key（pin/judge/环境变量）不读覆盖；越界值视为未设置。
+  无覆盖时与直接使用该配置逐字段一致，并共享同一个 provider 缓存实例（同一限流器）。
+- **生效语义**：下一次模型调用生效，不重建运行中的 system prompt；failover 按目标配置
+  重新解析，不继承来源值；thinking 降级状态在配置切换时重置。
+- **API/UI**：`GET|PUT|DELETE /api/agents/{key}/llm-effort-overrides[/{profile_id}]`
+  （GET 回显全部配置与生效来源，PUT 空串等同清除，成功 204，DELETE 幂等）；Agent 编辑器
+  新增覆盖区块（默认只列绑定/全局激活/已有覆盖，可展开全部）；LLM 配置抽屉新增反向列表
+  「被以下 Agent 覆盖」。
+- **审计**：`llm_switch` / `llm_failover` 的 before/after 快照带 effort 与来源。
+
+### 新增：LLM 路由与回退链只读可视化
+
+- `GET /api/agents/{key}/llm-route`：五层来源优先级、各角色解析、任务配置链（游标/状态/
+  最后一次错误）、provider 池（包裹关系、健康度、是否在链上、是否有 key）、额度转跳
+  规则、运行期转跳历史（`task_id` 精确 / 跨任务近似；`limit` 为事件条数，默认 50、上限
+  200）与最近任务选择器（按创建时间倒序）。未知或归档任务返回 404，不静默降级为空。
+- `last_used`：从常开的 `llm_usage` 记账读取该任务 planner / worker / mainagent 最近一次
+  实际调用（profile/model/status/时间），明确“不代表当前游标、记账无 effort 列”；无记录时
+  说明原因。来源优先级展示“实际生效层”，角色卡片补 reason/format/model。
+- 只读：不构建 provider、不发请求、不返回凭据；错误文本剔除 Bearer、`sk-`、
+  api_key/token、URL userinfo 后截断。静态可用性仅表示配置完整性，不验证连通性。
+- 任务链快照改为 DB 单语句读取；`activity` 增加 `(exploration_id, id) WHERE kind IN
+  ('llm_switch','llm_failover')` 偏索引。
+- 全链路页新增「装配链 | LLM 路由」视图切换，两个视图共用外壳与 Agent 选择器。
+
 ## [0.4.120] - 2026-11-25
 
 ### 修复：附件配额与落盘清理闭环（#59）
