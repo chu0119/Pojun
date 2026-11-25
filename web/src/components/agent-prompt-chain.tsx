@@ -2239,6 +2239,7 @@ function ConfigActions({
         max_tokens_field: profile.max_tokens_field,
         session_header_key: profile.session_header_key,
         user_agent: profile.user_agent,
+        retry: profile.retry,
         preset_id: profile.preset_id,
         prompt,
         prompt_mode: mode,
