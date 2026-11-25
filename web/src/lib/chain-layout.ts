@@ -189,23 +189,29 @@ export function layoutSignalFlow(input: SignalFlowInput): SignalFlowGeometry {
   let notesY = 0;
 
   if (mode === "wide") {
-    const leftW = clamp(Math.round(W * 0.23), 280, 340);
-    const rightW = clamp(Math.round(W * 0.23), 280, 340);
-    centerX = MARGIN + leftW + 80;
-    const rightX = W - MARGIN - rightW;
-    centerW = clamp(rightX - 60 - centerX, MIN_ROW_W, 460);
+    const gapLeft = 80;
+    const gapRight = 60;
+    const leftW = clamp(Math.round(W * 0.22), 280, 380);
+    const rightW = clamp(Math.round(W * 0.22), 280, 380);
+    // 主干按容器比例增长，但组宽超出容器时优先压缩主干，避免溢出。
+    const room = W - MARGIN * 2 - leftW - gapLeft - gapRight - rightW;
+    centerW = clamp(Math.min(Math.round(W * 0.32), room), MIN_ROW_W, 560);
+    const groupW = leftW + gapLeft + centerW + gapRight + rightW;
+    const offset = Math.max(MARGIN, Math.round((W - groupW) / 2));
+    centerX = offset + leftW + gapLeft;
     trunkX = centerX - 20;
 
-    llm.x = MARGIN;
+    llm.x = offset;
     llm.y = 96;
     llm.w = leftW;
-    skills.x = MARGIN;
+    skills.x = offset;
     skills.y = llm.y + llm.h + 14;
     skills.w = leftW;
     if (input.hasTray) {
-      tray = { x: MARGIN, y: skills.y + skills.h + 14, w: leftW, h: trayH };
+      tray = { x: offset, y: skills.y + skills.h + 14, w: leftW, h: trayH };
     }
 
+    const rightX = centerX + centerW + gapRight;
     tools.x = rightX;
     tools.y = 96;
     tools.w = rightW;
@@ -252,7 +258,8 @@ export function layoutSignalFlow(input: SignalFlowInput): SignalFlowGeometry {
     const rightBottom = mcp.y + mcp.h;
     const qY = Math.max(leftBottom, rightBottom, bottom) + 24;
     if (input.quarantineH > 0) {
-      quarantine = { x: MARGIN, y: qY, w: centerX + centerW + 24 - MARGIN, h: input.quarantineH };
+      const qRight = Math.max(centerX + centerW, tools.x + tools.w);
+      quarantine = { x: Math.max(0, centerX - 60), y: qY, w: qRight - Math.max(0, centerX - 60) + 20, h: input.quarantineH };
     }
     h = Math.max(760, (quarantine ? quarantine.y + quarantine.h : qY) + 40);
     notesY = h - 18;

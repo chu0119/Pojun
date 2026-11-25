@@ -68,7 +68,7 @@ test("主干行宽不因容器变宽而无意义膨胀，也不低于可读下�
   for (const w of [1040, 1280, 1440, 1920, 2560]) {
     const g = lay(w);
     assert.ok(g.center.w >= MIN_ROW_W, `${w}px 主干过窄`);
-    assert.ok(g.center.w <= 460, `${w}px 主干过宽`);
+    assert.ok(g.center.w <= 560, `${w}px 主干过宽`);
     for (const r of g.rows) assert.equal(r.w, g.center.w);
   }
 });
