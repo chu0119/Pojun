@@ -195,6 +195,9 @@ type Row = {
 
 type Tray = { x: number; y: number; w: number; h: number };
 
+// 详情面板宽度与画布宽度共同决定断点；360 会让 1440 屏在面板打开时掉到单列。
+const DETAIL_W = 340;
+
 // 文本按真实字体栈测量，保证裁切点与渲染一致。
 const FONT_STACK_SANS =
   '-apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif';
@@ -1633,7 +1636,7 @@ function ChainGraph({
 
         {layout.height > 640 && (
           <MiniMap
-            offsetRight={open && !narrow ? 372 : 8}
+            offsetRight={open && !narrow ? DETAIL_W + 12 : 8}
             layout={layout}
             zoom={zoom}
             view={view}
@@ -2433,9 +2436,10 @@ function ChainDetail({
     <aside
       className={cn(
         "z-20 flex max-w-full flex-col border-l bg-card shadow-2xl",
-        narrow ? "absolute inset-y-0 right-0 w-full" : "relative w-[360px] shrink-0",
+        narrow ? "absolute inset-y-0 right-0 w-full" : "relative shrink-0",
       )}
       aria-label="装配链只读详情"
+      style={narrow ? undefined : { width: DETAIL_W }}
     >
       <div className="border-b p-3">
         <div className="flex items-center gap-2">
