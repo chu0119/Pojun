@@ -134,6 +134,7 @@ export default function LLMRecordsPage() {
   // backend records nothing.
   const [recEnabled, setRecEnabled] = React.useState(false);
   const [recBusy, setRecBusy] = React.useState(false);
+  const [recBodyMode, setRecBodyMode] = React.useState<"off" | "errors" | "full">("errors");
 
   // Inline detail panel (Burp-style split, not a dialog)
   const [selected, setSelected] = React.useState<LLMRecordItem | null>(null);
@@ -167,7 +168,11 @@ export default function LLMRecordsPage() {
     let alive = true;
     api
       .settings()
-      .then((s) => { if (alive) setRecEnabled(!!s.llm_record); })
+      .then((s) => {
+        if (!alive) return;
+        setRecEnabled(!!s.llm_record);
+        if (s.llm_record_body_mode) setRecBodyMode(s.llm_record_body_mode);
+      })
       .catch(() => {});
     return () => { alive = false; };
   }, []);
@@ -182,6 +187,16 @@ export default function LLMRecordsPage() {
       setRecEnabled(!on); // revert on failure
     } finally {
       setRecBusy(false);
+    }
+  };
+
+  const changeBodyMode = async (mode: "off" | "errors" | "full") => {
+    const prev = recBodyMode;
+    setRecBodyMode(mode);
+    try {
+      await api.setSettings({ llm_record_body_mode: mode });
+    } catch {
+      setRecBodyMode(prev);
     }
   };
 
@@ -344,6 +359,20 @@ export default function LLMRecordsPage() {
           >
             {recEnabled ? "录制中" : "已关闭"}
           </label>
+        </div>
+
+        <div className="flex items-center gap-2 rounded-md border px-2 py-1">
+          <span className="text-muted-foreground text-xs">正文</span>
+          <Select value={recBodyMode} onValueChange={(v) => void changeBodyMode(v as "off" | "errors" | "full")}>
+            <SelectTrigger className="h-6 w-28 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="off">不存正文</SelectItem>
+              <SelectItem value="errors">仅失败</SelectItem>
+              <SelectItem value="full">全量</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
 
         <div className="ml-auto flex items-center gap-2 text-muted-foreground text-xs">

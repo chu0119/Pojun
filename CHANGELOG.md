@@ -45,6 +45,10 @@
 - KEV 条目补最小 `vuln_cpe_products` 行，`search_vulns` 不再因 INNER JOIN 隐藏
   “只有 KEV、NVD 未补到”的 CVE；`SaveSyncState` 的页级进度不再把 `last_sync_at`
   刷成 now（中断不会伪装成刚成功）。
+- **LLM 审计正文策略**：`llm_record_body_mode` 支持 `off/errors/full`，默认 `errors`
+  （成功调用只记元数据，失败调用正文单段截断 64KiB），录制页可直接切换。
+- **任务 Playbook v4**：新增 API/Java/云 K8s/代码审计/支付逻辑/前端供应链/网络设备/
+  AI LLM/数据取证/SRC 验收等模板，独立 flag `task_playbooks_v4`，不复活用户改过的同名模板。
 
 ## [0.4.122] - 2026-11-26
 ### 修复：终态经验落库 UTF-8 截断（#75）

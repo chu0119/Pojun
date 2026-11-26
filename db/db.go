@@ -305,6 +305,9 @@ ON CONFLICT (name) DO NOTHING`,
 	if err := d.seedBuiltinTaskPlaybooksV2(); err != nil {
 		return fmt.Errorf("seed task playbooks v2: %w", err)
 	}
+	if err := d.seedBuiltinTaskPlaybooksV4(); err != nil {
+		return fmt.Errorf("seed task playbooks v4: %w", err)
+	}
 	if err := d.seedDefaultInterceptRules(); err != nil {
 		return fmt.Errorf("seed intercept rules: %w", err)
 	}

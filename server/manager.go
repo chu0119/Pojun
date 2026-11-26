@@ -330,12 +330,13 @@ type Manager struct {
 	// taskStateMu preserves commit order between PostgreSQL lifecycle writes and
 	// their in-memory mirrors. lifecycleMu makes snapshots race-free, but without
 	// this outer write lock an older request could commit first and publish last.
-	taskStateMu sync.Mutex
-	mu          sync.RWMutex
-	tasks       map[string]*Task
-	active      string
-	trafficOn   bool // 流量捕获开关（默认关；settings.traffic_capture）
-	llmRecOn    bool // LLM 录制开关（默认关；settings.llm_record）
+	taskStateMu    sync.Mutex
+	mu             sync.RWMutex
+	tasks          map[string]*Task
+	active         string
+	trafficOn      bool   // 流量捕获开关（默认关；settings.traffic_capture）
+	llmRecOn       bool   // LLM 录制开关（默认关；settings.llm_record）
+	llmRecBodyMode string // off|errors|full；默认 errors（成功调用只记元数据）
 	// 联网搜索开关与来源（默认关；settings.web_search_*）。brave-free 需要 braveKey；tavily 需要 tavilyKey。
 	// webSearchProxy 是独立出口代理(http/https/socks5)，与记录流量的 MITM 代理无关。
 	webSearchOn      bool
@@ -378,9 +379,10 @@ const (
 	// agent 的 search_vulns/get_vuln 读它；关闭只是停同步，已入库数据仍可查。
 	settingVulnIntelOn = "vulnintel_enabled"
 	// NVD API key（可选）：匿名 5 req/30s，配 key 50 req/30s，首次回填快 ~10 倍。
-	settingNvdApiKey = "nvd_api_key"
-	settingWorkers   = "workers"
-	settingLLMRecord = "llm_record"
+	settingNvdApiKey         = "nvd_api_key"
+	settingWorkers           = "workers"
+	settingLLMRecord         = "llm_record"
+	settingLLMRecordBodyMode = "llm_record_body_mode"
 	// 冷节点压缩的输出预算与墙钟上限。默认 0 = 用代码里的默认值
 	// (32768 token / 20 分钟)。这两个值存在的原因见 agent.Compactor.outTokens:
 	// 思考型模型(强制 adaptive thinking)的思考长度随 max_tokens 预算线性膨胀,
@@ -659,6 +661,13 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 	m.trafficOn = pg.GetBool(settingTrafficCapture, false)
 	// LLM 录制开关（默认关）。录制器每次调用时读取此标志。
 	m.llmRecOn = pg.GetBool(settingLLMRecord, false)
+	m.llmRecBodyMode = "errors"
+	if v, ok, _ := pg.GetSetting(settingLLMRecordBodyMode); ok {
+		switch v {
+		case "off", "errors", "full":
+			m.llmRecBodyMode = v
+		}
+	}
 	// Load persisted web-search config (default: off, ddgs).
 	m.webSearchOn = pg.GetBool(settingWebSearchOn, false)
 	if v, ok, _ := pg.GetSetting(settingWebSearchBackend); ok && v != "" {
@@ -782,6 +791,32 @@ func (m *Manager) SetLLMRecordEnabled(on bool) error {
 	}
 	m.mu.Lock()
 	m.llmRecOn = on
+	m.mu.Unlock()
+	return nil
+}
+
+// LLMRecordBodyMode returns off|errors|full for the LLM trace body policy.
+func (m *Manager) LLMRecordBodyMode() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.llmRecBodyMode == "" {
+		return "errors"
+	}
+	return m.llmRecBodyMode
+}
+
+// SetLLMRecordBodyMode persists the body policy; the recorder reads it per call.
+func (m *Manager) SetLLMRecordBodyMode(mode string) error {
+	switch mode {
+	case "off", "errors", "full":
+	default:
+		return fmt.Errorf("llm_record_body_mode 只能是 off / errors / full")
+	}
+	if err := m.pg.SetSetting(settingLLMRecordBodyMode, mode); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	m.llmRecBodyMode = mode
 	m.mu.Unlock()
 	return nil
 }

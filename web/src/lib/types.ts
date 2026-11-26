@@ -1219,6 +1219,7 @@ export interface Settings {
   traffic_retention_days?: number; // 未引用流量 TTL；0=关闭
   agent_traffic_binding: boolean; // Agent 自动绑定流量证据，默认关闭；不影响人工绑定
   llm_record: boolean; // LLM 录制开关（默认关）；关闭时不记录任何 LLM 调用
+  llm_record_body_mode?: "off" | "errors" | "full"; // 正文落库策略；默认 errors
   // Web search. brave_key_set / tavily_key_set reflect whether a key is stored
   // (the values are never returned). On PUT, send the corresponding field to set/clear.
   web_search_enabled: boolean;

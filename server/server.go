@@ -548,7 +548,7 @@ func (s *Server) applyLLM(cfg agent.Config) error {
 		s.cfgMu.Lock()
 		profName := s.llmProf
 		s.cfgMu.Unlock()
-		prov = llmrec.Wrap(prov, s.m.PG(), cfg.Model, profName, cfg.ThinkingType, cfg.ReasoningEffort, s.m.LLMRecordEnabled)
+		prov = llmrec.Wrap(prov, s.m.PG(), cfg.Model, profName, cfg.ThinkingType, cfg.ReasoningEffort, s.m.LLMRecordEnabled, s.m.LLMRecordBodyMode)
 		prov = bindSideProvider(prov, cfg, 0, profName, "")
 	}
 	s.cfgMu.Lock()
@@ -736,7 +736,7 @@ func (s *Server) providerForProfileEffort(p *db.LLMProfile, effort, agentKey str
 	}
 	// Wrap with recorder, tagged with the effective effort so the LLM record shows
 	// what was actually sent (the profile value or an agent override).
-	prov = llmrec.Wrap(prov, s.m.PG(), cfg.Model, p.Name, cfg.ThinkingType, cfg.ReasoningEffort, s.m.LLMRecordEnabled)
+	prov = llmrec.Wrap(prov, s.m.PG(), cfg.Model, p.Name, cfg.ThinkingType, cfg.ReasoningEffort, s.m.LLMRecordEnabled, s.m.LLMRecordBodyMode)
 	prov = bindSideProvider(prov, cfg, p.ID, p.Name, agentKey)
 	s.provCacheMu.Lock()
 	if generation != s.provCacheGen {
@@ -3723,6 +3723,7 @@ func (s *Server) settingsPayload() map[string]any {
 		"traffic_retention_days": s.trafficRetentionDays(),
 		"agent_traffic_binding":  s.m.pg.GetBool(settingAgentTrafficBinding, false),
 		"llm_record":             s.m.LLMRecordEnabled(),
+		"llm_record_body_mode":   s.m.LLMRecordBodyMode(),
 		"web_search_enabled":     on,
 		"web_search_backend":     backend,
 		"brave_key_set":          strings.TrimSpace(braveKey) != "",
@@ -3832,10 +3833,11 @@ func (s *Server) pgDetectPython(w http.ResponseWriter, r *http.Request) {
 // off, agents get no proxy config, no traffic tools, and no proxy prompt content.
 func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TrafficCapture       *bool `json:"traffic_capture"`
-		TrafficRetentionDays *int  `json:"traffic_retention_days"`
-		AgentTrafficBinding  *bool `json:"agent_traffic_binding"`
-		LLMRecord            *bool `json:"llm_record"` // LLM 录制开关（默认关）；即时生效，无需重建 agent
+		TrafficCapture       *bool   `json:"traffic_capture"`
+		TrafficRetentionDays *int    `json:"traffic_retention_days"`
+		AgentTrafficBinding  *bool   `json:"agent_traffic_binding"`
+		LLMRecord            *bool   `json:"llm_record"` // LLM 录制开关（默认关）；即时生效，无需重建 agent
+		LLMRecordBodyMode    *string `json:"llm_record_body_mode"`
 		// Web search. WebSearchEnabled/Backend toggle the tool + backend; BraveKey/TavilyKey
 		// are optional — omit (null) to leave a stored key untouched, send "" to clear.
 		WebSearchEnabled *bool   `json:"web_search_enabled"`
@@ -4298,6 +4300,12 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		// 录制器每次调用读取该标志，切换即时生效，无需 applyLLM 重建。
 		if err := s.m.SetLLMRecordEnabled(*req.LLMRecord); err != nil {
 			writeErr(w, 500, err.Error())
+			return
+		}
+	}
+	if req.LLMRecordBodyMode != nil {
+		if err := s.m.SetLLMRecordBodyMode(*req.LLMRecordBodyMode); err != nil {
+			writeErr(w, 400, err.Error())
 			return
 		}
 	}
