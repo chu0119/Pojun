@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -101,7 +102,11 @@ func TestRepoMapDetectsFrameworkRoutesAndSecrets(t *testing.T) {
 
 func TestRepoMapRejectsPathEscape(t *testing.T) {
 	ts := codeAuditToolSet(t, map[string]string{"a.js": "1\n"})
-	for _, dir := range []string{"../..", `C:\Windows`} {
+	escape := "/etc/passwd"
+	if runtime.GOOS == "windows" {
+		escape = `C:\Windows`
+	}
+	for _, dir := range []string{"../..", escape} {
 		in, _ := json.Marshal(map[string]any{"dir": dir})
 		res, err := ts.repoMap().Call(context.Background(), in, nil)
 		if err != nil {
