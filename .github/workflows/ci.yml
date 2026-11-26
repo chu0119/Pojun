@@ -49,11 +49,15 @@ jobs:
       - name: Vet
         run: go vet ./...
       - name: Check installer syntax
-        run: bash -n install.sh
+        run: bash -n install.sh && bash -n scripts/apply-systemd-limits.sh
       - name: Test installer listen normalization
         # bash -n 只查语法；这里跑地址归一的输入矩阵（默认/纯端口/0.0.0.0/
         # IPv6/非法 IPv4/主机名/zone/端口越界）与 compose 映射判定。
         run: bash scripts/install_listen_test.sh
+      - name: Test installer resource limits normalization
+        # 资源护栏参数：16g→16G、6→600%、off→省略 TasksMax、非法值必须失败，
+        # 默认 65%/80%/80% 计算；同时覆盖存量部署的 apply-systemd-limits.sh。
+        run: bash scripts/install_resource_test.sh
       - name: Test
         # -p 1: 连 PG 的测试包不止持有跨包 advisory lock 的 db/agent/server 三个
         # (llmrec/evidence/traffic 等无锁),CI 多核并行时与 agent 包写事务死锁
