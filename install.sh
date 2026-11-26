@@ -1100,6 +1100,9 @@ RestartSec=5
 # /run/pojun 由 systemd 建好并随停止清理;socket 本身被助手下调成 0660 root:${RUN_USER}
 RuntimeDirectory=pojun
 RuntimeDirectoryMode=0755
+# ACME 临时放行的 lease 需要跨 hostd 重启保留（见 hostd/firewall.go 的 recover）。
+StateDirectory=pojun-hostd
+StateDirectoryMode=0700
 # 助手要调 apt/dnf、写 /usr/local/bin,所以不能像主服务那样把根挂成只读。
 #
 # 这里**刻意不设 NoNewPrivileges**:实测它会连带把 CAP_SETUID/CAP_SETGID 从进程的
@@ -1108,8 +1111,9 @@ RuntimeDirectoryMode=0755
 # 助手的真实安全边界是「socket 权限 + 代码里的工具白名单」,不是这条开关。
 #
 # CapabilityBoundingSet 显式列出 apt/dpkg/维护脚本需要的项(顺带挡掉 CAP_SYS_ADMIN、
-# CAP_SYS_PTRACE、CAP_NET_ADMIN 等安装用不到的)。若将来某个包的 postinst 需要更多,
-# 按报错往里加即可。
+# CAP_SYS_PTRACE 等安装用不到的)。CAP_NET_ADMIN 只用于内置 HTTPS 的 ACME 期间
+# 临时放行 80/443（hostd/firewall.go 严格限定端口并落盘撤销）。若将来某个包的
+# postinst 需要更多,按报错往里加即可。
 PrivateTmp=true
 ProtectHome=true
 ProtectClock=true
@@ -1119,12 +1123,13 @@ ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictNamespaces=true
 RestrictRealtime=true
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# AF_NETLINK 是 ufw/firewalld/nft 改规则的必经通道；缺了它防火墙接口必然 EAFNOSUPPORT。
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 LockPersonality=true
 # 刻意不设 SystemCallFilter：助手要以 root 调 apt/dpkg，而 dpkg 会执行包自带的任意
 # 维护脚本，白名单永远赶不上它们的实际需要，一旦超纲就是 SIGSYS 硬杀——装到一半被
 # 杀比安装报错更难排查。助手的真实安全边界是 socket 权限 + 代码里的工具白名单。
-CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_FOWNER CAP_FSETID CAP_KILL CAP_SETGID CAP_SETUID CAP_SETPCAP CAP_NET_BIND_SERVICE CAP_NET_RAW CAP_SYS_CHROOT CAP_MKNOD CAP_AUDIT_WRITE CAP_SETFCAP
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_FOWNER CAP_FSETID CAP_KILL CAP_SETGID CAP_SETUID CAP_SETPCAP CAP_NET_BIND_SERVICE CAP_NET_RAW CAP_NET_ADMIN CAP_SYS_CHROOT CAP_MKNOD CAP_AUDIT_WRITE CAP_SETFCAP
 LimitNOFILE=65536
 
 [Install]

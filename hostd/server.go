@@ -115,6 +115,9 @@ type Server struct {
 	SelfPath string
 
 	upgrading atomic.Bool
+
+	// fw 管理 ACME 用的临时防火墙放行（只碰 80/443，用完撤销）。
+	fw *firewallManager
 }
 
 // NewServer 构造。base 为进程级生命周期 ctx(随守护进程退出而取消);传 nil 用 Background。
@@ -131,6 +134,7 @@ func NewServer(base context.Context, logger *log.Logger) *Server {
 		pkgMgr: DetectPkgMgr(),
 		logger: logger,
 		base:   base,
+		fw:     newFirewallManager(),
 	}
 }
 
@@ -807,6 +811,49 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /jobs/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
 		if !s.Cancel(r.PathValue("id")) {
 			writeJSON(w, 404, map[string]any{"error": "任务不存在"})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"ok": true})
+	})
+
+	// ── 防火墙临时放行（ACME HTTP-01/TLS-ALPN-01 用）──
+	// 只放行 80/443，且仅在原本未放行时添加；返回 lease，用完由主程序撤销，
+	// hostd 自身重启/到期也会清理。
+	mux.HandleFunc("GET /firewall/status", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, s.fw.status())
+	})
+
+	mux.HandleFunc("POST /firewall/lease", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Port       int `json:"port"`
+			TTLSeconds int `json:"ttl_seconds"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&req); err != nil {
+			writeJSON(w, 400, map[string]any{"error": "请求体不是合法 JSON"})
+			return
+		}
+		ttl := time.Duration(req.TTLSeconds) * time.Second
+		if ttl <= 0 {
+			ttl = 10 * time.Minute
+		}
+		id, changed, err := s.fw.open(r.Context(), req.Port, ttl)
+		if err != nil {
+			writeJSON(w, 400, map[string]any{"error": err.Error()})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"ok": true, "lease_id": id, "changed": changed})
+	})
+
+	mux.HandleFunc("POST /firewall/release", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			LeaseID string `json:"lease_id"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&req); err != nil {
+			writeJSON(w, 400, map[string]any{"error": "请求体不是合法 JSON"})
+			return
+		}
+		if err := s.fw.release(r.Context(), req.LeaseID); err != nil {
+			writeJSON(w, 500, map[string]any{"error": err.Error()})
 			return
 		}
 		writeJSON(w, 200, map[string]any{"ok": true})
