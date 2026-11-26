@@ -44,7 +44,7 @@ const (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: pojun-maint <scan-artifacts|previews|reset-prompts|fix-permissions|scope-audit|idscan|bench> --config <config.json> [--force] [--out file]")
+		fmt.Fprintln(os.Stderr, "usage: pojun-maint <scan-artifacts|previews|reset-prompts|fix-permissions|scope-audit|idscan|bench|library> --config <config.json> [--force] [--out file]")
 		os.Exit(2)
 	}
 	cmd := os.Args[1]
@@ -52,6 +52,11 @@ func main() {
 	// flag set (whose ExitOnError would reject --db/--tiers/--task-map with exit 2).
 	if cmd == "idscan" {
 		runIDScan(os.Args[2:])
+		return
+	}
+	// library 的子命令各有自己的 flag 集，且 lint 不需要数据库。
+	if cmd == "library" {
+		runLibrary(os.Args[2:])
 		return
 	}
 	// bench 也是独立 flag 集：score/compare/validate 各有自己的参数，不能和
