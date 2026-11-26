@@ -35,6 +35,7 @@ import (
 	"github.com/chu0119/pojun/llmrec"
 	"github.com/chu0119/pojun/report"
 	"github.com/chu0119/pojun/telemetry"
+	"github.com/chu0119/pojun/tlsmgr"
 	"github.com/chu0119/pojun/traffic"
 	"github.com/chu0119/pojun/vault"
 )
@@ -158,6 +159,14 @@ type Server struct {
 	archiveWake chan struct{}
 	archiveWG   sync.WaitGroup
 	side        *sideQuestionState
+
+	// 内置 HTTPS 与证书管理：证书管理器、当前是否以 TLS 监听、ACME 取消句柄。
+	tlsMgr         *tlsmgr.Manager
+	tlsActive      atomic.Bool
+	tlsRuntimeAddr atomic.Value // string：当前进程实际监听的地址
+	tlsAddrSaved   atomic.Bool  // 设置表里是否有 tls_https_addr（有则优先于 -addr）
+	tlsMu          sync.Mutex
+	tlsCancel      context.CancelFunc
 }
 
 // provEntry is a cached provider + its config for one LLM profile id.
@@ -207,6 +216,8 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		provByProfile:  map[provKey]*provEntry{}, llmHealth: newLLMHealthRegistry(m.pg),
 		taskAgents: map[string]*taskAgentBundle{}, archiveWake: make(chan struct{}, 1)}
 	s.jwtKey.Store(key)
+	// 证书管理器必须早于路由注册：设置页与监听都依赖它。失败只记录，不阻塞启动。
+	s.initTLS()
 	llmpresets.InitCache(dataDir) // 厂商模型元数据缓存（7 天 TTL，失败静默用内嵌快照）
 	s.listeners = listener.NewManager()
 	agent.SetListenerManager(s.listeners)
@@ -991,6 +1002,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/diagnostics/export", s.handleDiagnosticsExport)
 	mux.HandleFunc("GET /api/settings", s.getSettings)
 	mux.HandleFunc("PUT /api/settings", s.putSettings)
+	// 内置 HTTPS 与证书管理。
+	mux.HandleFunc("GET /api/tls/status", s.tlsStatus)
+	mux.HandleFunc("PUT /api/tls/settings", s.tlsSaveSettings)
+	mux.HandleFunc("POST /api/tls/import", s.tlsImport)
+	mux.HandleFunc("POST /api/tls/selfsigned", s.tlsSelfSigned)
+	mux.HandleFunc("POST /api/tls/acme", s.tlsACMECreate)
+	mux.HandleFunc("POST /api/tls/acme/cancel", s.tlsACMECancel)
+	mux.HandleFunc("GET /api/tls/ca.pem", s.tlsCA)
+	mux.HandleFunc("POST /api/tls/restart", s.tlsRestart)
 	// 漏洞 IM 推送。渠道是「多实例 + 各自过滤规则」的资源，因此独立成一组
 	// REST 接口，而不是塞进扁平的 /api/settings 键值里。
 	mux.HandleFunc("GET /api/notify/meta", s.notifyMeta)
@@ -4767,6 +4787,11 @@ func securityHeaders(next http.Handler) http.Handler {
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "no-referrer")
+		// HSTS 只在 TLS 终止（直连 TLS 或反代声明 https）且设置页开启时下发：
+		// 自签证书默认关闭，否则浏览器会在用户跳过证书告警后仍强制 HTTPS。
+		if tlsHSTS.Load() && (r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")) {
+			h.Set("Strict-Transport-Security", "max-age=15552000; includeSubDomains")
+		}
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			// 认证响应与业务数据一律不落缓存/代理日志快照。
 			h.Set("Cache-Control", "no-store")

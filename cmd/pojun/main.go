@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"log"
@@ -14,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -21,7 +23,9 @@ import (
 	"github.com/chu0119/pojun/config"
 	"github.com/chu0119/pojun/selfupdate"
 	"github.com/chu0119/pojun/server"
+	"github.com/chu0119/pojun/tlsmgr"
 	"github.com/chu0119/pojun/traffic"
+	"golang.org/x/net/http2"
 )
 
 // version is the build version, injected at release time via
@@ -93,6 +97,9 @@ func run() int {
 		addr    = flag.String("addr", defaultListenAddr, "HTTP listen address (default loopback; use 0.0.0.0:8787 to expose)")
 		dataDir = flag.String("data", filepath.Join(config.BaseDir(), "data"), "data directory for SQLite stores (default: data/ next to the executable)")
 		proxy   = flag.String("proxy", "127.0.0.1:8788", "traffic recording proxy address (empty to disable)")
+		// -tls 是恢复用逃生阀：override 本次进程的证书模式但不写库。
+		// 反代/容器升级后被 301 打断且进不了设置页时，用 -tls=off 临时恢复明文。
+		tlsMode = flag.String("tls", "auto", "certificate mode override for this run: auto|off|selfsigned|import|acme (auto = persisted settings)")
 	)
 	flag.Parse()
 
@@ -103,8 +110,6 @@ func run() int {
 	// hand the build version to the server package so GET /api/health can report it
 	// to the frontend top bar.
 	server.BuildVersion = version
-
-	printBanner(*addr)
 
 	// capture backend logs into the in-memory sink (still to stderr) so the /logs
 	// page can show a live log stream. Do this first, to catch startup logs too.
@@ -158,18 +163,91 @@ func run() int {
 	log.Printf("[config] skill 目录: %s", skillDir)
 	srv := server.New(ctx, mgr, skillDir, *dataDir, config.BaseDir())
 	defer srv.Close()
+
+	// 命令行恢复开关：只覆盖本次进程的内存设置，不写库。
+	if m := strings.ToLower(strings.TrimSpace(*tlsMode)); m != "" && m != "auto" {
+		if err := srv.OverrideTLSMode(m); err != nil {
+			log.Fatalf("tls override %q: %v", m, err)
+		}
+	}
+
+	// 监听地址：设置页保存过 tls_https_addr 就用它，否则用 -addr（默认回环）。
+	// TLS 开启时同一个端口既收 TLS 也收明文 HTTP（远程 301，本机回环直通），不占用 80。
+	listenAddr := srv.TLSEffectiveAddr(*addr)
+	printBanner(listenAddr)
+	srv.EnsureTLS(ctx)
+
 	httpSrv := &http.Server{
-		Addr:              *addr,
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	go func() {
-		log.Printf("POJUN %s backend listening on %s (data=%s, workers=%d)", version, *addr, *dataDir, mgr.Workers())
-		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	tm := srv.TLSManager()
+	tlsModeValue := tlsmgr.ModeOff
+	if tm != nil {
+		tlsModeValue = tm.Settings().Mode
+	}
+	serveErr := func(err error) {
+		if err != nil && err != http.ErrServerClosed {
 			log.Fatalf("serve: %v", err)
 		}
-	}()
+	}
+
+	startedTLS := false
+	if tm != nil && tlsModeValue != tlsmgr.ModeOff {
+		if _, err := tm.GetCertificate(nil); err != nil {
+			// 证书不可用（例如导入文件被删）时宁可明文启动也不让面板打不开；
+			// 状态页会显示 last_error，修好后点“重启”即可切回 HTTPS。
+			log.Printf("[tls] 证书不可用，回落明文 HTTP：%v", err)
+		} else {
+			httpSrv.Handler = tlsmgr.RedirectHandler(srv.Handler(), listenAddr, tlsRedirectHosts(tm)...)
+			httpSrv.TLSConfig = &tls.Config{
+				GetCertificate: tm.GetCertificate,
+				MinVersion:     tls.VersionTLS12,
+				NextProtos:     []string{"h2", "http/1.1"},
+			}
+			ln, actualAddr, err := listenTCP(listenAddr, *addr)
+			if err != nil {
+				log.Fatalf("listen %s: %v", listenAddr, err)
+			}
+			if actualAddr != listenAddr {
+				log.Printf("[tls] 监听 %s 失败（被占用/无权限），回退到启动参数 %s", listenAddr, actualAddr)
+				listenAddr = actualAddr
+				httpSrv.Handler = tlsmgr.RedirectHandler(srv.Handler(), listenAddr, tlsRedirectHosts(tm)...)
+			}
+			sniff := &tlsmgr.SniffListener{Listener: ln, TLSConfig: httpSrv.TLSConfig}
+			if err := http2.ConfigureServer(httpSrv, &http2.Server{}); err != nil {
+				log.Printf("[tls] HTTP/2 配置失败（继续用 HTTP/1.1）：%v", err)
+			}
+			srv.SetTLSRuntime(listenAddr)
+			tm.StartRenewLoop(ctx, func() (tlsmgr.Settings, bool) {
+				return srv.TLSSettings(), true // 自签 SAN 刷新与 ACME 续期都走这条循环
+			})
+			log.Printf("POJUN %s backend listening on %s (HTTPS+HTTP 同端口, data=%s, workers=%d)", version, listenAddr, *dataDir, mgr.Workers())
+			go func() { serveErr(httpSrv.Serve(sniff)) }()
+			startedTLS = true
+		}
+	}
+
+	if !startedTLS {
+		// TLS 配置了但证书不可用：不要在保存端口上静默起明文，
+		// 回退到启动参数端口（默认 8787），状态页会显示 tls_active=false。
+		if tm != nil && tlsModeValue != tlsmgr.ModeOff && *addr != "" && *addr != listenAddr {
+			log.Printf("[tls] 证书不可用，明文回退到启动参数 %s（避免在 %s 上明文提供服务）", *addr, listenAddr)
+			listenAddr = *addr
+		}
+		ln, actualAddr, err := listenTCP(listenAddr, *addr)
+		if err != nil {
+			log.Fatalf("listen %s: %v", listenAddr, err)
+		}
+		if actualAddr != listenAddr {
+			log.Printf("[tls] 监听 %s 失败（被占用/无权限），回退到启动参数 %s", listenAddr, actualAddr)
+			listenAddr = actualAddr
+		}
+		srv.SetPlainRuntime(listenAddr)
+		log.Printf("POJUN %s backend listening on %s (HTTP, data=%s, workers=%d)", version, listenAddr, *dataDir, mgr.Workers())
+		go func() { serveErr(httpSrv.Serve(ln)) }()
+	}
 
 	// Two ways out: a signal (normal stop → exit 0, the start script stops looping)
 	// or a staged update / rollback (→ exit 75, the script relaunches us and the
@@ -188,6 +266,36 @@ func run() int {
 	defer cancel()
 	_ = httpSrv.Shutdown(shutdownCtx)
 	return code
+}
+
+// tlsRedirectHosts 收集允许 301 跳转的主机名：ACME 标识、自签额外 SAN 与当前
+// 证书 SAN。白名单之外的外部 Host 会被拒绝，避免开放重定向。
+func tlsRedirectHosts(tm *tlsmgr.Manager) []string {
+	if tm == nil {
+		return nil
+	}
+	s := tm.Settings()
+	out := append([]string(nil), s.ACME.Identifiers...)
+	out = append(out, s.SelfSignedSANs...)
+	if info := tm.CertInfo(); info != nil {
+		out = append(out, info.SANs...)
+	}
+	return out
+}
+
+// listenTCP 先试主地址；失败且 fallback 不同则回退到 -addr。
+// 这样设置页保存了被占用端口时不会把整个面板挡在系统启动之外。
+func listenTCP(primary, fallback string) (net.Listener, string, error) {
+	ln, err := net.Listen("tcp", primary)
+	if err == nil {
+		return ln, primary, nil
+	}
+	if fallback != "" && fallback != primary {
+		if ln2, err2 := net.Listen("tcp", fallback); err2 == nil {
+			return ln2, fallback, nil
+		}
+	}
+	return nil, primary, err
 }
 
 // shutdownContext deliberately does not derive from signalCtx. If it did, the
