@@ -60,6 +60,9 @@ type Server struct {
 	// 30s TTL 从 settings 刷新；首次使用时惰性初始化。
 	revokeCache     *revocationCache
 	revokeCacheOnce sync.Once
+	// visionProbing 去重同一配置的自动视觉探测：连点保存/多标签页同时保存时，
+	// 只发一次图片请求。key=profile id，value 为空占位。
+	visionProbing sync.Map
 
 	// 文档预览（v0.4.21）：Office/PDF 取样转图片，单 worker 串行（LibreOffice
 	// 的 UserInstallation 不能并发），queue 只放 artifact id。
@@ -327,6 +330,7 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		go newNotifier(s).Run(s.ctx)
 		s.startCleanupWorker(s.ctx)
 		s.startTrafficRetentionWorker()
+		s.startVisionProbeBackfill() // 视觉探测缓存：启动 20s 后为存量配置补测一次
 		// Verify every enabled MCP at startup (connection + tools/list), recording
 		// last_ok/last_error/latency for the UI. Async so it never blocks startup.
 		go s.checkMCPHealthOnStartup()
@@ -446,6 +450,7 @@ func (s *Server) loadLLMConfig() (agent.Config, bool) {
 	cfg.MaxTokens, cfg.MaxTokensField = p.MaxTokens, p.MaxTokensField
 	cfg.SessionHeaderKey = p.SessionHeaderKey
 	cfg.UserAgent = p.UserAgent
+	cfg.Vision = profileVision(p)
 	s.applyProfileRetry(&cfg, p)
 	if cfg.APIKey == "" {
 		return cfg, false
@@ -472,6 +477,7 @@ func (s *Server) saveLLMConfig(cfg agent.Config) error {
 	var maxTokensField string
 	var sessionHeaderKey string
 	var userAgent string
+	var visionMode string
 	var retry db.RetryOverride
 	if profs, _ := s.m.pg.ListProfiles(); profs != nil {
 		for _, p := range profs {
@@ -480,6 +486,7 @@ func (s *Server) saveLLMConfig(cfg agent.Config) error {
 				maxTokens, maxTokensField = p.MaxTokens, p.MaxTokensField
 				sessionHeaderKey = p.SessionHeaderKey
 				userAgent = p.UserAgent
+				visionMode = p.VisionMode
 				retry = p.Retry
 				break
 			}
@@ -491,13 +498,18 @@ func (s *Server) saveLLMConfig(cfg agent.Config) error {
 		ContextWindowK: cfg.ContextWindowK, ThinkingType: cfg.ThinkingType, ReasoningEffort: cfg.ReasoningEffort, IsDefault: true,
 		Priority: priority, PoolExclude: poolExclude, Streaming: streaming,
 		MaxTokens: maxTokens, MaxTokensField: maxTokensField, SessionHeaderKey: sessionHeaderKey,
-		UserAgent: userAgent,
-		Retry:     retry,
+		UserAgent: userAgent, VisionMode: visionMode,
+		Retry: retry,
 	})
 	if err != nil {
 		return err
 	}
-	return s.m.pg.SetActiveProfile(newID)
+	if err := s.m.pg.SetActiveProfile(newID); err != nil {
+		return err
+	}
+	// legacy 端点同样触发自动视觉探测（仅当视觉仍是「自动」档）。
+	s.scheduleVisionProbe(newID)
+	return nil
 }
 
 // reapplyActiveProfile hot-reloads the engine from the active DB profile so that
@@ -586,6 +598,7 @@ func (s *Server) applyLLM(cfg agent.Config) error {
 	// chat agent serves MANY custom agents by key → it holds the GLOBAL opts
 	// (backend/key) and gates Enabled per-conversation-agent at Chat time. 对话始终用激活配置。
 	s.chatAgent = agent.NewChatAgent(prov, cfg.Model, s.m.dir, tx, win) // chat page runner
+	s.chatAgent.SetVision(func() bool { return cfg.Vision })
 	s.chatAgent.SetProxy(s.m.ProxyAddr(), s.m.ProxyCACert())
 	s.chatAgent.SetWebSearch(s.m.WebSearchOpts())
 	s.chatAgent.SetGuard(s.chatGuard())
@@ -630,6 +643,7 @@ func (s *Server) profileConfig(p *db.LLMProfile) (agent.Config, bool) {
 	cfg.MaxTokens, cfg.MaxTokensField = p.MaxTokens, p.MaxTokensField
 	cfg.SessionHeaderKey = p.SessionHeaderKey
 	cfg.UserAgent = p.UserAgent
+	cfg.Vision = profileVision(p)
 	s.applyProfileRetry(&cfg, p)
 	if cfg.APIKey == "" {
 		return cfg, false
@@ -749,6 +763,9 @@ func (s *Server) providerForProfileEffort(p *db.LLMProfile, effort, agentKey str
 	// Wrap with recorder, tagged with the effective effort so the LLM record shows
 	// what was actually sent (the profile value or an agent override).
 	prov = llmrec.Wrap(prov, s.m.PG(), cfg.Model, p.Name, cfg.ThinkingType, cfg.ReasoningEffort, s.m.LLMRecordEnabled, s.m.LLMRecordBodyMode)
+	// 视觉守卫再包一层（幂等）：让审计记录看到的是剥离/限量后的请求，而不是
+	// 带着 base64 的原请求（NewProvider 内层那次服务直连调用方）。
+	prov = agent.VisionGuard(prov, cfg.Vision)
 	prov = bindSideProvider(prov, cfg, p.ID, p.Name, agentKey)
 	s.provCacheMu.Lock()
 	if generation != s.provCacheGen {
@@ -782,6 +799,7 @@ func (s *Server) chatAgentForProfile(agentKey string, id int64) *agent.ChatAgent
 	}
 	tx := transcript.NewStore(filepath.Join(s.m.dir, "transcripts"))
 	ca := agent.NewChatAgent(s.poolForBinding(agentKey, id, prov, cfg), cfg.Model, s.m.dir, tx, cfg.CompactionWindow())
+	ca.SetVision(func() bool { return cfg.Vision })
 	ca.SetProxy(s.m.ProxyAddr(), s.m.ProxyCACert())
 	ca.SetWebSearch(s.m.WebSearchOpts())
 	ca.SetGuard(s.chatGuard())
@@ -1159,6 +1177,7 @@ func (s *Server) Handler() http.Handler {
 	// LLM 多 profile
 	mux.HandleFunc("GET /api/llm/profiles", s.pgListProfiles)
 	mux.HandleFunc("POST /api/llm/profiles", s.pgSaveProfile)
+	mux.HandleFunc("POST /api/llm/vision-probe", s.llmVisionProbe)
 	mux.HandleFunc("DELETE /api/llm/profiles/{id}", s.pgDeleteProfile)
 	mux.HandleFunc("POST /api/llm/profiles/active", s.pgActivateProfile)
 	mux.HandleFunc("GET /api/llm/retry-policy", s.pgGetLLMRetryPolicy)

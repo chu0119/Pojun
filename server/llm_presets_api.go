@@ -23,11 +23,14 @@ func (s *Server) llmPresets(w http.ResponseWriter, r *http.Request) {
 func (s *Server) llmModelMeta(w http.ResponseWriter, r *http.Request) {
 	model := strings.TrimSpace(r.URL.Query().Get("model"))
 	e, source := llmpresets.LookupMeta(model)
+	vision, visionSource := llmpresets.ResolveVision(model, "")
 	resp := map[string]any{
-		"model":     model,
-		"context_k": e.ContextK,
-		"reasoning": e.Reasoning,
-		"source":    source,
+		"model":         model,
+		"context_k":     e.ContextK,
+		"reasoning":     e.Reasoning,
+		"source":        source,
+		"vision":        vision,
+		"vision_source": visionSource,
 	}
 	if e.MaxOutput > 0 {
 		resp["max_output_k"] = e.MaxOutput

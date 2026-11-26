@@ -644,10 +644,15 @@ type LLMProfileDTO struct {
 	PromptApplyInherited bool   `json:"prompt_apply_inherited"`
 	// 反向引用：哪些 Agent 覆盖了本配置的思考强度（只读，来自 effort 覆盖表）。
 	EffortOverrides []db.AgentEffortRef `json:"effort_overrides,omitempty"`
+	// 视觉能力：vision_mode 是用户三态（''=自动/on/off），vision 是解析后的实际
+	// 能力，vision_source 说明结论来源（profile/probe/preset/name/default）。
+	VisionMode   string `json:"vision_mode"`
+	Vision       bool   `json:"vision"`
+	VisionSource string `json:"vision_source"`
 }
 
 func llmProfileDTO(p *db.LLMProfile) LLMProfileDTO {
-	return LLMProfileDTO{
+	out := LLMProfileDTO{
 		ID:                   i64s(p.ID),
 		Name:                 p.Name,
 		Format:               p.Format,
@@ -674,7 +679,10 @@ func llmProfileDTO(p *db.LLMProfile) LLMProfileDTO {
 		PromptMode:           p.PromptMode,
 		PromptApplyInherited: p.PromptApplyInherited,
 		EffortOverrides:      p.EffortOverrides,
+		VisionMode:           p.VisionMode,
 	}
+	out.Vision, out.VisionSource = profileVisionSource(p)
+	return out
 }
 
 func llmProfileDTOs(in []*db.LLMProfile) []LLMProfileDTO {

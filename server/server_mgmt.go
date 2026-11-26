@@ -1901,6 +1901,15 @@ func (s *Server) pgSaveProfile(w http.ResponseWriter, r *http.Request) {
 	if p.Format != "openai" || p.MaxTokensField != llm.MaxTokensFieldCompletion {
 		p.MaxTokensField = ""
 	}
+	// 视觉三态只接受 ''/on/off（DB CHECK 同样约束）；非法值在这里挡掉，别把
+	// SQLSTATE 23514 变成 500。
+	p.VisionMode = strings.ToLower(strings.TrimSpace(p.VisionMode))
+	switch p.VisionMode {
+	case "", "on", "off":
+	default:
+		writeErr(w, 400, "vision_mode 只能是空（自动）、on 或 off")
+		return
+	}
 	// User-Agent 是单行 HTTP 头值：含 CR/LF 会被 Go transport 拒绝（也是 header
 	// injection 的形状），在这里直接挡掉并给明确报错，别等运行时每个请求都失败。
 	p.UserAgent = strings.TrimSpace(p.UserAgent)
@@ -1941,6 +1950,9 @@ func (s *Server) pgSaveProfile(w http.ResponseWriter, r *http.Request) {
 	// profile's key/model/priority/pool_exclude edit reshapes the chain, so the
 	// engine's provider has to be rebuilt either way.
 	s.reapplyActiveProfile()
+	// 视觉自动探测：配置指纹变化（或从没测过）才在后台补测一次并落库；同配置
+	// 再次保存不消耗任何 token。用户显式选了支持/不支持时由调度器自行跳过。
+	s.scheduleVisionProbe(id)
 	writeJSON(w, 200, map[string]any{"id": id})
 }
 

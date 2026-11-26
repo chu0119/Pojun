@@ -217,6 +217,13 @@ func (r *taskLLMRuntime) nonStreaming() bool {
 	return ok && !cfg.Stream
 }
 
+// vision reports whether the currently-active source accepts images. Unresolvable
+// → false: view_image stays unavailable and no image is sent.
+func (r *taskLLMRuntime) vision() bool {
+	cfg, ok := r.activeCfg()
+	return ok && cfg.Vision
+}
+
 // maxTokens returns the currently-active source's per-reply output cap.
 // Unresolvable → 0, i.e. send no cap, matching the pre-setting behaviour.
 func (r *taskLLMRuntime) maxTokens() int {
@@ -781,6 +788,7 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 	wk.SetArtifactRecorder(s) // v0.5.0 证据附件：save_evidence 落盘登记
 	wk.SetCompactionWindowResolver(workerRuntime.CompactionWindow)
 	wk.SetNonStreaming(workerRuntime.nonStreaming) // 按任务当前激活 profile 的流式开关(每轮读)
+	wk.SetVision(workerRuntime.vision)             // 视觉能力跟随当前激活 profile(每轮读)
 	wk.SetMaxTokens(workerRuntime.maxTokens)       // 同上,输出上限也跟随当前激活 profile
 	wk.SetNoaEnabled(s.m.NoaCompactionEnabled)     // 实验功能:noa 上下文压缩(平台级开关,每 run 读)
 	wk.SetRunTimeout(time.Duration(s.agentRunSeconds("worker")) * time.Second)
@@ -819,6 +827,7 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 	pl.SetFindingRecorder(s.evidenceStore())
 	pl.SetCompactionWindowResolver(plannerRuntime.CompactionWindow)
 	pl.SetNonStreaming(plannerRuntime.nonStreaming)
+	pl.SetVision(plannerRuntime.vision) // planner 不调 view_image，但工具集/提示词同源
 	pl.SetMaxTokens(plannerRuntime.maxTokens)
 	pl.SetNoaEnabled(s.m.NoaCompactionEnabled) // 实验功能:noa 上下文压缩(平台级开关,每 run 读)
 	pl.SetKillWork(s.engine.KillWork)
@@ -859,6 +868,7 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 	main.SetFindingRecorder(s.evidenceStore())
 	main.SetCompactionWindowResolver(mainRuntime.CompactionWindow)
 	main.SetNonStreaming(mainRuntime.nonStreaming)
+	main.SetVision(mainRuntime.vision) // 主 Agent 可把截图交给模型看
 	main.SetMaxTokens(mainRuntime.maxTokens)
 	main.SetNoaEnabled(s.m.NoaCompactionEnabled) // 实验功能:noa 上下文压缩(平台级开关,每 run 读)
 	maProxy, maCA := s.m.ProxyAddr(), s.m.ProxyCACert()
