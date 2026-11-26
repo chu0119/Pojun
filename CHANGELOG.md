@@ -3,11 +3,14 @@
 本项目的重要变更记录在此文件中，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
 ## [Unreleased]
-### 能力：内置 HTTPS 与证书管理（内部版 v0.9.78 下放）
+### 能力：内置 HTTPS 与证书管理（opt-in，内部版 v0.9.78 下放）
 
-- **同端口 TLS/明文共存**：`tlsmgr.SniffListener` 按首字节分流，HTTPS 与 HTTP 共用
-  `:8787`；远程明文 301 到 HTTPS（带 Host 白名单，防开放重定向），本机回环明文直通
-  （兼容同机 nginx 回源与健康检查）；HTTP/2、证书热加载、慢连接不阻塞 Accept。
+- **默认不启用 HTTPS**：`tls_mode` 缺省为 `off`，新装与存量升级都不自动切换、不写迁移
+  标记、不生成证书；需要时在设置页显式启用（自签一键 / 导入 / ACME），不存在因 301
+  或证书信任打断 Docker Desktop、非同机反代等现有部署的问题。
+- **同端口 TLS/明文共存**：启用后 `tlsmgr.SniffListener` 按首字节分流，HTTPS 与 HTTP
+  共用 `:8787`；远程明文 301 到 HTTPS（带 Host 白名单，防开放重定向），本机回环明文
+  直通（兼容同机 nginx 回源与健康检查）；HTTP/2、证书热加载、慢连接不阻塞 Accept。
 - **证书模式**：自签（本地 CA + 叶子，自动收集主机名/回环/网卡 IP，SAN 变化自动轮换）、
   导入 PEM（证书链 + 未加密私钥，校验匹配/有效期/大小/CA 误传/serverAuth）、
   Let's Encrypt ACME（HTTP-01 / TLS-ALPN-01，IP 证书 shortlived，按寿命一半续期）。
@@ -16,12 +19,12 @@
 - **hostd 防火墙临时租约**：只在 80/443 原本未放行时临时放行，申请结束/超时撤销；
   租约落盘、hostd 重启接管未过期租约并撤销过期/非法端口项；ufw/firewalld。
   hostd 单元新增 `CAP_NET_ADMIN`、`AF_NETLINK`、`StateDirectory`（需重跑 install.sh）。
-- **迁移与默认值**：首次启动一次性启用自签 HTTPS（标记 `tls_migration_https_v1`），
-  管理员改成 `off` 后不再覆盖；新增 `-tls=off|selfsigned|import|acme` 命令行逃生阀
-  （只覆盖本次进程，不写库）。
+- **显式启用与逃生阀**：设置页 off 状态提供「启用 HTTPS（自签）」按钮，另有导入 /
+  ACME 显式路径；`-tls=off|selfsigned|import|acme` 只覆盖本次进程、不写库，供反代/
+  容器场景临时回退。
 - **设置页「HTTPS 与证书」卡片**：状态/SAN/到期、CA 下载、模式切换、导入、ACME
   （staging/挑战方式）、HSTS 开关、防火墙状态、重启生效、监听地址与访问 URL。
-- **HSTS**：仅在 TLS 终止且设置页开启时下发；自签默认关闭，避免浏览器锁死。
+- **HSTS**：仅在 TLS 终止且设置页开启时下发；off/自签默认关闭，避免浏览器锁死。
 
 ### 安全与稳定性：内部版 v0.9.68–v0.9.95 首批下放
 
