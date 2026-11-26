@@ -71,6 +71,12 @@ type Server struct {
 	// lm is the process-wide callback listener. It is initialized lazily so an
 	// installation that never needs a callback opens no extra socket or goroutine.
 	listenOnce sync.Once
+	// baseGOMAXPROCS 是进程启动时 Go 运行时的 P 数（Go 1.25+ 默认按 cgroup
+	// 配额计算）。关闭资源自适应时恢复到它，而不是硬写 runtime.NumCPU。
+	baseGOMAXPROCS int
+	// baseMemLimit 是进程启动时的 Go 堆上限（含 GOMEMLIMIT 环境变量）。关闭
+	// 资源自适应时恢复它，不能一律写成 MaxInt64——那会悄悄吃掉用户的 GOMEMLIMIT。
+	baseMemLimit int64
 	// listeners 是红队回连接收器管理器（listener 包）：接住反弹 shell/OOB 回连
 	// 并留证。绑定端口无需特权（1024+），不经 hostd。
 	listeners *listener.Manager
@@ -216,6 +222,9 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		provByProfile:  map[provKey]*provEntry{}, llmHealth: newLLMHealthRegistry(m.pg),
 		taskAgents: map[string]*taskAgentBundle{}, archiveWake: make(chan struct{}, 1)}
 	s.jwtKey.Store(key)
+	// 资源自适应在设置页开启时可能修改 GOMAXPROCS/GOMEMLIMIT；先记下进程
+	// 启动值（Go 1.25+ 默认按 cgroup 配额算），关闭时才能原样恢复。
+	s.captureBaseRuntime()
 	// 证书管理器必须早于路由注册：设置页与监听都依赖它。失败只记录，不阻塞启动。
 	s.initTLS()
 	llmpresets.InitCache(dataDir) // 厂商模型元数据缓存（7 天 TTL，失败静默用内嵌快照）
@@ -364,6 +373,9 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 	} else {
 		log.Printf("[engine] no LLM provider configured — engine idle until set via /api/llm or env")
 	}
+	// 资源自适应：读到数据库后按设置生成计划（默认关闭 = 只探测、不改变任何
+	// 运行时行为）。放在恢复任务运行时之前，保证恢复的任务看到的是最终 plan。
+	s.applyResourcePlan()
 	s.restoreTaskRuntimes()
 	go s.reconcileConcurrency()
 	s.startTaskArchiveWorker()
@@ -371,6 +383,8 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 	// 主服务写不进去，只能由它自己换装——这里只负责发现版本不一致并通知。
 	s.StartHostdReconcile()
 	s.wireInterceptReviewer() // LLM 兜底审批:未命中拦截规则的命令交给模型判定
+	// 每小时重算一次，跟上扩容/容器限额调整；只重算计划，不写系统配置。
+	go s.resourceLoop(ctx)
 	return s
 }
 
@@ -1021,6 +1035,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/diagnostics/export", s.handleDiagnosticsExport)
 	mux.HandleFunc("GET /api/settings", s.getSettings)
 	mux.HandleFunc("PUT /api/settings", s.putSettings)
+	// 资源自适应：容量/计划/依据、自动/手动、阈值与手工覆盖。
+	mux.HandleFunc("GET /api/resource", s.resourceGet)
+	mux.HandleFunc("PUT /api/resource", s.resourcePut)
+	mux.HandleFunc("POST /api/resource/retune", s.resourceRetune)
 	// 内置 HTTPS 与证书管理。
 	mux.HandleFunc("GET /api/tls/status", s.tlsStatus)
 	mux.HandleFunc("PUT /api/tls/settings", s.tlsSaveSettings)

@@ -23,6 +23,7 @@ import (
 	"github.com/chu0119/pojun/guard"
 	"github.com/chu0119/pojun/intercept"
 	"github.com/chu0119/pojun/mihomo"
+	"github.com/chu0119/pojun/resource"
 	"github.com/chu0119/pojun/traffic"
 	"github.com/chu0119/pojun/vulnintel"
 )
@@ -458,16 +459,30 @@ func (m *Manager) SetConcurrency(enabled bool, limit int) error {
 
 // Workers returns the configured concurrent work-agent count (default 3). Read
 // per-task at engine.Run, so a change applies to tasks started afterwards.
+//
+// 资源自适应只填「显式未配置」这一档：数据库里有 workers（老库/用户手动设过）
+// 就永远以它为准；只有从未配置且用户显式开启了自动调优时，才用计划推导值。
+// 因此升级到带资源自适应的版本不会悄悄改掉任何存量部署的并发数。
 func (m *Manager) Workers() int {
 	v, ok, err := m.pg.GetSetting(settingWorkers)
-	if err != nil || !ok {
+	if err != nil {
 		return defaultWorkers
 	}
-	n, err := strconv.Atoi(strings.TrimSpace(v))
-	if err != nil || n <= 0 {
-		return defaultWorkers
+	if ok {
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil || n <= 0 {
+			// 显式配置损坏时退回默认值，而不是改吃自动计划——配置坏了不应该
+			// 变成“自动”，否则用户更难发现输入错了。
+			return defaultWorkers
+		}
+		return n
 	}
-	return n
+	if m.pg.GetBool(settingResourceAutoTune, false) {
+		if p := resource.PlanNow(); p.Enabled && p.Workers > 0 {
+			return p.Workers
+		}
+	}
+	return defaultWorkers
 }
 
 // SetWorkers persists the concurrent work-agent count. Values <=0 are rejected.
