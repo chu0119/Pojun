@@ -96,7 +96,14 @@ export function TLSCard() {
     setInfo(r);
     setLoadError(null);
     setMode(r.settings.mode);
-    setAddr(r.listen_addr || r.settings.https_addr || ":8787");
+    // 输入框显示「已保存的监听地址」：直接显示运行地址会在保存新端口后被覆盖回
+    // 旧值，needsRestart 随之失效（用户看不到「待重启生效」）。未保存过地址时以
+    // 实际运行地址（来自 -addr）为准。
+    if (r.addr_saved && r.settings.https_addr) {
+      setAddr(r.settings.https_addr);
+    } else {
+      setAddr(r.listen_addr || r.settings.https_addr || ":8787");
+    }
     setAddrTouched(false);
     setHsts(r.settings.hsts);
     setFirewallAuto(r.settings.firewall_auto);
