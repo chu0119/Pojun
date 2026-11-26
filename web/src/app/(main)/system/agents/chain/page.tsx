@@ -148,7 +148,9 @@ function ChainPageInner() {
   }
 
   function setView(next: View) {
-    if (!guard()) return;
+    // 清单与关系图之间切换不丢草稿（检视器不重新挂载），不需要确认；
+    // 切到 LLM 路由会卸载装配链与未保存的编辑区，要先确认。
+    if (next === "route" && view !== "route" && !guard()) return;
     router.replace(url({ view: next }));
   }
 
