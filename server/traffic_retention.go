@@ -412,7 +412,14 @@ func (s *Server) runScheduledRetention(ctx context.Context) {
 	if s == nil || s.m == nil || s.m.pg == nil {
 		return
 	}
-	if s.m.traffic != nil && s.m.TrafficMode() != "off" {
+	configured := false
+	switch s.m.TrafficMode() {
+	case "evidence":
+		configured = s.trafficEvidenceHours() > 0 || s.trafficEvidenceMaxGB() > 0
+	case "full":
+		configured = s.trafficRetentionDays() > 0
+	}
+	if s.m.traffic != nil && configured {
 		s.trafficRetentionMu.Lock()
 		if _, err := s.runTrafficRetentionLocked(ctx, false); err != nil {
 			log.Printf("[traffic-retention] 自动清理失败: %v", err)
