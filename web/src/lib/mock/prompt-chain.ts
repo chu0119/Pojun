@@ -232,8 +232,9 @@ export function mockPromptChain(agentKey: string, profileId?: string | number): 
       est_tokens: Math.floor((presentChars + 1) / 2),
     },
     warnings: [
-      "运行时注入在任务执行时生成；本视图只给位置与条件，不展开正文、不连接 MCP、不含凭据。",
-      "MCP「playwright」上次健康检查失败，缓存可能过期。",
+      // 与 server/prompt_chain.go 的告警原文一致；MCP 健康问题由前端按 health 派生，不在这里重复。
+      "静态视图中的出口代理地址可能已脱敏或为运行时占位；实际出口以运行为准",
+      "流量捕获未开启：traffic_* 工具不会出现在运行时",
     ],
     static_only: true,
     prompt_max_runes: 65535,
