@@ -153,10 +153,16 @@ func normalizeKEVProduct(s string) string {
 
 // VulnHit 是 search_vulns 的单条结果（详情字段刻意精简，让 LLM 先看摘要）。
 type VulnHit struct {
-	CVEID     string   `json:"cve_id"`
-	Severity  string   `json:"severity"`
-	Score     *float64 `json:"cvss_score,omitempty"`
-	KEV       bool     `json:"kev"`
+	CVEID    string   `json:"cve_id"`
+	Severity string   `json:"severity"`
+	Score    *float64 `json:"cvss_score,omitempty"`
+	// EPSS / EPSSPercentile 是 FIRST 的 30 天利用概率（0–1）与百分位；nil=无评分。
+	// 排序语义：KEV > EPSS > 版本区间命中 > CVSS（见 SearchVulns 的 ORDER BY）。
+	EPSS           *float64 `json:"epss,omitempty"`
+	EPSSPercentile *float64 `json:"epss_percentile,omitempty"`
+	// EPSSDate 是该评分对应的打分日（YYYY-MM-DD）；空=无评分。
+	EPSSDate string `json:"epss_date,omitempty"`
+	KEV      bool   `json:"kev"`
 	Published string   `json:"published,omitempty"`
 	Title     string   `json:"title"`
 	// 命中的 (vendor, product) 对，LLM 用它确认检索词与目标组件对得上。
@@ -198,6 +204,7 @@ func (s *Store) SearchVulns(ctx context.Context, vendor, product, version string
 SELECT c.cve_id, c.severity, c.cvss_score, c.kev, COALESCE(c.published_at::text,''),
        COALESCE(c.title,''), c.kev_date_added IS NOT NULL AS kev_row,
        COALESCE(array_to_json(c.cwes)::text,'[]'),
+       c.epss, c.epss_percentile, COALESCE(to_char(c.epss_date,'YYYY-MM-DD'),''),
        COALESCE((
          SELECT string_agg(DISTINCT p.vendor || '/' || p.product, ', ')
          FROM vuln_cpe_products p WHERE p.cve_id = c.cve_id AND p.product ILIKE $1
@@ -209,6 +216,7 @@ JOIN vuln_cpe_products p ON p.cve_id = c.cve_id AND p.product ILIKE $1
                         AND ($2 = '' OR p.vendor ILIKE '%' || $2 || '%')
 GROUP BY c.id
 ORDER BY c.kev DESC,
+         COALESCE(c.epss,0) DESC,
          (CASE WHEN $3 <> '' AND c.cpe_criteria::text LIKE '%' || $3 || '%' THEN 1 ELSE 0 END) DESC,
          c.cvss_score DESC NULLS LAST, c.published_at DESC
 LIMIT $4`, args...)
@@ -222,7 +230,8 @@ LIMIT $4`, args...)
 		var h VulnHit
 		var kevRow bool
 		var matched, hitProduct, cwesJSON string
-		if err := rows.Scan(&h.CVEID, &h.Severity, &h.Score, &h.KEV, &h.Published, &h.Title, &kevRow, &cwesJSON, &matched, &hitProduct, &h.Source); err != nil {
+		if err := rows.Scan(&h.CVEID, &h.Severity, &h.Score, &h.KEV, &h.Published, &h.Title, &kevRow, &cwesJSON,
+			&h.EPSS, &h.EPSSPercentile, &h.EPSSDate, &matched, &hitProduct, &h.Source); err != nil {
 			return nil, err
 		}
 		h.Cwes = unmarshalStringArray([]byte(cwesJSON))
@@ -274,13 +283,18 @@ type VulnDetail struct {
 	Severity    string   `json:"severity"`
 	Score       *float64 `json:"cvss_score,omitempty"`
 	Vector      string   `json:"cvss_vector,omitempty"`
-	KEV         bool     `json:"kev"`
-	Published   string   `json:"published,omitempty"`
-	Modified    string   `json:"modified,omitempty"`
-	Title       string   `json:"title"`
-	Description string   `json:"description"`
-	Criteria    []string `json:"cpe_criteria,omitempty"`
-	Refs        []string `json:"references,omitempty"`
+	// EPSS / EPSSPercentile / EPSSDate 是 FIRST 每日利用概率评分（0–1）、百分位
+	// 与打分日；nil/空 = 尚未被 EPSS 覆盖（与「评分 0」不同）。
+	EPSS           *float64 `json:"epss,omitempty"`
+	EPSSPercentile *float64 `json:"epss_percentile,omitempty"`
+	EPSSDate       string   `json:"epss_date,omitempty"`
+	KEV            bool     `json:"kev"`
+	Published      string   `json:"published,omitempty"`
+	Modified       string   `json:"modified,omitempty"`
+	Title          string   `json:"title"`
+	Description    string   `json:"description"`
+	Criteria       []string `json:"cpe_criteria,omitempty"`
+	Refs           []string `json:"references,omitempty"`
 	// Source 是数据来源:nvd / ghsa。
 	Source string `json:"source,omitempty"`
 	// Cwes 是弱点编号（CWE-79 这类）——agent 侧据此提示对应方法论 skill。
@@ -335,9 +349,11 @@ func (s *Store) GetVuln(ctx context.Context, cveID string) (*VulnDetail, error) 
 	var pub, mod *time.Time
 	err := s.db.QueryRowContext(ctx, `SELECT cve_id, severity, cvss_score, COALESCE(cvss_vector,''),
 		kev, published_at, modified_at, title, description, cpe_criteria, refs, source,
-		COALESCE(array_to_json(cwes)::text,'[]')
+		COALESCE(array_to_json(cwes)::text,'[]'),
+		epss, epss_percentile, COALESCE(to_char(epss_date,'YYYY-MM-DD'),'')
 		FROM vuln_cves WHERE cve_id=$1`, cveID).
-		Scan(&d.CVEID, &d.Severity, &d.Score, &d.Vector, &d.KEV, &pub, &mod, &d.Title, &d.Description, &criteria, &refs, &d.Source, &cwes)
+		Scan(&d.CVEID, &d.Severity, &d.Score, &d.Vector, &d.KEV, &pub, &mod, &d.Title, &d.Description, &criteria, &refs, &d.Source, &cwes,
+			&d.EPSS, &d.EPSSPercentile, &d.EPSSDate)
 	if err == nil {
 		if pub != nil {
 			d.Published = pub.UTC().Format(time.RFC3339)

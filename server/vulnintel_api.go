@@ -30,6 +30,8 @@ type vulnintelConfigDTO struct {
 	GitHubSet      bool   `json:"github_token_set"`
 	Proxy          string `json:"proxy"`
 	PocEnabled     bool   `json:"poc_enabled"`
+	// EPSSEnabled 控制 FIRST EPSS 每日评分同步（默认关闭）。
+	EPSSEnabled    bool   `json:"epss_enabled"`
 	BackfillDays   int    `json:"backfill_days"`
 	MaxRuntimeMin  int    `json:"max_runtime_minutes"`
 	MaintenanceURL string `json:"maintenance_proxy"` // 只读回显：走「跟随维护代理」时的兜底值
@@ -43,6 +45,7 @@ func (s *Server) vulnintelConfigForWrite() vulnintelConfigDTO {
 		GitHubToken:    strings.TrimSpace(settingString(pg, settingVulnIntelGitHubToken)),
 		Proxy:          strings.TrimSpace(settingString(pg, settingVulnIntelProxy)),
 		PocEnabled:     pg.GetBool(settingVulnIntelPocEnabled, false),
+		EPSSEnabled:    pg.GetBool(settingVulnIntelEPSSEnabled, false),
 		BackfillDays:   intSetting(pg, settingVulnIntelBackfillDays, 0),
 		MaxRuntimeMin:  intSetting(pg, settingVulnIntelMaxRuntimeMin, defaultVulnIntelMaxRuntimeMin),
 		MaintenanceURL: s.m.maintenanceProxy(),
@@ -173,6 +176,7 @@ func (s *Server) vulnintelSaveConfig(w http.ResponseWriter, r *http.Request) {
 		GitHubToken   *string `json:"github_token"`
 		Proxy         *string `json:"proxy"`
 		PocEnabled    *bool   `json:"poc_enabled"`
+		EPSSEnabled   *bool   `json:"epss_enabled"`
 		BackfillDays  *int    `json:"backfill_days"`
 		MaxRuntimeMin *int    `json:"max_runtime_minutes"`
 	}
@@ -223,6 +227,12 @@ func (s *Server) vulnintelSaveConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.PocEnabled != nil {
 		if err := pg.SetBool(settingVulnIntelPocEnabled, *req.PocEnabled); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+	}
+	if req.EPSSEnabled != nil {
+		if err := pg.SetBool(settingVulnIntelEPSSEnabled, *req.EPSSEnabled); err != nil {
 			writeErr(w, 500, err.Error())
 			return
 		}
@@ -316,6 +326,9 @@ func (s *Server) vulnintelProbe(w http.ResponseWriter, r *http.Request) {
 		// GHSA 的真实端点：advisories API 匿名可读。探它而不是探
 		// api.github.com 根路径——根路径能通不代表 advisory 能取到。
 		{"ghsa", "https://api.github.com/advisories?per_page=1"},
+		// EPSS 每日评分（gz，约 2.8MB）：probeURL 只读前 4KB 就断开，不整份下载。
+		// 探它是为了分清「EPSS 开了但同步失败」到底是网络还是源的问题。
+		{"epss", defaultEPSSProbeURL},
 	}
 	results := make([]probeResult, 0, len(checks)+1)
 	for _, c := range checks {
@@ -331,6 +344,10 @@ func (s *Server) vulnintelProbe(w http.ResponseWriter, r *http.Request) {
 		"results":   results,
 	})
 }
+
+// defaultEPSSProbeURL 是 EPSS 每日评分地址的探测副本（探活只读前 4KB）。
+// 与 vulnintel 包内的默认值保持一致；独立常量是为了不在 server 暴露解析实现。
+const defaultEPSSProbeURL = "https://epss.empiricalsecurity.com/epss_scores-current.csv.gz"
 
 func probeURL(ctx context.Context, hc *http.Client, source, target, proxy string) probeResult {
 	res := probeResult{Source: source, Target: target, ProxyUsed: proxy}

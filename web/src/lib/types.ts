@@ -2326,6 +2326,8 @@ export interface VulnIntelConfig {
   github_token_set: boolean;
   proxy: string;
   poc_enabled: boolean;
+  /** FIRST EPSS 每日评分同步（默认关闭）；开启后 search_vulns 按 EPSS 优化排序。 */
+  epss_enabled: boolean;
   backfill_days: number;
   max_runtime_minutes: number;
   maintenance_proxy: string;
@@ -2338,6 +2340,7 @@ export interface VulnIntelConfigPatch {
   github_token?: string;
   proxy?: string;
   poc_enabled?: boolean;
+  epss_enabled?: boolean;
   backfill_days?: number;
   max_runtime_minutes?: number;
 }
@@ -2357,7 +2360,9 @@ export interface VulnIntelStatus {
   enabled: boolean;
   nuclei_templates_dir: string;
   sources: VulnIntelSource[];
-  counts: { cves: number; kev: number; pocs: number };
+  counts: { cves: number; kev: number; pocs: number; epss?: number; ghsa?: number };
+  /** 覆盖率：EPSS 只更新库内已有 CVE，scored/total 是唯一可信的进度指标。 */
+  coverage?: { epss?: { scored: number; total: number; pct: number } };
   config?: VulnIntelConfig;
   sync_running?: boolean;
   sync_started_at?: number;

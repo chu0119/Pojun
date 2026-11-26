@@ -4060,7 +4060,8 @@ export const settings: Settings = {
 export const vulnintelStatus: VulnIntelStatus = {
   enabled: true,
   nuclei_templates_dir: "/opt/pojun/data/nuclei-templates",
-  counts: { cves: 424726, kev: 1779, pocs: 1451 },
+  counts: { cves: 424726, kev: 1779, pocs: 1451, epss: 310244 },
+  coverage: { epss: { scored: 310244, total: 424726, pct: 73.0 } },
   sync_running: false,
   next_tick_hint: "下一轮约 32 分钟后",
   config: {
@@ -4071,6 +4072,7 @@ export const vulnintelStatus: VulnIntelStatus = {
     github_token_set: false,
     proxy: "",
     poc_enabled: true,
+    epss_enabled: false,
     backfill_days: 0,
     max_runtime_minutes: 30,
     maintenance_proxy: "",

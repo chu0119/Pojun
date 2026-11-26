@@ -86,7 +86,8 @@ func (t *ToolSet) searchVulns() actool.CoreTool {
 		"search_vulns",
 		"按组件名检索【公开已知漏洞】库（NVD + GitHub Advisory Database + CISA KEV 在野利用清单）。"+
 			"识别出目标组件（Web 中间件/框架/服务/固件等）后先查这里：有 KEV 标记=已在野利用、优先考虑；"+
-			"结果里的 cvss_score 与 severity 用于排优先级。\n"+
+			"结果里的 cvss_score 与 severity 用于排优先级，epss 是 30 天内被利用的概率（0–1，越高越值得打）。"+
+			"默认排序：KEV > EPSS > 版本区间命中 > CVSS。\n"+
 			"给 version 参数可做版本判定：\n"+
 			"  - version_in_range=true → 目标版本**落在受影响区间内**（该打）\n"+
 			"  - version_in_range=false → 目标版本**不在**受影响区间（通常不用打）\n"+

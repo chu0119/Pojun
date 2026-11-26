@@ -29,6 +29,8 @@ const SOURCE_LABEL: Record<string, string> = {
   nvd: "NVD(CVE 全量/增量)",
   kev: "CISA KEV(在野利用)",
   poc: "GitHub PoC 聚合",
+  epss: "FIRST EPSS(利用概率评分)",
+  ghsa: "GitHub Advisory(版本区间补充)",
 };
 
 type ProbeRow = {
@@ -66,6 +68,7 @@ export default function VulnintelPage() {
   const [ghToken, setGhToken] = React.useState("");
   const [proxy, setProxy] = React.useState("");
   const [pocEnabled, setPocEnabled] = React.useState(false);
+  const [epssEnabled, setEpssEnabled] = React.useState(false);
   const [backfillDays, setBackfillDays] = React.useState(0);
   const [maxRuntimeMin, setMaxRuntimeMin] = React.useState(30);
 
@@ -82,6 +85,7 @@ export default function VulnintelPage() {
           setGhToken("");
           setProxy(c.proxy ?? "");
           setPocEnabled(!!c.poc_enabled);
+          setEpssEnabled(!!c.epss_enabled);
           setBackfillDays(c.backfill_days ?? 0);
           setMaxRuntimeMin(c.max_runtime_minutes ?? 30);
         }
@@ -101,6 +105,7 @@ export default function VulnintelPage() {
         github_token: ghToken.trim() || undefined,
         proxy: proxy.trim(),
         poc_enabled: pocEnabled,
+        epss_enabled: epssEnabled,
         backfill_days: backfillDays,
         max_runtime_minutes: maxRuntimeMin,
       });
@@ -217,7 +222,7 @@ export default function VulnintelPage() {
 
       {status && (
         <>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
@@ -242,6 +247,19 @@ export default function VulnintelPage() {
               </CardHeader>
               <CardContent>
                 <p className="text-2xl font-semibold tabular-nums">{status.counts.pocs.toLocaleString()}</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">EPSS 已评分</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-2xl font-semibold tabular-nums">
+                  {(status.coverage?.epss?.scored ?? status.counts.epss ?? 0).toLocaleString()}
+                </p>
+                <p className="text-muted-foreground text-xs">
+                  覆盖率 {(status.coverage?.epss?.pct ?? 0).toFixed(1)}%（分母 {status.counts.cves.toLocaleString()}）
+                </p>
               </CardContent>
             </Card>
           </div>
@@ -334,6 +352,17 @@ export default function VulnintelPage() {
                       聚合 GitHub PoC 仓库
                     </Label>
                   </div>
+                </div>
+                <div className="flex items-end gap-3">
+                  <div className="flex items-center gap-2">
+                    <Switch checked={epssEnabled} onCheckedChange={setEpssEnabled} id="vi-epss" />
+                    <Label htmlFor="vi-epss" className="text-sm">
+                      同步 EPSS 每日评分
+                    </Label>
+                  </div>
+                  <span className="text-muted-foreground text-xs">
+                    只更新库内已有 CVE，用于 search_vulns 排序（KEV &gt; EPSS &gt; 版本区间 &gt; CVSS）
+                  </span>
                 </div>
               </div>
 

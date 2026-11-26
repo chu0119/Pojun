@@ -1651,6 +1651,12 @@ CREATE INDEX IF NOT EXISTS idx_vuln_cves_kev ON vuln_cves(kev, published_at DESC
 -- 用途：get_vuln/search_vulns 把 CWE 交给模型，并联动按 CWE 打标的
 -- 方法论 skill（server 侧 LoadSkillTags 的 cwe 标签）。
 ALTER TABLE vuln_cves ADD COLUMN IF NOT EXISTS cwes TEXT[] NOT NULL DEFAULT '{}';
+-- FIRST EPSS 每日利用概率评分（0–1）与百分位；epss_date 是该分对应的打分日。
+-- 只更新已存在的 CVE（epss.go），因此不建索引也不做 NOT NULL：NULL 表示「尚未
+-- 被 EPSS 覆盖」，与「评分 0」是两件事，排序列用 COALESCE 单独处理。
+ALTER TABLE vuln_cves ADD COLUMN IF NOT EXISTS epss DOUBLE PRECISION;
+ALTER TABLE vuln_cves ADD COLUMN IF NOT EXISTS epss_percentile DOUBLE PRECISION;
+ALTER TABLE vuln_cves ADD COLUMN IF NOT EXISTS epss_date DATE;
 
 -- 从 CPE criteria 提取的 (vendor, product) 倒排表：search_vulns 按 product 名
 -- 命中的索引。与 vuln_cves.cve_id 同生共死（upsert CVE 时先删后插）。

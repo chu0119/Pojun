@@ -32,14 +32,30 @@ func (s *Store) StatusSnapshot(ctx context.Context) map[string]any {
 		"kev":  `SELECT count(*) FROM vuln_cves WHERE kev`,
 		"pocs": `SELECT count(*) FROM vuln_pocs`,
 		"ghsa": `SELECT count(*) FROM vuln_cves WHERE source='ghsa'`,
+		"epss": `SELECT count(*) FROM vuln_cves WHERE epss IS NOT NULL`,
 	} {
 		var n int64
 		_ = s.db.QueryRowContext(ctx, q).Scan(&n)
 		counts[table] = n
 	}
+	// EPSS 覆盖率：状态页要回答「评分到底补了多少」，光看条数看不出比例。
+	// 只更新已有 CVE 的设计下，scored/total 是唯一可信的进度指标。
+	var total, scored int64
+	_ = s.db.QueryRowContext(ctx, `SELECT count(*), count(epss) FROM vuln_cves`).Scan(&total, &scored)
+	pct := 0.0
+	if total > 0 {
+		pct = float64(scored) * 100 / float64(total)
+	}
 	return map[string]any{
 		"sources": sources,
 		"counts":  counts,
+		"coverage": map[string]any{
+			"epss": map[string]any{
+				"scored": scored,
+				"total":  total,
+				"pct":    pct,
+			},
+		},
 	}
 }
 

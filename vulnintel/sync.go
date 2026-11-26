@@ -16,6 +16,11 @@ type Config struct {
 	ProxyURL     string // global egress proxy for outbound fetches (empty = direct)
 	GitHubToken  string // optional; lifts GitHub search limits for PoC aggregation
 	PocEnabled   bool   // aggregate GitHub PoC repos for recently synced CVEs
+	// EPSSEnabled 同步 FIRST EPSS 每日利用概率评分（只更新库内已有 CVE）。
+	// 默认由 server 侧 setting 决定（公开版默认关闭，见 settingVulnIntelEPSSEnabled）。
+	EPSSEnabled bool
+	// EPSSURL 覆盖官方每日 CSV 地址；仅测试/镜像使用，空=官方地址。
+	EPSSURL      string
 	BackfillDays int    // first-run lookback; 0 (default) = full catalog (~409k records,
 	// ≈205 pages: ~22 min anonymous / ~3 min with a key, split across runs)
 	PageDelay  time.Duration // inter-request delay; 0 = derived from the key
@@ -50,6 +55,8 @@ func Run(ctx context.Context, st *Store, cfg Config) error {
 	if cfg.MaxRuntime <= 0 {
 		cfg.MaxRuntime = 30 * time.Minute
 	}
+	// parent 保留调用方的取消语义；ctx 再叠加本轮 MaxRuntime 上限。
+	parent := ctx
 	deadline := time.Now().Add(cfg.MaxRuntime)
 	if d, ok := ctx.Deadline(); !ok || d.After(deadline) {
 		var cancel context.CancelFunc
@@ -57,7 +64,7 @@ func Run(ctx context.Context, st *Store, cfg Config) error {
 		defer cancel()
 	}
 
-	var kevErr, nvdErr, pocErr error
+	var kevErr, nvdErr, epssErr, pocErr error
 	if err := syncKEV(ctx, st, cfg); err != nil {
 		kevErr = err
 		log.Printf("[vulnintel] kev sync: %v", err)
@@ -66,13 +73,32 @@ func Run(ctx context.Context, st *Store, cfg Config) error {
 		nvdErr = err
 		log.Printf("[vulnintel] nvd sync: %v", err)
 	}
+	// NVD 首轮全量回填可能把本轮 30 分钟预算全部吃掉；EPSS/PoC 不能因此被饿死。
+	// 主 ctx 已超时但父 ctx 仍活着时，给这两个轻量源各自 5 分钟独立预算；父 ctx
+	// 已被取消（用户中断）时不再续跑，保持「中断即停」的语义。
+	secondary := func(name string, fn func(context.Context) error) error {
+		runCtx := ctx
+		var cancel context.CancelFunc
+		if ctx.Err() != nil && parent.Err() == nil {
+			runCtx, cancel = context.WithTimeout(parent, 5*time.Minute)
+			defer cancel()
+			log.Printf("[vulnintel] %s 使用独立预算（NVD 已用完本轮主预算）", name)
+		}
+		return fn(runCtx)
+	}
+	if cfg.EPSSEnabled {
+		if err := secondary("epss", func(c context.Context) error { return syncEPSS(c, st, cfg) }); err != nil {
+			epssErr = err
+			log.Printf("[vulnintel] epss sync: %v", err)
+		}
+	}
 	if cfg.PocEnabled {
-		if err := syncPoCs(ctx, st, cfg); err != nil {
+		if err := secondary("poc", func(c context.Context) error { return syncPoCs(c, st, cfg) }); err != nil {
 			pocErr = err
 			log.Printf("[vulnintel] poc sync: %v", err)
 		}
 	}
-	return errors.Join(kevErr, nvdErr, pocErr)
+	return errors.Join(kevErr, nvdErr, epssErr, pocErr)
 }
 
 // syncPoCs aggregates GitHub PoC repos for CVEs synced since the previous PoC

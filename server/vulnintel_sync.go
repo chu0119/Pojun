@@ -22,6 +22,13 @@ const (
 	settingVulnIntelPocEnabled    = "vulnintel_poc_enabled"
 	settingVulnIntelBackfillDays  = "vulnintel_backfill_days"
 	settingVulnIntelMaxRuntimeMin = "vulnintel_max_runtime_minutes"
+	// settingVulnIntelEPSSEnabled 是 EPSS 每日评分同步的开关。
+	//
+	// 公开版默认关闭：EPSS 是「排序增强」而非基础情报，首次同步要下载约
+	// 2.8MB 的 CSV.gz 并更新已有 CVE；默认开启会让每个新部署在无预期时多出
+	// 一次出网与一次全表更新。开启后与 NVD/KEV 共用一轮同步，但有独立预算
+	// （不会因 NVD 回填吃满 30 分钟而饿死，见 vulnintel.Run）。
+	settingVulnIntelEPSSEnabled = "vulnintel_epss_enabled"
 	// 同步专用出网代理。空 = 走维护出网回退链（装机代理 → 全局 → 搜索代理）。
 	settingVulnIntelProxy = "vulnintel_proxy"
 )
@@ -51,6 +58,7 @@ func (m *Manager) vulnIntelProxy() string {
 func (m *Manager) vulnIntelConfig() vulnintel.Config {
 	cfg := vulnintel.Config{
 		PocEnabled:   m.pg.GetBool(settingVulnIntelPocEnabled, false),
+		EPSSEnabled:  m.pg.GetBool(settingVulnIntelEPSSEnabled, false),
 		BackfillDays: intSetting(m.pg, settingVulnIntelBackfillDays, 0),
 	}
 	cfg.ProxyURL = m.vulnIntelProxy()
@@ -421,7 +429,7 @@ func (m *Manager) latestGhsaUpdated(ctx context.Context) time.Time {
 // nuclei template tree. The caller holds vulnSyncMu.
 func (m *Manager) vulnIntelPassLocked(ctx context.Context) error {
 	cfg := m.vulnIntelConfig()
-	m.SetVulnSyncPhase("漏洞情报同步中（CVE / KEV / GHSA / PoC）")
+	m.SetVulnSyncPhase("漏洞情报同步中（CVE / KEV / GHSA / EPSS / PoC）")
 	err := vulnintel.Run(ctx, m.vulnintel, cfg)
 	if ctx.Err() != nil {
 		m.SetVulnSyncPhase("已中断")
