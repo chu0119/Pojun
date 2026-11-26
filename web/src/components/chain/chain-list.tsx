@@ -46,7 +46,12 @@ function Row({ pc, item, level }: { pc: PromptChainController; item: ChainItem; 
       data-selected={selected}
       tabIndex={focused ? 0 : -1}
       className="outline-none"
-      onClick={() => pc.select(item.id)}
+      onClick={(e) => {
+        // 成员行在分组 treeitem 内部：只处理落在本行上的点击，别让冒泡改成选中分组。
+        const own = (e.target as HTMLElement).closest('[role="treeitem"]');
+        if (own !== e.currentTarget) return;
+        pc.select(item.id);
+      }}
       onFocus={(e) => {
         pc.setFocusId(item.id);
         setRingVisible(e.currentTarget.matches(":focus-visible"));

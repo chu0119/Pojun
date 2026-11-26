@@ -195,8 +195,17 @@ export function usePromptChain({
     [model, item],
   );
 
+  const confirmDiscard = React.useCallback((): boolean => {
+    if (!dirtyRef.current) return true;
+    const go = window.confirm("独立提示词有未保存的修改，离开会丢失。继续？");
+    if (go) dirtyRef.current = false;
+    return go;
+  }, []);
+
   const select = React.useCallback(
     (id: string | null) => {
+      // 换一个对象（含回到总览）先拦未保存草稿；再点已选中的对象不拦也不变。
+      if (dirtyRef.current && id !== sel && !confirmDiscard()) return;
       if (id) {
         const parent = parentOf(id);
         if (parent) {
@@ -206,7 +215,7 @@ export function usePromptChain({
       }
       onSelect(id);
     },
-    [onSelect, parentOf],
+    [onSelect, parentOf, sel, confirmDiscard],
   );
 
   // 刷新后选中的对象可能不存在了：清空选中。成员被选中时展开它所属的分组。
@@ -267,13 +276,6 @@ export function usePromptChain({
 
   const setDirty = React.useCallback((v: boolean) => {
     dirtyRef.current = v;
-  }, []);
-
-  const confirmDiscard = React.useCallback((): boolean => {
-    if (!dirtyRef.current) return true;
-    const go = window.confirm("独立提示词有未保存的修改，离开会丢失。继续？");
-    if (go) dirtyRef.current = false;
-    return go;
   }, []);
 
   React.useEffect(() => {

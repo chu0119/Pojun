@@ -467,18 +467,20 @@ export function ConfigActions({
       .catch(() => setProfiles([]));
   }, []);
 
+  const segKey = target.kind === "segment" ? target.key : "";
+  const surface = chain.segments.find((s) => s.key === segKey);
+  const showPromptSurface =
+    target.kind === "llm" || (surface != null && (surface.kind === "profile_prompt" || surface.kind === "body"));
+  // 切换对象时重置草稿；否则在 LLM 配置与独立提示词之间切换会看到上一份未保存文本。
+  const targetKey = target.kind === "segment" ? `${target.kind}:${target.key}` : target.kind;
+
   React.useEffect(() => {
     if (!profile) return;
     setPrompt(profile.prompt ?? "");
     setMode(profile.prompt_mode ?? "");
     setInherit(!!profile.prompt_apply_inherited);
     onDirtyChange(false);
-  }, [profile, onDirtyChange]);
-
-  const segKey = target.kind === "segment" ? target.key : "";
-  const surface = chain.segments.find((s) => s.key === segKey);
-  const showPromptSurface =
-    target.kind === "llm" || (surface != null && (surface.kind === "profile_prompt" || surface.kind === "body"));
+  }, [profile, targetKey, onDirtyChange]);
 
   const setEffort = async (value: string) => {
     if (!pid) return;
@@ -551,6 +553,9 @@ export function ConfigActions({
   return (
     <div className="mb-3.5 grid gap-3 rounded-md border p-3">
       <div className="text-sm">可配置 · 下一次模型调用生效</div>
+      {chain.llm.source === "preview_override" && profile && (
+        <p className="-mt-2 text-muted-foreground text-xs">正在修改预览中的配置：{profile.name}</p>
+      )}
       {showPromptSurface && (
         <label className="grid gap-1 text-muted-foreground text-xs">
           思考强度覆盖（{chain.agent_key} × 本配置）

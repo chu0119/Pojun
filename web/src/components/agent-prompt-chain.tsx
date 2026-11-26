@@ -57,6 +57,8 @@ export function AgentPromptChain({
       if (e.key !== "Escape" || !pc.sel) return;
       const t = e.target as HTMLElement | null;
       if (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) return;
+      // 弹层（窄容器检视器、下拉、菜单）自己处理 Esc：只关弹层，不清选中。
+      if (t?.closest('[role="dialog"],[role="menu"],[role="listbox"],[data-radix-popper-content-wrapper]')) return;
       if (!pc.confirmDiscard()) return;
       e.preventDefault();
       const id = pc.sel;
