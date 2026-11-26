@@ -206,7 +206,23 @@ export interface DeleteTaskResult {
   files_deleted: boolean;
   findings_deleted: number;
   llm_records_deleted: number;
+  /** 流量/LLM/文件清理已转入后台队列；对应计数保持 0。 */
+  cleanup_queued?: boolean;
   cleanup_warning?: string;
+}
+
+/** 任务删除后的后台清理作业。 */
+export interface CleanupJob {
+  id: number;
+  task_id?: number;
+  kind: "traffic" | "llm" | "files" | string;
+  state: "pending" | "running" | "done" | "failed";
+  attempts: number;
+  total: number;
+  done: number;
+  last_error?: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export type TaskArchiveState =
@@ -1216,7 +1232,12 @@ export interface Settings {
   artifact_max_count?: number; // #45/#50 证据附件每任务件数上限（生效值）
   artifact_max_bytes?: number; // 证据附件每任务总字节上限（生效值）
   traffic_capture: boolean;
-  traffic_retention_days?: number; // 未引用流量 TTL；0=关闭
+  traffic_mode?: "off" | "evidence" | "full"; // 三段式流量留存：关闭/仅证据相关/全量
+  traffic_retention_days?: number; // 全量模式未引用流量 TTL；0=关闭
+  traffic_evidence_window_hours?: number; // 证据模式未绑定流量保留小时数
+  traffic_evidence_max_gb?: number; // 证据模式流量容量上限（GB，0=不限）
+  storage_llm_keep_days?: number; // LLM 审计保留天数；0=关闭
+  storage_llm_max_rows?: number; // LLM 审计行数上限；0=不限
   agent_traffic_binding: boolean; // Agent 自动绑定流量证据，默认关闭；不影响人工绑定
   llm_record: boolean; // LLM 录制开关（默认关）；关闭时不记录任何 LLM 调用
   llm_record_body_mode?: "off" | "errors" | "full"; // 正文落库策略；默认 errors
