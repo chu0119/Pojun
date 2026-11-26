@@ -3,6 +3,30 @@
 本项目的重要变更记录在此文件中，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
 ## [Unreleased]
+### 任务删除异步清理队列与流量/LLM 留存治理（内部版 v0.9.79–v0.9.82 下放）
+
+- **异步清理队列**：任务删除的 PostgreSQL 事务只删除任务行并写入 `cleanup_jobs`
+  （`traffic` / `llm` / `files`），秒级提交；后台单通道 worker 分批删除流量索引、
+  LLM 审计与暂存文件。进程重启后自动续跑，失败 3 次转 `failed` 并可由
+  `POST /api/cleanup/jobs/{id}/retry` 重试；`GET /api/cleanup/jobs?active=1`
+  给前端“后台清理”横幅。
+- **保留公开版可回滚语义**：任务工作区/转录先 rename 到 `.delete-staging` 并写
+  journal，PostgreSQL 失败时回滚恢复；启动时按任务行是否存在决定“恢复”还是
+  “继续删除”。流量清理带删除请求时刻 cutoff，绝不删除请求之后新录的流量。
+- **批量删流量**：host 集合收敛到 SQLite TEMP 表，每批 2000 行独立事务；每 20 批
+  用 PostgreSQL 复核跨任务 host 归属，被新任务接管的 host 移出删除集；批间
+  PASSIVE checkpoint，结束 TRUNCATE WAL，避免长事务与 WAL 膨胀。
+- **流量三段式留存**：`traffic_mode=off|evidence|full`（存量 bool 升级为
+  off/full，默认仍为 off）；evidence 模式只清理未绑定证据的流量
+  （`traffic_evidence_window_hours` / `traffic_evidence_max_gb`，默认 24h/2GB），
+  证据入库写 `evidence_pins`，PostgreSQL 保护集每次巡检前回填，读取失败即中止。
+- **LLM 审计留存**：`storage_llm_keep_days` / `storage_llm_max_rows`（默认 0=关闭），
+  按批删除并补 `idx_llm_records_task` 索引；存储巡检清理已删任务的孤儿审计行。
+- **存储巡检**：24 小时保护窗口下清理数据库行已不存在的任务目录、会话目录与
+  转录文件，路径严格限制在 data 目录内。
+- **测试**：cleanup job 状态机/续跑/重试上限、跨任务 host 复核、cutoff 与保护集、
+  证据 pin、LLM 留存、路径越界拒绝、前端构建。
+
 ### 安全与稳定性：内部版 v0.9.68–v0.9.95 首批下放
 
 - **跨任务经验隔离**：`playbooks` 唯一键改为 `(key, root_domain, task_id)`，检索限定本任务；
