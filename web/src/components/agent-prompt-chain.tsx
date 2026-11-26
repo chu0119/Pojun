@@ -14,7 +14,8 @@ import { cn } from "@/lib/utils";
 
 // 装配链外壳：舞台（清单或关系图）+ 检视器。两者读同一份模型、同一个选中。
 // 内容容器宽 ≥ 900 时并排常驻；更窄时检视器改为右侧滑出的模态面板。
-// 「一次性容器」不是这里的约束：选中存在 URL 里，刷新可复现。
+// 测量容器必须始终在 DOM 里：ResizeObserver 挂在条件渲染的节点上时，首次渲染
+// 拿到 null 就再也不会观察，断点与舞台宽度会永远停在初值。
 
 export function AgentPromptChain({
   pc,
@@ -79,9 +80,9 @@ export function AgentPromptChain({
     pc.select(null);
   };
 
-  if (pc.loading && !pc.chain) {
-    return (
-      <div className="grid gap-2" ref={wrapRef}>
+  const body =
+    pc.loading && !pc.chain ? (
+      <div className="grid gap-2">
         {Array.from({ length: 3 }).map((_, i) => (
           <div key={i} className="grid gap-2">
             <div className="h-6 w-40 animate-pulse rounded bg-muted/60" />
@@ -91,12 +92,8 @@ export function AgentPromptChain({
           </div>
         ))}
       </div>
-    );
-  }
-
-  if (pc.error) {
-    return (
-      <div ref={wrapRef} className="rounded-lg border border-red-700/40 bg-red-700/5 p-4 dark:border-red-400/40 dark:bg-red-400/5">
+    ) : pc.error ? (
+      <div className="rounded-lg border border-red-700/40 bg-red-700/5 p-4 dark:border-red-400/40 dark:bg-red-400/5">
         <p className="font-medium text-red-700 text-sm dark:text-red-400">装配链读取失败</p>
         <p className="mt-1 text-muted-foreground text-xs">{pc.error}</p>
         <Button
@@ -108,15 +105,9 @@ export function AgentPromptChain({
           <RefreshCwIcon className="size-3.5" /> 重试
         </Button>
       </div>
-    );
-  }
-
-  if (!pc.chain) {
-    return <p className="p-4 text-center text-muted-foreground text-sm">（暂无装配数据）</p>;
-  }
-
-  return (
-    <div ref={wrapRef} className="flex min-h-0 flex-1 flex-col">
+    ) : !pc.chain ? (
+      <p className="p-4 text-center text-muted-foreground text-sm">（暂无装配数据）</p>
+    ) : (
       <div
         className={cn(
           "grid min-h-0 flex-1 gap-0",
@@ -140,7 +131,12 @@ export function AgentPromptChain({
           </aside>
         )}
       </div>
-      {!wide && (
+    );
+
+  return (
+    <div ref={wrapRef} className="flex min-h-0 flex-1 flex-col">
+      {body}
+      {!wide && !!pc.chain && (
         <Sheet open={panelOpen} onOpenChange={onPanelOpenChange}>
           <SheetContent side="right" className="w-full overflow-y-auto p-4 sm:max-w-[480px]">
             <ChainInspector pc={pc} />

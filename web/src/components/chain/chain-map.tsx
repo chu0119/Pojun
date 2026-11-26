@@ -16,6 +16,8 @@ const MAP_CSS = `
 .dark .chain-map { --cn-border: oklch(0.52 0 0); }
 `;
 
+// 测量容器必须始终在 DOM 里：ResizeObserver 挂在条件渲染的节点上时，首次渲染
+// 拿到的是 null，之后也不会再观察——宽度恒 0，关系图永远停在占位，且静默无报错。
 export function ChainMap({ pc }: { pc: PromptChainController }) {
   const wrapRef = React.useRef<HTMLDivElement>(null);
   const [width, setWidth] = React.useState(0);
@@ -78,14 +80,6 @@ export function ChainMap({ pc }: { pc: PromptChainController }) {
   );
 
   if (!model) return null;
-  if (!g) return <div className="h-64" />;
-  if (g.mode === "one") {
-    return (
-      <p className="p-3 text-muted-foreground text-sm">
-        舞台太窄（小于 520px），关系图不提供，请使用清单。
-      </p>
-    );
-  }
 
   const selTop = pc.sel ? pc.topId(pc.sel) : null;
   const related = new Set(selTop ? pc.related(selTop).map((r) => r.id) : []);
@@ -96,141 +90,147 @@ export function ChainMap({ pc }: { pc: PromptChainController }) {
   return (
     <div className="chain-map" ref={wrapRef}>
       <style>{MAP_CSS}</style>
-      <div
-        role="group"
-        aria-label="装配关系图"
-        className="relative"
-        style={{ height: g.h, width: g.w }}
-        onKeyDown={onKeyDown}
-      >
-        <svg
-          className="pointer-events-none absolute inset-0"
-          width={g.w}
-          height={g.h}
-          viewBox={`0 0 ${g.w} ${g.h}`}
-          aria-hidden="true"
+      {!g ? (
+        <div className="h-64" aria-hidden="true" />
+      ) : g.mode === "one" ? (
+        <p className="p-3 text-muted-foreground text-sm">舞台太窄（小于 520px），关系图不提供，请使用清单。</p>
+      ) : (
+        <div
+          role="group"
+          aria-label="装配关系图"
+          className="relative"
+          style={{ height: g.h, width: g.w }}
+          onKeyDown={onKeyDown}
         >
-          {g.ticks.map((t, i) => (
-            <path
-              key={`t${i}`}
-              d={`M${t.x},${t.y1} L${t.x},${t.y2}`}
-              className="fill-none stroke-muted-foreground"
-              strokeWidth={1.5}
-            />
-          ))}
-          {g.edges.map((e, i) => {
-            const hot = hotEdge(e);
-            const px = e.pts[e.pts.length - 2][0];
-            const [tx, ty] = e.pts[e.pts.length - 1];
-            const d = tx > px ? 1 : -1;
-            const line = [...e.pts.slice(0, -1), [tx - 6 * d, ty]] as [number, number][];
-            return (
-              <g key={`e${i}`}>
-                <path
-                  d={path(line)}
-                  className={cn("fill-none", hot ? "stroke-foreground" : "stroke-muted-foreground")}
-                  strokeWidth={hot ? 2 : 1.5}
-                />
-                <path
-                  d={`M${tx},${ty} L${tx - 8 * d},${ty - 4} L${tx - 8 * d},${ty + 4}Z`}
-                  className={cn(hot ? "fill-foreground" : "fill-muted-foreground")}
-                />
-              </g>
-            );
-          })}
-        </svg>
-        {g.boxes.map((b) => (
-          <div
-            key={b.id}
-            className="pointer-events-none absolute rounded-[10px] border"
-            style={{ left: b.x, top: b.y, width: b.w, height: b.h }}
+          <svg
+            className="pointer-events-none absolute inset-0"
+            width={g.w}
+            height={g.h}
+            viewBox={`0 0 ${g.w} ${g.h}`}
+            aria-hidden="true"
           >
-            <span className="absolute top-1 left-2 text-muted-foreground text-xs">{b.label}</span>
-          </div>
-        ))}
-        {g.caps.map((c) => (
-          <span
-            key={c.text}
-            className="absolute whitespace-nowrap text-muted-foreground text-xs"
-            style={{ left: c.x, top: c.y }}
-          >
-            {c.text}
-          </span>
-        ))}
-        {g.boundary && (
-          <div
-            className="pointer-events-none absolute flex h-4 items-center gap-2 text-muted-foreground text-xs"
-            style={{ left: g.boundary.x, top: g.boundary.y, width: g.boundary.w }}
-          >
-            <span className="h-px flex-1 bg-border" />
-            <span className="whitespace-nowrap">以下由代码固定</span>
-            <span className="h-px flex-1 bg-border" />
-          </div>
-        )}
-        {model.items.map((it) => {
-          const n = g.nodes.find((x) => x.id === it.id);
-          if (!n) return null;
-          const side = n.col === "left" || n.col === "right";
-          const selected = selTop === n.id;
-          const rel = related.has(n.id);
-          const focusable = (pc.focusId ?? model.items[0]?.id) === n.id;
-          const borderWidth = n.id === "model" ? "border-[3px]" : selected ? "border-2" : "border";
-          const borderStyle = n.id === "model" ? "border-double" : n.col === "out" ? "border-dashed" : "";
-          const borderTone = selected || rel ? "border-foreground" : "border-[var(--cn-border)]";
-          return (
-            <button
-              key={n.id}
-              type="button"
-              data-id={n.id}
-              data-chain-item
-              data-selected={selected}
-              aria-current={selected ? "true" : undefined}
-              tabIndex={focusable ? 0 : -1}
-              onClick={() => pc.select(n.id)}
-              onFocus={() => pc.setFocusId(n.id)}
-              style={{ left: n.x, top: n.y, width: n.w, height: n.h }}
-              className={cn(
-                "group absolute grid grid-cols-[minmax(0,1fr)_auto] content-center gap-x-2 rounded-md bg-card px-2 py-0.5 text-left outline-none",
-                "focus-visible:ring-2 focus-visible:ring-foreground focus-visible:ring-offset-2",
-                borderWidth,
-                borderStyle,
-                borderTone,
-                selected ? "bg-accent" : "hover:bg-accent/60",
-                n.col === "out" && !selected && "bg-transparent",
-              )}
+            {g.ticks.map((t, i) => (
+              <path
+                key={`t${i}`}
+                d={`M${t.x},${t.y1} L${t.x},${t.y2}`}
+                className="fill-none stroke-muted-foreground"
+                strokeWidth={1.5}
+              />
+            ))}
+            {g.edges.map((e, i) => {
+              const hot = hotEdge(e);
+              const px = e.pts[e.pts.length - 2][0];
+              const [tx, ty] = e.pts[e.pts.length - 1];
+              const d = tx > px ? 1 : -1;
+              const line = [...e.pts.slice(0, -1), [tx - 6 * d, ty]] as [number, number][];
+              return (
+                <g key={`e${i}`}>
+                  <path
+                    d={path(line)}
+                    className={cn("fill-none", hot ? "stroke-foreground" : "stroke-muted-foreground")}
+                    strokeWidth={hot ? 2 : 1.5}
+                  />
+                  <path
+                    d={`M${tx},${ty} L${tx - 8 * d},${ty - 4} L${tx - 8 * d},${ty + 4}Z`}
+                    className={cn(hot ? "fill-foreground" : "fill-muted-foreground")}
+                  />
+                </g>
+              );
+            })}
+          </svg>
+          {g.boxes.map((b) => (
+            <div
+              key={b.id}
+              className="pointer-events-none absolute rounded-[10px] border"
+              style={{ left: b.x, top: b.y, width: b.w, height: b.h }}
             >
-              <span
+              <span className="absolute top-1 left-2 text-muted-foreground text-xs">{b.label}</span>
+            </div>
+          ))}
+          {g.caps.map((c) => (
+            <span
+              key={c.text}
+              className="absolute whitespace-nowrap text-muted-foreground text-xs"
+              style={{ left: c.x, top: c.y }}
+            >
+              {c.text}
+            </span>
+          ))}
+          {g.boundary && (
+            <div
+              className="pointer-events-none absolute flex h-4 items-center gap-2 text-muted-foreground text-xs"
+              style={{ left: g.boundary.x, top: g.boundary.y, width: g.boundary.w }}
+            >
+              <span className="h-px flex-1 bg-border" />
+              <span className="whitespace-nowrap">以下由代码固定</span>
+              <span className="h-px flex-1 bg-border" />
+            </div>
+          )}
+          {model.items.map((it) => {
+            const n = g.nodes.find((x) => x.id === it.id);
+            if (!n) return null;
+            const side = n.col === "left" || n.col === "right";
+            const selected = selTop === n.id;
+            const rel = related.has(n.id);
+            const focusable = (pc.focusId ?? model.items[0]?.id) === n.id;
+            const borderWidth = n.id === "model" ? "border-[3px]" : selected ? "border-2" : "border";
+            const borderStyle = n.id === "model" ? "border-double" : n.col === "out" ? "border-dashed" : "";
+            const borderTone = selected || rel ? "border-foreground" : "border-[var(--cn-border)]";
+            return (
+              <button
+                key={n.id}
+                type="button"
+                data-id={n.id}
+                data-chain-item
+                data-selected={selected}
+                aria-current={selected ? "true" : undefined}
+                tabIndex={focusable ? 0 : -1}
+                onClick={() => pc.select(n.id)}
+                onFocus={() => pc.setFocusId(n.id)}
+                style={{ left: n.x, top: n.y, width: n.w, height: n.h }}
                 className={cn(
-                  "min-w-0 truncate text-sm leading-[18px]",
-                  side && "col-span-2",
-                  selected && "font-medium",
+                  "group absolute grid grid-cols-[minmax(0,1fr)_auto] content-center gap-x-2 rounded-md bg-card px-2 py-0.5 text-left outline-none",
+                  "focus-visible:ring-2 focus-visible:ring-foreground focus-visible:ring-offset-2",
+                  borderWidth,
+                  borderStyle,
+                  borderTone,
+                  selected ? "bg-accent" : "hover:bg-accent/60",
+                  n.col === "out" && !selected && "bg-transparent",
                 )}
               >
-                {it.order != null && (
-                  <span className="mr-1.5 font-mono text-muted-foreground text-xs group-hover:text-foreground">
-                    {it.order}
+                <span
+                  className={cn(
+                    "min-w-0 truncate text-sm leading-[18px]",
+                    side && "col-span-2",
+                    selected && "font-medium",
+                  )}
+                >
+                  {it.order != null && (
+                    <span className="mr-1.5 font-mono text-muted-foreground text-xs group-hover:text-foreground">
+                      {it.order}
+                    </span>
+                  )}
+                  {it.title}
+                </span>
+                {!side && (
+                  <span className="text-right font-mono text-xs leading-[18px] tabular-nums">
+                    {it.chars != null ? fmt(it.chars) : ""}
                   </span>
                 )}
-                {it.title}
-              </span>
-              {!side && (
-                <span className="text-right font-mono text-xs leading-[18px] tabular-nums">
-                  {it.chars != null ? fmt(it.chars) : ""}
+                <span className="min-w-0 truncate text-muted-foreground text-xs leading-4 group-hover:text-foreground group-data-[selected=true]:text-foreground">
+                  {it.note}
                 </span>
-              )}
-              <span className="min-w-0 truncate text-muted-foreground text-xs leading-4 group-hover:text-foreground group-data-[selected=true]:text-foreground">
-                {it.note}
-              </span>
-              <StatusWord
-                state={it.state}
-                word={it.stateWord}
-                highlightOnHover
-                className="justify-self-end leading-4"
-              />
-            </button>
-          );
-        })}
-      </div>
+                <StatusWord
+                  state={it.state}
+                  word={it.stateWord}
+                  highlightOnHover
+                  className="justify-self-end leading-4"
+                />
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
