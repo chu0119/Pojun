@@ -314,6 +314,7 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		// 漏洞 IM 推送投递引擎。与 Scheduler 并列但独立：推送的实时性要求(3s)
 		// 与触发器的业务节奏不同，且两者失败互不牵连——推送卡住不该影响 agent 触发。
 		go newNotifier(s).Run(s.ctx)
+		s.startCleanupWorker(s.ctx)
 		s.startTrafficRetentionWorker()
 		// Verify every enabled MCP at startup (connection + tools/list), recording
 		// last_ok/last_error/latency for the UI. Async so it never blocks startup.
@@ -978,6 +979,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/traffic/all", s.deleteAllTraffic)
 	mux.HandleFunc("GET /api/traffic/retention", s.getTrafficRetention)
 	mux.HandleFunc("POST /api/traffic/retention", s.runTrafficRetentionHandler)
+	mux.HandleFunc("GET /api/cleanup/jobs", s.listCleanupJobs)
+	mux.HandleFunc("POST /api/cleanup/jobs/{id}/retry", s.retryCleanupJob)
 	mux.HandleFunc("GET /api/traffic/exchange", s.getTrafficExchange)
 	mux.HandleFunc("GET /api/traffic/blob", s.getTrafficBlob)
 	mux.HandleFunc("GET /api/commands", s.pgListCommands)
@@ -3719,22 +3722,27 @@ func (s *Server) settingsPayload() map[string]any {
 	ib := intentBudgetFromPG(s.m.pg)
 	tb := taskBudgetFromPG(s.m.pg)
 	return map[string]any{
-		"traffic_capture":        s.m.TrafficEnabled(),
-		"traffic_retention_days": s.trafficRetentionDays(),
-		"agent_traffic_binding":  s.m.pg.GetBool(settingAgentTrafficBinding, false),
-		"llm_record":             s.m.LLMRecordEnabled(),
-		"llm_record_body_mode":   s.m.LLMRecordBodyMode(),
-		"web_search_enabled":     on,
-		"web_search_backend":     backend,
-		"brave_key_set":          strings.TrimSpace(braveKey) != "",
-		"tavily_key_set":         strings.TrimSpace(tavilyKey) != "",
-		"web_search_proxy":       proxy,                                                     // 独立出口代理(http/https/socks5)，空=直连
-		"global_proxy":           s.m.GlobalProxy(),                                         // 全局出口代理(http/https/socks5)，所有目标流量走它，空=直连
-		"artifact_max_count":     func() int { c, _ := s.m.pg.ArtifactQuota(); return c }(), // #45/#50 证据附件限额（生效值）
-		"artifact_max_bytes":     func() int64 { _, b := s.m.pg.ArtifactQuota(); return b }(),
-		"install_proxy":          s.installProxy(),            // 装机代理：用于宿主工具安装和程序更新等维护请求
-		"python_interpreter":     strings.TrimSpace(pyStored), // 用户/自动设的值(空=用运行时检测)
-		"workers":                s.m.Workers(),               // 并发工作 agent 数(默认3)；对之后启动的任务生效
+		"traffic_capture":               s.m.TrafficEnabled(),
+		"traffic_mode":                  s.m.TrafficMode(),
+		"traffic_retention_days":        s.trafficRetentionDays(),
+		"traffic_evidence_window_hours": s.trafficEvidenceHours(),
+		"traffic_evidence_max_gb":       s.trafficEvidenceMaxGB(),
+		"storage_llm_keep_days":         s.llmKeepDays(),
+		"storage_llm_max_rows":          s.llmMaxRows(),
+		"agent_traffic_binding":         s.m.pg.GetBool(settingAgentTrafficBinding, false),
+		"llm_record":                    s.m.LLMRecordEnabled(),
+		"llm_record_body_mode":          s.m.LLMRecordBodyMode(),
+		"web_search_enabled":            on,
+		"web_search_backend":            backend,
+		"brave_key_set":                 strings.TrimSpace(braveKey) != "",
+		"tavily_key_set":                strings.TrimSpace(tavilyKey) != "",
+		"web_search_proxy":              proxy,                                                     // 独立出口代理(http/https/socks5)，空=直连
+		"global_proxy":                  s.m.GlobalProxy(),                                         // 全局出口代理(http/https/socks5)，所有目标流量走它，空=直连
+		"artifact_max_count":            func() int { c, _ := s.m.pg.ArtifactQuota(); return c }(), // #45/#50 证据附件限额（生效值）
+		"artifact_max_bytes":            func() int64 { _, b := s.m.pg.ArtifactQuota(); return b }(),
+		"install_proxy":                 s.installProxy(),            // 装机代理：用于宿主工具安装和程序更新等维护请求
+		"python_interpreter":            strings.TrimSpace(pyStored), // 用户/自动设的值(空=用运行时检测)
+		"workers":                       s.m.Workers(),               // 并发工作 agent 数(默认3)；对之后启动的任务生效
 		// 冷节点压缩的输出预算与墙钟上限。0 = 用默认值(32768 token / 20 分钟)。
 		"compaction_max_tokens":      s.m.CompactionTokens(),
 		"compaction_timeout_seconds": s.m.CompactionTimeout(),
@@ -3834,7 +3842,13 @@ func (s *Server) pgDetectPython(w http.ResponseWriter, r *http.Request) {
 func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TrafficCapture       *bool   `json:"traffic_capture"`
+		TrafficMode          *string `json:"traffic_mode"` // off/evidence/full
 		TrafficRetentionDays *int    `json:"traffic_retention_days"`
+		// 证据模式短窗口与容量上限；LLM 审计留存（0=关闭）。
+		TrafficEvidenceHours *int    `json:"traffic_evidence_window_hours"`
+		TrafficEvidenceMaxGB *int    `json:"traffic_evidence_max_gb"`
+		StorageLLMKeepDays   *int    `json:"storage_llm_keep_days"`
+		StorageLLMMaxRows    *int    `json:"storage_llm_max_rows"`
 		AgentTrafficBinding  *bool   `json:"agent_traffic_binding"`
 		LLMRecord            *bool   `json:"llm_record"` // LLM 录制开关（默认关）；即时生效，无需重建 agent
 		LLMRecordBodyMode    *string `json:"llm_record_body_mode"`
@@ -4335,7 +4349,14 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if req.TrafficCapture != nil {
+	if req.TrafficMode != nil {
+		if err := s.m.SetTrafficMode(*req.TrafficMode); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		changed = true
+	} else if req.TrafficCapture != nil {
+		// 旧客户端只有 bool：true 映射到全量，false 关闭。
 		if err := s.m.SetTrafficEnabled(*req.TrafficCapture); err != nil {
 			writeErr(w, 500, err.Error())
 			return
@@ -4349,6 +4370,29 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.m.pg.SetSetting(settingTrafficRetentionDays, strconv.Itoa(days)); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+	}
+	for _, item := range []struct {
+		key   string
+		value *int
+		max   int
+		label string
+	}{
+		{settingTrafficEvidenceHours, req.TrafficEvidenceHours, maxTrafficEvidenceHours, "traffic_evidence_window_hours"},
+		{settingTrafficEvidenceMaxGB, req.TrafficEvidenceMaxGB, maxTrafficEvidenceMaxGB, "traffic_evidence_max_gb"},
+		{settingStorageLLMKeepDays, req.StorageLLMKeepDays, maxStorageLLMKeepDays, "storage_llm_keep_days"},
+		{settingStorageLLMMaxRows, req.StorageLLMMaxRows, maxStorageLLMMaxRows, "storage_llm_max_rows"},
+	} {
+		if item.value == nil {
+			continue
+		}
+		if *item.value < 0 || *item.value > item.max {
+			writeErr(w, http.StatusBadRequest, fmt.Sprintf("%s 必须在 0-%d 之间（0=关闭）", item.label, item.max))
+			return
+		}
+		if err := s.m.pg.SetSetting(item.key, strconv.Itoa(*item.value)); err != nil {
 			writeErr(w, 500, err.Error())
 			return
 		}

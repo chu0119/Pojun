@@ -157,8 +157,8 @@ func TestCoreTaskLifecyclePG(t *testing.T) {
 	if deleted, _ := out["findings_deleted"].(float64); deleted != 1 {
 		t.Fatalf("expected one deleted finding, got %v", out)
 	}
-	if deleted, _ := out["llm_records_deleted"].(float64); deleted != 1 {
-		t.Fatalf("expected one deleted LLM record, got %v", out)
+	if queued, _ := out["cleanup_queued"].(bool); !queued {
+		t.Fatalf("expected external cleanup to be queued, got %v", out)
 	}
 	if _, err := os.Stat(taskDir); !os.IsNotExist(err) {
 		t.Fatalf("task directory should be deleted, stat err=%v", err)
@@ -174,9 +174,11 @@ func TestCoreTaskLifecyclePG(t *testing.T) {
 	if finding, err := m.pg.GetFinding(findingID); err != nil || finding != nil {
 		t.Fatalf("finding should be deleted, got finding=%+v err=%v", finding, err)
 	}
-	var llmRecords int
-	if err := m.pg.QueryRow(`SELECT count(*) FROM llm_records WHERE task_id=$1`, id).Scan(&llmRecords); err != nil || llmRecords != 0 {
-		t.Fatalf("task LLM records should be deleted, count=%d err=%v", llmRecords, err)
+	// LLM audit cleanup is asynchronous now. The API only promises that the task
+	// row and in-request work are done; remove the row here so the shared test DB
+	// does not accumulate fixtures.
+	if _, err := m.pg.Exec(`DELETE FROM llm_records WHERE task_id=$1`, id); err != nil {
+		t.Fatalf("cleanup LLM fixture: %v", err)
 	}
 	var n int
 	m.pg.QueryRow(`SELECT count(*) FROM exploration_nodes WHERE exploration_id=$1`, expID).Scan(&n)

@@ -291,7 +291,10 @@ type DeleteTaskResult struct {
 	FilesDeleted      bool   `json:"files_deleted"`
 	FindingsDeleted   int64  `json:"findings_deleted"`
 	LLMRecordsDeleted int64  `json:"llm_records_deleted"`
-	CleanupWarning    string `json:"cleanup_warning,omitempty"`
+	// CleanupQueued reports that traffic/LLM/file deletion was moved to the
+	// background queue. Those counts above stay zero on purpose.
+	CleanupQueued  bool   `json:"cleanup_queued,omitempty"`
+	CleanupWarning string `json:"cleanup_warning,omitempty"`
 }
 
 // Manager owns the PostgreSQL data source (asset graph + every task's exploration
@@ -334,7 +337,8 @@ type Manager struct {
 	mu             sync.RWMutex
 	tasks          map[string]*Task
 	active         string
-	trafficOn      bool   // 流量捕获开关（默认关；settings.traffic_capture）
+	trafficOn      bool   // 流量捕获是否开启（trafficMode != off）
+	trafficMode    string // off/evidence/full（settings.traffic_mode；存量由 traffic_capture 推导）
 	llmRecOn       bool   // LLM 录制开关（默认关；settings.llm_record）
 	llmRecBodyMode string // off|errors|full；默认 errors（成功调用只记元数据）
 	// 联网搜索开关与来源（默认关；settings.web_search_*）。brave-free 需要 braveKey；tavily 需要 tavilyKey。
@@ -353,7 +357,10 @@ type Manager struct {
 
 // Settings keys the UI toggles at runtime.
 const (
-	settingTrafficCapture      = "traffic_capture"
+	settingTrafficCapture = "traffic_capture"
+	// 三段式流量留存：off=不抓；evidence=抓取但只长期保留证据相关（短窗口 + pin）；
+	// full=按正常保留期全量保存。存量只有 bool：true→full，false→off。
+	settingTrafficMode         = "traffic_mode"
 	settingAgentTrafficBinding = "agent_traffic_binding"
 	settingWebSearchOn         = "web_search_enabled"
 	settingWebSearchBackend    = "web_search_backend"
@@ -615,6 +622,9 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 	if err := pg.EnsureLLMRecordsTable(); err != nil {
 		log.Printf("[llmrec] create table: %v", err)
 	}
+	if err := pg.EnsureCleanupJobsTable(); err != nil {
+		return nil, fmt.Errorf("create cleanup jobs table: %w", err)
+	}
 	if err := pg.EnsureTaskArtifactsTable(); err != nil {
 		return nil, err
 	}
@@ -658,7 +668,25 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 	}
 	// Asset auto-completion engine (§5): HTTP probes routed through the recording
 	// proxy (via m.ProxyAddr, which honors the traffic-capture toggle).
-	m.trafficOn = pg.GetBool(settingTrafficCapture, false)
+	// 三段式流量模式。存量只有 traffic_capture bool：false→off，true→full
+	// （保持旧版本语义，不改变公开版默认关闭的安全边界）。
+	mode := ""
+	if v, ok, _ := pg.GetSetting(settingTrafficMode); ok && strings.TrimSpace(v) != "" {
+		mode = strings.ToLower(strings.TrimSpace(v))
+		if mode != "off" && mode != "evidence" && mode != "full" {
+			mode = "off"
+		}
+	} else {
+		if pg.GetBool(settingTrafficCapture, false) {
+			mode = "full"
+		} else {
+			mode = "off"
+		}
+		_ = pg.SetSetting(settingTrafficMode, mode)
+	}
+	_ = pg.SetBool(settingTrafficCapture, mode != "off")
+	m.trafficMode = mode
+	m.trafficOn = mode != "off"
 	// LLM 录制开关（默认关）。录制器每次调用时读取此标志。
 	m.llmRecOn = pg.GetBool(settingLLMRecord, false)
 	m.llmRecBodyMode = "errors"
@@ -757,14 +785,46 @@ func (m *Manager) TrafficEnabled() bool {
 	return m.trafficOn
 }
 
-// SetTrafficEnabled persists and applies the traffic-capture toggle. Callers must
-// rebuild the agents (applyLLM) afterwards so the new proxy/tools/prompt take hold.
+// TrafficMode returns off/evidence/full. Evidence captures normally but the
+// retention worker keeps only a short window plus pinned evidence.
+func (m *Manager) TrafficMode() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.trafficMode == "" {
+		return "off"
+	}
+	return m.trafficMode
+}
+
+// SetTrafficEnabled is the legacy two-state API. ON selects full capture (the
+// old meaning of the boolean); OFF disables capture.
 func (m *Manager) SetTrafficEnabled(on bool) error {
-	if err := m.pg.SetBool(settingTrafficCapture, on); err != nil {
+	mode := "off"
+	if on {
+		mode = "full"
+	}
+	return m.SetTrafficMode(mode)
+}
+
+// SetTrafficMode persists the three-state policy. Callers must rebuild agents
+// (applyLLM) afterwards; the browser MCP proxy is synchronized here.
+func (m *Manager) SetTrafficMode(mode string) error {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	switch mode {
+	case "off", "evidence", "full":
+	default:
+		return fmt.Errorf("traffic_mode 必须是 off/evidence/full")
+	}
+	if err := m.pg.SetSetting(settingTrafficMode, mode); err != nil {
+		return err
+	}
+	// Keep the legacy boolean truthful for old clients and older code paths.
+	if err := m.pg.SetBool(settingTrafficCapture, mode != "off"); err != nil {
 		return err
 	}
 	m.mu.Lock()
-	m.trafficOn = on
+	m.trafficMode = mode
+	m.trafficOn = mode != "off"
 	m.mu.Unlock()
 	// Inject (on) or strip (off) the recording proxy + CA on the browser MCP so
 	// Playwright routes through the MITM. Must run after the flag flip above, since
@@ -1944,11 +2004,16 @@ func (m *Manager) SetTaskStatus(id, status string) error {
 	return nil
 }
 
-// DeleteTask removes a task and optionally its related global data. Traffic has
-// no task-id column, so related exchanges are resolved by exact hosts from the
-// task's asset rows. Files are staged before the database operation; traffic is
-// staged while PostgreSQL excludes asset/anchor writers. Both are restored on a
-// database failure and purged only after its commit.
+// DeleteTask removes a task and optionally its related global data.
+//
+// Traffic has no task-id column, so related exchanges are resolved by exact
+// hosts from the task's asset rows. Files are staged (renamed) before the
+// database operation and restored on any database failure, preserving the
+// public build's rollback semantics. The slow parts — traffic index deletion,
+// LLM audit deletion and removing the staged files — are not done here: the
+// PostgreSQL transaction only enqueues durable cleanup_jobs rows, so it commits
+// in milliseconds instead of holding asset locks for minutes. The background
+// worker drains the queue and resumes it after a restart.
 func (m *Manager) DeleteTask(id string, opts DeleteTaskOptions) (DeleteTaskResult, error) {
 	result := DeleteTaskResult{Deleted: id}
 	n, err := strconv.ParseInt(id, 10, 64)
@@ -1978,52 +2043,57 @@ func (m *Manager) DeleteTask(id string, opts DeleteTaskOptions) (DeleteTaskResul
 		result.FilesDeleted = fileStage.deleted
 	}
 
-	var trafficStage *traffic.HostDeleteStage
-	var prepare func(pgdb.TaskDeletePreparation) error
-	if opts.DeleteTraffic && m.traffic != nil {
-		prepare = func(p pgdb.TaskDeletePreparation) error {
-			if len(p.TrafficHosts) == 0 {
-				return nil
+	// cutoff 是删除请求时刻：后台 worker 只删不晚于它的流量，绝不碰删除之后
+	// 新录的数据（同一 host 可能已属于另一个新任务）。
+	cutoff := time.Now().Unix()
+	queued := false
+	var prepare func(*sql.Tx, pgdb.TaskDeletePreparation) error
+	if opts.DeleteTraffic || opts.DeleteLLMRecords || (fileStage != nil && fileStage.stageDir != "") {
+		prepare = func(tx *sql.Tx, p pgdb.TaskDeletePreparation) error {
+			if opts.DeleteTraffic && m.traffic != nil && len(p.TrafficHosts) > 0 {
+				if err := pgdb.EnqueueCleanupJobTx(tx, n, "traffic", cleanupTrafficPayload{
+					TaskID:        n,
+					ExplorationID: p.ExplorationID,
+					Hosts:         p.TrafficHosts,
+					Cutoff:        cutoff,
+				}); err != nil {
+					return err
+				}
+				queued = true
 			}
-			trafficStage, err = m.traffic.StageDeleteHostsExact(p.TrafficHosts)
-			if err != nil {
-				return err
+			if opts.DeleteLLMRecords {
+				if err := pgdb.EnqueueCleanupJobTx(tx, n, "llm", cleanupLLMPayload{TaskID: n}); err != nil {
+					return err
+				}
+				queued = true
 			}
-			result.TrafficDeleted = trafficStage.Deleted()
+			if fileStage != nil && fileStage.stageDir != "" {
+				if err := pgdb.EnqueueCleanupJobTx(tx, n, "files", cleanupFilesPayload{StageDir: fileStage.stageDir}); err != nil {
+					return err
+				}
+				queued = true
+			}
 			return nil
 		}
 	}
 
 	dbResult, err := m.pg.DeleteTaskCascadePrepared(
-		n, opts.DeleteAssets, opts.DeleteFindings, opts.DeleteLLMRecords, prepare,
+		n, opts.DeleteAssets, opts.DeleteFindings, false, prepare,
 	)
 	if err != nil {
-		return result, rollbackTaskDelete(err, trafficStage, fileStage)
+		// PostgreSQL rolled back, so the queue rows never existed. Put the staged
+		// workspace/transcripts back: the task must remain usable.
+		return result, rollbackTaskDelete(err, nil, fileStage)
 	}
 	result.AssetsDeleted = dbResult.AssetsDeleted
 	result.AssetsDetached = dbResult.AssetsDetached
 	result.FindingsDeleted = dbResult.FindingsDeleted
-	result.LLMRecordsDeleted = dbResult.LLMRecordsDeleted
+	result.CleanupQueued = queued
 
-	// PostgreSQL is now authoritative: finalize the staged external deletion and
-	// forget the live task even if a final purge reports an error. Such errors are
-	// typed so the HTTP layer can still tear down the task runtime instead of
-	// incorrectly reviving a task whose database row is already gone.
-	var finalizeErrs []error
-	if trafficStage != nil {
-		if err := trafficStage.Commit(); err != nil {
-			finalizeErrs = append(finalizeErrs, fmt.Errorf("finalize traffic deletion: %w", err))
-		}
-	}
-	if fileStage != nil {
-		if err := fileStage.commit(); err != nil {
-			finalizeErrs = append(finalizeErrs, fmt.Errorf("finalize task file deletion: %w", err))
-		}
-	}
+	// PostgreSQL is now authoritative. Traffic, LLM audit rows and the staged
+	// files belong to cleanup_jobs; a crash resumes them on the next start. Never
+	// synchronously RemoveAll a multi-GB task directory in the request path.
 	m.forgetTask(id, n)
-	if err := errors.Join(finalizeErrs...); err != nil {
-		return result, &taskDeleteCommittedError{err: err}
-	}
 	return result, nil
 }
 
@@ -2090,6 +2160,25 @@ type taskFileDeleteStage struct {
 	done     bool
 }
 
+// taskFileDeleteJournal makes file staging crash-recoverable. It is written
+// before the first rename: if the process dies mid-move, startup can either
+// restore the files (task row still exists → PostgreSQL rolled back) or finish
+// deleting them (task row gone → PostgreSQL committed).
+type taskFileDeleteJournal struct {
+	Version       int                   `json:"version"`
+	TaskID        string                `json:"task_id"`
+	ExplorationID int64                 `json:"exploration_id"`
+	Moves         []taskFileJournalMove `json:"moves"`
+	CreatedAt     time.Time             `json:"created_at"`
+}
+
+type taskFileJournalMove struct {
+	Source string `json:"source"`
+	Staged string `json:"staged"`
+}
+
+const taskFileDeleteJournalName = "journal.json"
+
 // stageTaskFiles atomically renames the task workspace and owned transcripts to
 // a same-filesystem staging directory. The trailing dash in the transcript
 // prefix is significant: exploration 12 must not match exploration 123.
@@ -2132,19 +2221,195 @@ func stageTaskFiles(dataDir, taskID string, explorationID int64) (*taskFileDelet
 	if err != nil {
 		return nil, err
 	}
-	for _, source := range targets {
-		staged := filepath.Join(stage.stageDir, fmt.Sprintf("%d-%s", len(stage.moves), filepath.Base(source)))
-		if err := os.Rename(source, staged); err != nil {
-			cause := fmt.Errorf("stage task file %s: %w", source, err)
+	// Plan every move first, write the journal, then rename. A crash after any
+	// rename is recoverable: the journal names both sides of every move.
+	planned := make([]taskFileJournalMove, 0, len(targets))
+	for i, source := range targets {
+		planned = append(planned, taskFileJournalMove{
+			Source: source,
+			Staged: filepath.Join(stage.stageDir, fmt.Sprintf("%d-%s", i, filepath.Base(source))),
+		})
+	}
+	journal := taskFileDeleteJournal{
+		Version: 1, TaskID: taskID, ExplorationID: explorationID,
+		CreatedAt: time.Now(), Moves: planned,
+	}
+	if err := writeTaskFileJournal(filepath.Join(stage.stageDir, taskFileDeleteJournalName), journal); err != nil {
+		_ = os.RemoveAll(stage.stageDir)
+		return nil, err
+	}
+	for _, move := range planned {
+		if err := os.Rename(move.Source, move.Staged); err != nil {
+			cause := fmt.Errorf("stage task file %s: %w", move.Source, err)
 			if restoreErr := stage.rollback(); restoreErr != nil {
 				return nil, errors.Join(cause, fmt.Errorf("restore partially staged task files: %w", restoreErr))
 			}
 			return nil, cause
 		}
-		stage.moves = append(stage.moves, stagedTaskPath{source: source, staged: staged})
+		stage.moves = append(stage.moves, stagedTaskPath{source: move.Source, staged: move.Staged})
 	}
 	stage.deleted = true
 	return stage, nil
+}
+
+func writeTaskFileJournal(path string, journal taskFileDeleteJournal) error {
+	raw, err := json.Marshal(journal)
+	if err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := file.Write(raw); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	return file.Close()
+}
+
+// recoverTaskFileStaging resolves .delete-staging entries left by a process
+// exit. The task row is the authority: present → restore (PostgreSQL rolled
+// back), absent → finish deletion (PostgreSQL committed).
+func recoverTaskFileStaging(dataDir string, taskExists func(string) bool) (int, error) {
+	parent := filepath.Join(dataDir, ".delete-staging")
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	recovered := 0
+	var errs []error
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "task-") {
+			continue
+		}
+		stageDir := filepath.Join(parent, entry.Name())
+		journalPath := filepath.Join(stageDir, taskFileDeleteJournalName)
+		raw, readErr := os.ReadFile(journalPath)
+		if readErr != nil {
+			if !os.IsNotExist(readErr) {
+				errs = append(errs, fmt.Errorf("读取任务文件暂存日志 %s: %w", journalPath, readErr))
+				continue
+			}
+			// Old staging directory without a journal: the task id is in the
+			// name. If the task is gone, finish the delete; otherwise leave it
+			// alone rather than risk removing a live task's files.
+			taskID := strings.TrimPrefix(entry.Name(), "task-")
+			if i := strings.IndexByte(taskID, '-'); i > 0 {
+				taskID = taskID[:i]
+			}
+			if taskID != "" && !taskExists(taskID) {
+				if rmErr := os.RemoveAll(filepath.Join(dataDir, "tasks", taskID)); rmErr != nil {
+					errs = append(errs, fmt.Errorf("清理旧任务目录 %s: %w", taskID, rmErr))
+					continue
+				}
+				if rmErr := os.RemoveAll(stageDir); rmErr != nil {
+					errs = append(errs, fmt.Errorf("清理旧任务文件暂存 %s: %w", stageDir, rmErr))
+					continue
+				}
+				recovered++
+			}
+			continue
+		}
+		var journal taskFileDeleteJournal
+		if err := json.Unmarshal(raw, &journal); err != nil {
+			errs = append(errs, fmt.Errorf("解析任务文件暂存日志 %s: %w", journalPath, err))
+			continue
+		}
+		if !taskFileJournalSafe(dataDir, stageDir, journal) {
+			errs = append(errs, fmt.Errorf("拒绝越界的任务文件暂存日志 %s", journalPath))
+			continue
+		}
+		if taskExists(journal.TaskID) {
+			if err := restoreTaskFileJournal(journal); err != nil {
+				errs = append(errs, err)
+				continue
+			}
+		}
+		if err := removeAllRetry(stageDir, 4); err != nil {
+			errs = append(errs, fmt.Errorf("清理任务文件暂存 %s: %w", stageDir, err))
+			continue
+		}
+		recovered++
+	}
+	return recovered, errors.Join(errs...)
+}
+
+// taskFileJournalSafe keeps a corrupted/attacker-controlled journal from
+// turning startup recovery into an arbitrary move. Every source must be inside
+// this instance's data dir and every staged path must be inside stageDir.
+func taskFileJournalSafe(dataDir, stageDir string, journal taskFileDeleteJournal) bool {
+	if journal.Version != 1 || strings.TrimSpace(journal.TaskID) == "" {
+		return false
+	}
+	if !pathInsideDir(dataDir, stageDir) {
+		return false
+	}
+	taskRoot := filepath.Join(dataDir, "tasks", journal.TaskID)
+	transcriptRoot := filepath.Join(dataDir, "transcripts")
+	expPrefix := fmt.Sprintf("exp%d-", journal.ExplorationID)
+	for _, move := range journal.Moves {
+		if !pathInsideDir(stageDir, move.Staged) {
+			return false
+		}
+		if pathInsideDir(taskRoot, move.Source) {
+			continue
+		}
+		// Transcripts are shared in one directory: require the journal's own
+		// exploration prefix so a tampered journal cannot move another task's file.
+		if filepath.Dir(move.Source) == transcriptRoot &&
+			strings.HasPrefix(filepath.Base(move.Source), expPrefix) {
+			continue
+		}
+		return false
+	}
+	return len(journal.Moves) > 0
+}
+
+func restoreTaskFileJournal(journal taskFileDeleteJournal) error {
+	var errs []error
+	for i := len(journal.Moves) - 1; i >= 0; i-- {
+		move := journal.Moves[i]
+		if _, err := os.Lstat(move.Source); err == nil {
+			// Already restored (or a new file appeared): never overwrite it.
+			continue
+		} else if !os.IsNotExist(err) {
+			errs = append(errs, fmt.Errorf("inspect restore destination %s: %w", move.Source, err))
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(move.Source), 0o755); err != nil {
+			errs = append(errs, fmt.Errorf("create restore parent for %s: %w", move.Source, err))
+			continue
+		}
+		if err := os.Rename(move.Staged, move.Source); err != nil {
+			errs = append(errs, fmt.Errorf("restore %s: %w", move.Source, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// pathInsideDir reports whether candidate is root itself or lies below it.
+func pathInsideDir(root, candidate string) bool {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	candidateAbs, err := filepath.Abs(candidate)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(rootAbs, candidateAbs)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
 func (s *taskFileDeleteStage) commit() error {
