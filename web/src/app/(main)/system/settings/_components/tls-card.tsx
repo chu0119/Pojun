@@ -218,6 +218,15 @@ export function TLSCard() {
       await load(true);
     });
 
+  // 「启用 HTTPS（自签）」向导：显式生成自签证书并把 tls_mode 写成 selfsigned。
+  // 默认部署保持纯 HTTP，只有点了这个按钮（或下面的导入/ACME 流程）才启用。
+  const enableSelfSigned = () =>
+    run("enable", async () => {
+      const r = await api.tlsSelfSigned(splitList(sansText));
+      toast.success(r.needs_restart ? "已启用 HTTPS（自签），重启服务后生效" : "已启用 HTTPS（自签）");
+      await load(true);
+    });
+
   const doImport = () =>
     run("import", async () => {
       if (!certPEM.trim() || !keyPEM.trim()) {
@@ -283,10 +292,13 @@ export function TLSCard() {
   const activeAddr = info?.active_addr || "";
   // staging 证书浏览器不信任，必须显式标出——否则用户会以为“申请成功了但打不开”。
   const stagingCert = !!cert && /STAGING/i.test(cert.issuer || "");
+  // 重启与否看“已保存的模式”，不看本地草稿：点向导按钮只是切换到 import/acme
+  // 编辑态，尚未落库时不应提示“待重启”。
+  const savedMode = st?.mode ?? mode;
   const needsRestart =
     !!info &&
-    ((!active && mode !== "off") ||
-      (active && mode === "off") ||
+    ((!active && savedMode !== "off") ||
+      (active && savedMode === "off") ||
       (active && !!info.addr_saved && !!activeAddr && addr.trim() !== activeAddr));
 
   return (
@@ -307,8 +319,9 @@ export function TLSCard() {
           )}
         </CardTitle>
         <CardDescription>
-          HTTPS 与 HTTP 共用同一端口（默认 8787）：浏览器用 http:// 访问会被 301 到 https://，不会占用 80 端口。 公网 IP
-          可申请 Let's Encrypt 免费 IP 证书；内网用自签；域名可导入现有证书或走 ACME。
+          默认以<b>明文 HTTP</b> 提供服务；在此显式启用后，HTTPS 与 HTTP 共用同一端口（默认 8787）， 远程 http://
+          访问会被 301 到 https://，本机回环明文直通，不占用 80 端口。公网 IP 可申请 Let&apos;s Encrypt 免费 IP
+          证书；内网用自签；域名可导入现有证书或走 ACME。
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -334,6 +347,49 @@ export function TLSCard() {
               <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
                 <TriangleAlertIcon className="mt-0.5 size-4 shrink-0 text-amber-600" />
                 <span className="break-all">{st.last_error}</span>
+              </div>
+            )}
+
+            {/* 默认 pure HTTP：给出明确的显式启用入口（自签一键 / 导入 / ACME）。
+                只有点击动作才会写 tls_mode 并提示重启。 */}
+            {!active && mode === "off" && (
+              <div className="flex flex-col gap-3 rounded-md border border-emerald-500/40 bg-emerald-500/5 p-3">
+                <div className="flex items-start gap-2">
+                  <ShieldCheckIcon className="mt-0.5 size-4 shrink-0 text-emerald-600" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium">当前为明文 HTTP（默认）</div>
+                    <div className="text-xs text-muted-foreground">
+                      HTTPS 需要显式启用：自签会立即生成证书并写入设置，重启服务后生效。内网/测试用自签；
+                      公网域名可导入现有证书或走 Let&apos;s Encrypt。
+                    </div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button size="sm" onClick={enableSelfSigned} disabled={busy !== null || st.acme.running}>
+                    {busy === "enable" ? (
+                      <Loader2Icon className="mr-1 size-4 animate-spin" />
+                    ) : (
+                      <LockIcon className="mr-1 size-4" />
+                    )}
+                    启用 HTTPS（自签）
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setMode("import")}
+                    disabled={busy !== null || st.acme.running}
+                  >
+                    导入已有证书
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setMode("acme")}
+                    disabled={busy !== null || st.acme.running}
+                  >
+                    Let&apos;s Encrypt
+                  </Button>
+                </div>
               </div>
             )}
 
@@ -632,7 +688,7 @@ export function TLSCard() {
                 )}
                 保存设置
               </Button>
-              {(needsRestart || (mode !== "off" && !active)) && (
+              {(needsRestart || (savedMode !== "off" && !active)) && (
                 <Button variant="outline" onClick={restart} disabled={busy !== null || st.acme.running}>
                   {busy === "restart" ? (
                     <Loader2Icon className="mr-1 size-4 animate-spin" />
