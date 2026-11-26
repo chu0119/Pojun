@@ -21,6 +21,20 @@
   启动自检 90s；Windows 暂存目录删除有界重试；`pojun-maint` 支持 `database.dsn`。
 - **新增 `threat-modeling` skill**：任务早期资产/信任边界/滥用场景/优先级→意图。
 
+### 能力：白盒审计、出货前 Triage 与 MCP 工具指纹（内部版 v0.9.86）
+
+- **白盒审计五件套**：`repo_map`（语言/依赖/框架/入口/路由/信任边界/密钥热点）、
+  `taint_spec`（把 sources/sinks/sanitizers 确定性渲染成 Semgrep taint 规则）、
+  `sast_scan`（无 shell 跑 semgrep，按规则/严重度分组，原文落盘）、
+  `code_trace`（静态调用链，标注 source 命中）、`patch_variants`（从 unified diff
+  删除行找复制粘贴/同函数调用点）。路径锁在 `tasks/<id>/`，有文件数/大小/输出上限；
+  静态命中只算候选，必须动态复现才 `report_finding`。
+- **`triage_finding`**：planner/main 可用的确定性出货前体检（证据/verification/
+  流量/重复/归属），输出 pass/review/needs_evidence/duplicate，只提示不阻断。
+- **MCP 工具描述指纹**：`mcp_servers` 增加 `tools_hash/tools_hash_at/tools_changed/
+  tools_suspicious`；发现后按排序 name+description 算 SHA-256，变化/疑似注入在
+  MCP 页告警，不自动禁用（避免打断运行中任务）。
+
 ## [0.4.122] - 2026-11-26
 ### 修复：终态经验落库 UTF-8 截断（#75）
 

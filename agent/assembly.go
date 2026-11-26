@@ -90,6 +90,9 @@ var localExecToolNames = map[string]bool{
 	"Edit":         true,
 	"MultiEdit":    true,
 	"NotebookEdit": true,
+	// 领域工具也会在本机执行：semgrep 子进程与规则文件写入。
+	"sast_scan":  true,
+	"taint_spec": true,
 }
 
 // DropLocalExecTools returns tools minus the local-execution ones, for agents whose

@@ -2,15 +2,19 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/Autumn-27/norma/mcp"
 	actool "github.com/Autumn-27/norma/tool"
+	"github.com/chu0119/pojun/agent"
 	"github.com/chu0119/pojun/db"
 	"github.com/chu0119/pojun/mcphttp"
 )
@@ -80,9 +84,44 @@ func (s *Server) discoverAndCacheMCP(ctx context.Context, m *db.MCPServer) error
 		// 把它记成健康失败会让一个纯存储抖动触发 10 分钟熔断（v0.9.90）。
 		log.Printf("[mcp] %s 工具缓存写入失败（连接正常，不熔断）: %v", m.Name, err)
 	}
+	hash, suspicious := mcpToolsFingerprint(tools)
+	changed := m.ToolsHash != "" && m.ToolsHash != hash
+	if err := s.m.pg.SaveMCPToolsFingerprint(m.ID, hash, suspicious, changed); err != nil {
+		log.Printf("[mcp] %s 工具指纹写入失败: %v", m.Name, err)
+	}
+	if changed {
+		log.Printf("[mcp] %s 工具描述相对上次发现发生变化（升级或疑似 rug-pull）: %s -> %s",
+			m.Name, clipMCPHash(m.ToolsHash), clipMCPHash(hash))
+	}
+	if suspicious > 0 {
+		log.Printf("[mcp] %s 有 %d 个工具描述命中提示注入话术，请人工核对（不会自动执行）", m.Name, suspicious)
+	}
 	s.recordMCPHealth(m, true, start, nil, len(tools))
 	log.Printf("[mcp] %s 健康检查通过：%d 个工具，%dms", m.Name, len(tools), time.Since(start).Milliseconds())
 	return nil
+}
+
+// mcpToolsFingerprint 计算工具描述的稳定指纹，并统计命中注入话术的工具数。
+// 排序后拼接，保证顺序变化不影响结果；只覆盖 tools 缓存里的 name/description。
+func mcpToolsFingerprint(tools []db.MCPTool) (string, int) {
+	entries := make([]string, 0, len(tools))
+	suspicious := 0
+	for _, t := range tools {
+		if agent.ScanUntrustedText(t.Name+"\n"+t.Description) >= 0 {
+			suspicious++
+		}
+		entries = append(entries, t.Name+"\x00"+t.Description)
+	}
+	sort.Strings(entries)
+	sum := sha256.Sum256([]byte(strings.Join(entries, "\x01")))
+	return hex.EncodeToString(sum[:]), suspicious
+}
+
+func clipMCPHash(h string) string {
+	if len(h) > 12 {
+		return h[:12]
+	}
+	return h
 }
 
 // recordMCPHealth persists one check result (best-effort) and updates the

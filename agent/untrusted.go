@@ -92,6 +92,10 @@ func detectPromptInjection(text string) int {
 	return -1
 }
 
+// ScanUntrustedText reports the first prompt-injection pattern hit (-1 = none).
+// Exported for MCP tool-description fingerprinting (server/mcpdiscover.go).
+func ScanUntrustedText(text string) int { return detectPromptInjection(text) }
+
 // sanitizeUntrustedResult 给一条工具结果加不可信边界。返回新的 Result；原始
 // 文本不改写（除转义边界标签），证据逐字回验仍能命中。
 func sanitizeUntrustedResult(toolName string, res actool.Result) actool.Result {

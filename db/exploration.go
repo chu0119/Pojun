@@ -174,6 +174,9 @@ type ExplorationStore struct {
 	expID int64
 }
 
+// DB returns the backing DB for narrow read-only checks (triage tool).
+func (s *ExplorationStore) DB() *DB { return s.db }
+
 // CreateExploration creates a new exploration root and returns its id.
 func (d *DB) CreateExploration(description, goal string) (int64, error) {
 	var id int64

@@ -605,8 +605,18 @@ export default function MCPPage() {
               </div>
             </CardHeader>
             <CardContent className="grid gap-3">
-              <p className="text-muted-foreground text-sm">
+              <p className="text-muted-foreground flex flex-wrap items-center gap-2 text-sm">
                 {mcpToolCount(s) > 0 ? `${mcpToolCount(s)} 个工具` : "尚未发现工具"}
+                {s.tools_changed ? (
+                  <Badge variant="outline" className="border-amber-500/50 text-amber-600" title={s.tools_hash_at || "工具描述与上次发现不同"}>
+                    描述已变更
+                  </Badge>
+                ) : null}
+                {(s.tools_suspicious ?? 0) > 0 ? (
+                  <Badge variant="destructive" title="工具描述命中提示注入话术；只告警，不自动禁用">
+                    疑似注入 {s.tools_suspicious}
+                  </Badge>
+                ) : null}
               </p>
               {s.enabled && s.last_ok === false && s.last_error ? (
                 <p className="text-destructive line-clamp-2 text-xs break-all" title={s.last_error}>

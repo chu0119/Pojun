@@ -1016,6 +1016,12 @@ ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS last_ok BOOLEAN;
 ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS last_error TEXT;
 ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS last_latency_ms INTEGER;
 ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS tool_count INTEGER NOT NULL DEFAULT 0;
+-- 工具描述指纹（v0.9.86）：sha256(排序后的 name+description)；变化=升级或
+-- rug-pull（同一 server 静默改描述），页面给变更提示。
+ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS tools_hash TEXT;
+ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS tools_hash_at TIMESTAMPTZ;
+ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS tools_changed BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS tools_suspicious INTEGER NOT NULL DEFAULT 0;
 DROP TRIGGER IF EXISTS trg_mcp_upd ON mcp_servers;
 CREATE TRIGGER trg_mcp_upd BEFORE UPDATE ON mcp_servers
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();

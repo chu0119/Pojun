@@ -90,6 +90,10 @@ type AssetStore struct {
 	tx      *sql.Tx
 }
 
+// DB returns the backing DB. 只读判定类工具（triage 等）需要查归属/重复，
+// 又不想把整个 DB 暴露给 agent 层，就经这个窄口取到句柄。
+func (s *AssetStore) DB() *DB { return s.db }
+
 // Assets returns the asset store.
 func (d *DB) Assets() *AssetStore {
 	return &AssetStore{db: d, company: d.Companies()}

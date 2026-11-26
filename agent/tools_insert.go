@@ -745,6 +745,9 @@ func (t *ToolSet) WorkerTools() []actool.CoreTool {
 		// miniapp_audit（v0.4.99）：微信小程序解包产物目录审计——接口/密钥/云环境/
 		// 签名候选/路由/sourceMap/OSV。与 js_audit 共用内嵌 Python 的 --dir 分支。
 		t.miniappAudit(),
+		// 白盒审计五件套（v0.9.86）：源码在任务目录内时先 map 再定规则，
+		// sast_scan 只跑 semgrep（无 shell），code_trace/patch_variants 做静态线索。
+		t.repoMap(), t.taintSpec(), t.sastScan(), t.codeTrace(), t.patchVariants(),
 		// auth_request：用资产上已登记的凭据组装带认证的请求（横向/越权验证的前提）。
 		t.authRequest(),
 		// evidence_check（v0.4.71）：复核高/危漏洞证据是否足以支撑危害结论（13 项检查 + src_ready）。
@@ -800,12 +803,17 @@ func (t *ToolSet) MainAgentTools() []actool.CoreTool {
 		t.addTaskScope(),
 		// list_untested_assets：按需查本任务范围内未测资产(类型+分页)，自行决定补测。
 		t.listUntestedAssets(),
+		// 出货前体检（v0.9.86）：planner/main 可用，worker 不给。
+		t.triageFindingTool(),
 		// search_vulns / get_vuln：人在环路上也可直接查公开已知漏洞情报。
 		t.searchVulns(), t.getVuln(), t.getPoc(), t.scanWithNuclei(), t.netContext(),
 		// http_probe（v0.4.27）：批量探活领域工具（mainagent 与 worker 同款）。
 		t.httpProbe(),
 		// js_audit（v0.4.59）：SPA/webpack 源码泄露审计（mainagent 与 worker 同款）。
 		t.jsAudit(),
+		// 白盒审计五件套（v0.9.86）：源码在任务目录内时先 map 再定规则，
+		// sast_scan 只跑 semgrep（无 shell），code_trace/patch_variants 做静态线索。
+		t.repoMap(), t.taintSpec(), t.sastScan(), t.codeTrace(), t.patchVariants(),
 		// listener_*：回连接收器（红队 C2 前置）——start/stop 走 ask 审批，sessions 只读。
 		t.listenerStart(), t.listenerStop(), t.listenerSessions(),
 		// auth_request：用资产上已登记的凭据组装带认证的请求（横向/越权验证的前提）。

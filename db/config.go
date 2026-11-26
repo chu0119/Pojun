@@ -950,11 +950,18 @@ type MCPServer struct {
 	LastError     string     `json:"last_error,omitempty"`
 	LastLatencyMS int        `json:"last_latency_ms,omitempty"`
 	ToolCount     int        `json:"tool_count"`
+	// 工具描述指纹（v0.9.86）：sha256(排序后的 name+description)；变化=升级或
+	// rug-pull，只告警不自动禁用。ToolsSuspicious 是命中注入话术的工具数。
+	ToolsHash       string     `json:"tools_hash,omitempty"`
+	ToolsHashAt     *time.Time `json:"tools_hash_at,omitempty"`
+	ToolsChanged    bool       `json:"tools_changed"`
+	ToolsSuspicious int        `json:"tools_suspicious"`
 }
 
 func (d *DB) ListMCP() ([]*MCPServer, error) {
 	rows, err := d.Query(`SELECT id,name,transport,COALESCE(command,''),args,env,COALESCE(url,''),enabled,insecure,
-last_check_at,last_ok,COALESCE(last_error,''),COALESCE(last_latency_ms,0),COALESCE(tool_count,0)
+last_check_at,last_ok,COALESCE(last_error,''),COALESCE(last_latency_ms,0),COALESCE(tool_count,0),
+COALESCE(tools_hash,''),tools_hash_at,COALESCE(tools_changed,false),COALESCE(tools_suspicious,0)
 FROM mcp_servers ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -966,8 +973,10 @@ FROM mcp_servers ORDER BY id`)
 		var checkedAt sql.NullTime
 		var lastOK sql.NullBool
 		var latency sql.NullInt64
+		var hashAt sql.NullTime
 		if err := rows.Scan(&m.ID, &m.Name, &m.Transport, &m.Command, &args, &env, &m.URL, &m.Enabled, &m.Insecure,
-			&checkedAt, &lastOK, &m.LastError, &latency, &m.ToolCount); err != nil {
+			&checkedAt, &lastOK, &m.LastError, &latency, &m.ToolCount,
+			&m.ToolsHash, &hashAt, &m.ToolsChanged, &m.ToolsSuspicious); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -1074,6 +1083,16 @@ WHERE id=$1`, serverID, ms, toolCount)
 	_, err := d.Exec(`UPDATE mcp_servers
 SET last_check_at=now(), last_ok=false, last_error=NULLIF($2,''), last_latency_ms=$3
 WHERE id=$1`, serverID, errMsg, ms)
+	return err
+}
+
+// SaveMCPToolsFingerprint records the current tool-description hash. changed is
+// computed by the caller against the previously loaded hash; a first discovery
+// (empty previous hash) is not a change.
+func (d *DB) SaveMCPToolsFingerprint(serverID int64, hash string, suspicious int, changed bool) error {
+	_, err := d.Exec(`UPDATE mcp_servers
+SET tools_hash=$2, tools_hash_at=now(), tools_changed=$3, tools_suspicious=$4
+WHERE id=$1`, serverID, hash, changed, suspicious)
 	return err
 }
 

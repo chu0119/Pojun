@@ -116,7 +116,7 @@ type ToolSet struct {
 	// exposing secrets to the model. nil = feature unavailable (tests/legacy).
 	taskCredResolver TaskCredentialResolver
 	worker           string
-	taskID int64 // PG tasks.id; 0 when unknown (tests / orchestrator cross-task reads)
+	taskID           int64 // PG tasks.id; 0 when unknown (tests / orchestrator cross-task reads)
 	// coverageDisabled mirrors tasks.coverage_enabled=false. Stored inverted so the
 	// zero value (all existing ToolSet constructions) means ENABLED — matching the
 	// DB default (true). When true: graphOverviewData drops the coverage block, the
@@ -3274,6 +3274,10 @@ func (t *ToolSet) PlannerTools() []actool.CoreTool {
 		t.addTaskScope(),
 		// list_untested_assets：按需查本任务范围内未测资产(类型+分页)，自行决定补测。
 		t.listUntestedAssets(),
+		// 白盒入口（v0.9.86）：规划者先看仓库地图决定方向，不直接跑扫描。
+		t.repoMap(),
+		// 出货前体检（v0.9.86）：planner/main 可用，worker 不给。
+		t.triageFindingTool(),
 		// search_vulns / get_vuln：识别出目标组件后查公开已知漏洞（NVD+KEV），
 		// 规划阶段把「有现成利用的方向」排进 todolist。
 		t.searchVulns(), t.getVuln(), t.getPoc(), t.scanWithNuclei(), t.netContext(),

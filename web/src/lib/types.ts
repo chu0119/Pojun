@@ -1685,6 +1685,11 @@ export interface MCPServer {
   last_error?: string;
   last_latency_ms?: number;
   tool_count?: number;
+  // 工具描述指纹（v0.9.86）：变化=升级或 rug-pull；suspicious=描述命中注入话术数。
+  tools_hash?: string;
+  tools_hash_at?: string;
+  tools_changed?: boolean;
+  tools_suspicious?: number;
 }
 
 // ---- 确定性回归检查（v0.4.119） ----
