@@ -27,10 +27,14 @@ function normalizeChain(data: AgentPromptChainData): AgentPromptChainData {
     format: "",
     source: "none",
     source_label: "未解析",
+    prompt_scope: "none" as const,
     prompt_mode: "",
     prompt_chars: 0,
+    prompt_text: "",
     prompt_apply_inherited: false,
     prompt_active: false,
+    default_prompt_mode: "",
+    default_prompt_chars: 0,
   };
   return {
     ...data,
@@ -114,16 +118,18 @@ export function usePromptChain({
   const stageRef = React.useRef<HTMLDivElement>(null);
   const reqRef = React.useRef(0);
   const dirtyRef = React.useRef(false);
-  // 用户此刻真正在看的那组 key。load() 读这个 ref，而不是闭包里的 agentKey/profileId：
-  // 保存回调可能被尚未卸载的编辑区持有，切换 Agent 后若还用旧 key 重载，就会以最新
-  // 序号通过校验、把上一个 Agent 的链写进当前页面（且不会自愈）。
+  // The URL key the user is looking at right now. load() reads this ref instead
+  // of closing over agentKey/profileId: a save callback captured by an unmounted
+  // ConfigActions can otherwise reload the *previous* agent after a switch and
+  // overwrite the current graph with another agent's chain (F3).
   const keyRef = React.useRef({ agentKey, profileId });
   keyRef.current = { agentKey, profileId };
 
   const model = React.useMemo(() => (chain ? buildChainModel(chain) : null), [chain]);
 
-  // 声明在 loader 之前：挂载时先跑它（序号 1），load 取序号 2；切换 key 时它先让
-  // 在途的旧请求失效，再开始新请求。
+  // Declared BEFORE the loader: on mount it runs first (seq 1), then load takes
+  // seq 2. On a key change it invalidates any in-flight response for the old key
+  // before the new load starts.
   React.useEffect(() => {
     reqRef.current++;
     setChain(null);
@@ -143,7 +149,7 @@ export function usePromptChain({
       if (reqRef.current !== seq) return;
       const now = keyRef.current;
       if (now.agentKey !== started.agentKey || now.profileId !== started.profileId) return;
-      // 纵深防御：任何指名了别的 Agent 的载荷都不渲染。
+      // Defense in depth: never render a payload that names another agent.
       if (data.agent_key && data.agent_key !== started.agentKey) return;
       setChain(normalizeChain(data));
       setStale(false);

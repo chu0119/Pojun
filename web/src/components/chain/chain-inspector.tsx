@@ -161,7 +161,8 @@ function DetailView({
         : GROUP_LABEL[item.group].split(" · ")[0];
   const link = linkFor(chain, item);
   const related = pc.related(item.id);
-  const configurable = item.id === "llm" || item.id === "seg:profile_prompt" || item.id === "seg:body";
+  // 「正文」对象只展示正文；独立提示词只在专属对象与「LLM 配置」对象上编辑。
+  const configurable = item.id === "llm" || item.id === "seg:profile_prompt";
 
   return (
     <div className="grid content-start gap-3 pt-1">

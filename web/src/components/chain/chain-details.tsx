@@ -9,11 +9,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import type { ChainItem, Target } from "@/lib/chain-model";
-import { modeLabel } from "@/lib/chain-model";
+import { modeLabel, promptScopeLabel } from "@/lib/chain-model";
 import { EFFORT_LEVELS, fromStore, toStore } from "@/lib/effort";
 import type {
   AgentPromptChain as AgentPromptChainData,
-  LLMProfile,
   PromptChainMCP,
   PromptChainSegment,
   PromptChainSkill,
@@ -78,7 +77,7 @@ export function MemberList({
 function leadOf(seg: PromptChainSegment): string {
   switch (seg.kind) {
     case "profile_prompt":
-      return "这是用户在 LLM 配置里自写的纯文本，不是平台的固定字段。平台不解析变量，也没有优先级概念；是否生效只看绑定与注入模式。";
+      return "用户自写的纯文本，分两层：配置默认（LLM 配置页）与本 Agent 覆盖（本页）。覆盖优先且不受继承开关限制；平台不解析变量，注入位置决定它出现在正文前、正文后还是替换正文。";
     case "body":
       return seg.present
         ? `提示词正文；来源：${seg.source_label || seg.source}，可在 Agent 设置中编辑。`
@@ -191,7 +190,7 @@ export function LLMDetail({
   const llm = chain.llm;
   const profile = chain.segments.find((s) => s.kind === "profile_prompt");
   const profileText = (profile?.text ?? "").replace(/^[\r\n]+|[\r\n]+$/g, "");
-  const proof = `${chain.agent_key} → #${llm.profile_id ?? "?"} · ${llm.source_label} · ${modeLabel(llm.prompt_mode)} · inherit ${llm.prompt_apply_inherited ? "on" : "off"} · ${fmt(llm.prompt_chars)}c`;
+  const proof = `${chain.agent_key} → #${llm.profile_id ?? "?"} · ${llm.source_label} · ${llm.prompt_scope ?? "none"} · ${modeLabel(llm.prompt_mode)} · inherit ${llm.prompt_apply_inherited ? "on" : "off"} · ${fmt(llm.prompt_chars)}c`;
   const effortSource =
     llm.effort_source === "override" ? "覆盖（本 Agent）" : llm.effort_source === "profile" ? "配置自身" : "未设置";
   return (
@@ -201,12 +200,25 @@ export function LLMDetail({
           ["配置", `${llm.name || "未解析"}${llm.profile_id ? ` · #${llm.profile_id}` : ""}`],
           ["模型", <span className="font-mono text-xs">{`${llm.format} · ${llm.model || "—"}`}</span>],
           ["来源", llm.source_label],
-          ["独立提示词", `${modeLabel(llm.prompt_mode)} · ${llm.prompt_active ? "生效" : "未生效"}`],
+          [
+            "独立提示词",
+            llm.prompt_scope === "agent_disabled"
+              ? "本 Agent 已关闭（不注入）"
+              : `${promptScopeLabel(llm.prompt_scope)} · ${modeLabel(llm.prompt_mode)} · ${fmt(llm.prompt_chars)} 字符 · ${llm.prompt_active ? "生效" : "未生效"}`,
+          ],
+          [
+            "配置默认",
+            `${modeLabel(llm.default_prompt_mode ?? "")} · ${fmt(llm.default_prompt_chars ?? 0)} 字符 · 继承开关${llm.prompt_apply_inherited ? "开" : "关"}`,
+          ],
           ["思考强度", `${llm.effort || "未设置"}（${effortSource}）`],
         ]}
       />
       <p className="text-muted-foreground text-xs leading-relaxed">
-        显式绑定始终生效；任务链与全局激活只有在该配置勾选「继承时也生效」时才携带独立提示词。
+        独立提示词分两层：<b>配置默认</b>在 LLM 配置页编辑，只在绑定或开启「继承时也生效」时注入；
+        <b>本 Agent 覆盖</b>在下方编辑，始终优先，且不受继承开关限制。
+      </p>
+      <p className="text-muted-foreground text-xs leading-relaxed">
+        静态视图：按预览 / 显式绑定 / 全局激活解析；任务链与会话 pin 下运行时可能使用别的配置。
       </p>
       {profile && !profile.present && profile.reason && (
         <p className="text-muted-foreground text-xs">{profile.reason}</p>
@@ -441,6 +453,18 @@ export function ExcludedToolDetail({ tool }: { tool?: { key: string; reason: str
   );
 }
 
+type PromptChoice = "inherit" | "override" | "disabled";
+
+function choiceOf(scope?: string): PromptChoice {
+  return scope === "agent_override" ? "override" : scope === "agent_disabled" ? "disabled" : "inherit";
+}
+
+const PROMPT_CHOICE_LABEL: Record<PromptChoice, string> = {
+  inherit: "继承配置默认（无覆盖）",
+  override: "本 Agent 覆盖",
+  disabled: "不注入（仅本 Agent）",
+};
+
 export function ConfigActions({
   chain,
   target,
@@ -452,35 +476,49 @@ export function ConfigActions({
   onReload: () => void;
   onDirtyChange: (dirty: boolean) => void;
 }) {
-  const [profiles, setProfiles] = React.useState<LLMProfile[]>([]);
   const [busy, setBusy] = React.useState(false);
-  const [prompt, setPrompt] = React.useState("");
-  const [mode, setMode] = React.useState<string>("");
-  const [inherit, setInherit] = React.useState(false);
+  const [choice, setChoice] = React.useState<PromptChoice>(() => choiceOf(chain.llm.prompt_scope));
+  const [prompt, setPrompt] = React.useState(chain.llm.prompt_text ?? "");
+  const [mode, setMode] = React.useState(chain.llm.prompt_mode || "prepend");
+  const dirtyRef = React.useRef(false);
   const pid = chain.llm.profile_id ?? 0;
-  const profile = pid ? profiles.find((p) => Number(p.id) === pid) : undefined;
+  const scopeOnChain = choiceOf(chain.llm.prompt_scope);
 
-  React.useEffect(() => {
-    api
-      .llmProfiles()
-      .then(setProfiles)
-      .catch(() => setProfiles([]));
-  }, []);
+  const setDirty = React.useCallback(
+    (v: boolean) => {
+      dirtyRef.current = v;
+      onDirtyChange(v);
+    },
+    [onDirtyChange],
+  );
+
+  // 从链数据重置草稿：切换对象时无条件重置（上游 select 已处理未保存确认）；
+  // 刷新链数据时只在没有未保存草稿时同步，绝不静默覆盖正在编辑的文本。
+  const syncFromChain = React.useCallback(() => {
+    setChoice(choiceOf(chain.llm.prompt_scope));
+    setPrompt(chain.llm.prompt_text ?? "");
+    setMode(chain.llm.prompt_mode || "prepend");
+    dirtyRef.current = false;
+    onDirtyChange(false);
+  }, [chain.llm.prompt_scope, chain.llm.prompt_text, chain.llm.prompt_mode, onDirtyChange]);
 
   const segKey = target.kind === "segment" ? target.key : "";
   const surface = chain.segments.find((s) => s.key === segKey);
-  const showPromptSurface =
-    target.kind === "llm" || (surface != null && (surface.kind === "profile_prompt" || surface.kind === "body"));
-  // 切换对象时重置草稿；否则在 LLM 配置与独立提示词之间切换会看到上一份未保存文本。
+  // 「正文」对象不再挂提示词编辑器：它只代表正文；独立提示词只在专属对象与
+  // 「LLM 配置」对象上编辑，避免在正文对象里误改配置级/Agent 级提示词。
+  const showPromptSurface = target.kind === "llm" || surface?.kind === "profile_prompt";
   const targetKey = target.kind === "segment" ? `${target.kind}:${target.key}` : target.kind;
 
   React.useEffect(() => {
-    if (!profile) return;
-    setPrompt(profile.prompt ?? "");
-    setMode(profile.prompt_mode ?? "");
-    setInherit(!!profile.prompt_apply_inherited);
-    onDirtyChange(false);
-  }, [profile, targetKey, onDirtyChange]);
+    syncFromChain();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetKey]);
+
+  React.useEffect(() => {
+    if (dirtyRef.current) return;
+    syncFromChain();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chain.llm.profile_id, chain.llm.prompt_scope, chain.llm.prompt_text, chain.llm.prompt_mode]);
 
   const setEffort = async (value: string) => {
     if (!pid) return;
@@ -498,42 +536,30 @@ export function ConfigActions({
   };
 
   const savePrompt = async () => {
-    if (!profile) return;
-    // 服务端规则：文本非空而 mode 为空时会强制回落到 prepend。前端先拦住，
-    // 避免用户以为「停用」却变成「正文最前注入」。
-    if (!mode && prompt.trim()) {
-      toast.error("「不注入」需要先清空提示词；非空文本请选择 prepend / append / replace");
-      return;
+    if (!pid) return;
+    if (choice === "override") {
+      if (!prompt.trim()) {
+        toast.error("覆盖需要非空正文；要关闭本 Agent 的注入请选择「不注入」");
+        return;
+      }
+      if (chain.prompt_max_runes > 0 && Array.from(prompt).length > chain.prompt_max_runes) {
+        toast.error(`独立提示词过长（上限 ${chain.prompt_max_runes} 字符）`);
+        return;
+      }
     }
     setBusy(true);
     try {
-      await api.saveLLMProfile({
-        id: Number(profile.id),
-        name: profile.name,
-        format: profile.format,
-        model: profile.model,
-        base_url: profile.base_url,
-        proxy: profile.proxy,
-        rate_per_second: profile.rate_per_second,
-        rate_per_minute: profile.rate_per_minute,
-        context_window_k: profile.context_window_k,
-        thinking_type: profile.thinking_type,
-        reasoning_effort: profile.reasoning_effort,
-        priority: profile.priority,
-        pool_exclude: profile.pool_exclude,
-        streaming: profile.streaming,
-        max_tokens: profile.max_tokens,
-        max_tokens_field: profile.max_tokens_field,
-        session_header_key: profile.session_header_key,
-        user_agent: profile.user_agent,
-        retry: profile.retry,
-        preset_id: profile.preset_id,
-        prompt,
-        prompt_mode: mode,
-        prompt_apply_inherited: inherit,
-      });
-      onDirtyChange(false);
-      toast.success("已保存配置提示词；运行中的会话沿用原 system prompt");
+      if (choice === "inherit") {
+        await api.deleteAgentPromptOverride(chain.agent_key, pid);
+        toast.success(`已恢复继承配置默认（仅 ${chain.agent_key} × ${chain.llm.name || `#${pid}`}）`);
+      } else if (choice === "disabled") {
+        await api.setAgentPromptOverride(chain.agent_key, pid, "", "");
+        toast.success(`已关闭 ${chain.agent_key} 的独立提示词（其它 Agent 不受影响）`);
+      } else {
+        await api.setAgentPromptOverride(chain.agent_key, pid, prompt, mode);
+        toast.success(`已保存 ${chain.agent_key} 的覆盖（不影响其它 Agent）`);
+      }
+      setDirty(false);
       onReload();
     } catch (e) {
       toast.error((e as Error).message);
@@ -550,11 +576,20 @@ export function ConfigActions({
     );
   }
 
+  const defaultDesc = `配置默认：${chain.llm.default_prompt_chars ?? 0} 字符 · ${modeLabel(chain.llm.default_prompt_mode ?? "")} · 继承开关${chain.llm.prompt_apply_inherited ? "开" : "关"}`;
+  const saveDisabled =
+    busy ||
+    (choice === "inherit" && scopeOnChain === "inherit") ||
+    (choice === "disabled" && scopeOnChain === "disabled") ||
+    (choice === "override" && !prompt.trim());
+
   return (
     <div className="mb-3.5 grid gap-3 rounded-md border p-3">
       <div className="text-sm">可配置 · 下一次模型调用生效</div>
-      {chain.llm.source === "preview_override" && profile && (
-        <p className="-mt-2 text-muted-foreground text-xs">正在修改预览中的配置：{profile.name}</p>
+      {chain.llm.source === "preview_override" && (
+        <p className="-mt-2 text-muted-foreground text-xs">
+          预览：保存会写入（{chain.agent_key} × {chain.llm.name || `#${pid}`}）的覆盖，不改变配置默认。
+        </p>
       )}
       {showPromptSurface && (
         <label className="grid gap-1 text-muted-foreground text-xs">
@@ -584,62 +619,87 @@ export function ConfigActions({
           ）
         </p>
       )}
-      {showPromptSurface && profile && (
+      {showPromptSurface && (
         <details className="rounded-md border bg-background/60 p-2" open={surface?.kind === "profile_prompt"}>
           <summary className="cursor-pointer text-muted-foreground text-xs">
-            独立提示词（{profile.name} #{profile.id}）
-            {profile.prompt_apply_inherited ? " · 继承时也生效" : ""}
+            独立提示词（{chain.agent_key} × {chain.llm.name || "配置"} #{pid}）
+            <span className="ml-1">· {promptScopeLabel(chain.llm.prompt_scope)}</span>
           </summary>
           <div className="mt-2 grid gap-2">
-            <textarea
-              className="min-h-24 w-full resize-y rounded-md border bg-background px-2 py-1.5 font-mono text-xs leading-relaxed focus-visible:ring-2 focus-visible:ring-foreground"
-              value={prompt}
-              placeholder="纯文本，不做模板变量渲染"
-              onChange={(e) => {
-                setPrompt(e.target.value);
-                onDirtyChange(true);
-              }}
-            />
-            <div className="flex flex-wrap items-center gap-3 text-muted-foreground text-xs">
+            <p className="text-muted-foreground text-xs leading-relaxed">
+              {defaultDesc}。本页只写<b>本 Agent</b> 的覆盖；配置默认请到 LLM 配置页编辑。
+            </p>
+            <label className="grid gap-1 text-muted-foreground text-xs">
+              本 Agent 的选择
               <select
-                className="h-7 rounded-md border bg-background px-1 text-foreground text-xs focus-visible:ring-2 focus-visible:ring-foreground"
-                value={mode}
+                className="h-7 max-w-full rounded-md border bg-background px-1.5 text-foreground text-xs focus-visible:ring-2 focus-visible:ring-foreground"
+                value={choice}
+                disabled={busy}
                 onChange={(e) => {
-                  setMode(e.target.value);
-                  onDirtyChange(true);
+                  setChoice(e.target.value as PromptChoice);
+                  setDirty(true);
                 }}
               >
-                <option value="" disabled={prompt.trim().length > 0}>
-                  不注入{prompt.trim().length > 0 ? "（需先清空正文）" : ""}
-                </option>
-                <option value="prepend">prepend（正文最前）</option>
-                <option value="append">append（硬尾之前）</option>
-                <option value="replace">replace（替换正文）</option>
+                <option value="inherit">{PROMPT_CHOICE_LABEL.inherit}</option>
+                <option value="override">{PROMPT_CHOICE_LABEL.override}</option>
+                <option value="disabled">{PROMPT_CHOICE_LABEL.disabled}</option>
               </select>
-              <label className="inline-flex min-h-6 items-center gap-1.5">
-                <input
-                  type="checkbox"
-                  className="size-4 accent-foreground"
-                  checked={inherit}
+            </label>
+            {choice === "inherit" && (
+              <p className="text-muted-foreground text-xs leading-relaxed">
+                本 Agent 不设覆盖，按现有规则使用配置默认（显式绑定总生效；任务链/全局看「继承时也生效」）。
+              </p>
+            )}
+            {choice === "disabled" && (
+              <p className="text-muted-foreground text-xs leading-relaxed">
+                本 Agent 不注入该配置的独立提示词；其它 Agent 的默认与覆盖都不受影响。
+              </p>
+            )}
+            {choice === "override" && (
+              <>
+                <textarea
+                  className="min-h-24 w-full resize-y rounded-md border bg-background px-2 py-1.5 font-mono text-xs leading-relaxed focus-visible:ring-2 focus-visible:ring-foreground"
+                  value={prompt}
+                  placeholder="纯文本，不做模板变量渲染"
                   onChange={(e) => {
-                    setInherit(e.target.checked);
-                    onDirtyChange(true);
+                    setPrompt(e.target.value);
+                    setDirty(true);
                   }}
                 />
-                继承时也生效
-              </label>
-              <span className="ml-auto font-mono tabular-nums">
-                {Array.from(prompt).length}
-                {chain.prompt_max_runes > 0 ? ` / ${chain.prompt_max_runes}` : ""} 字符
-              </span>
-            </div>
+                <div className="flex flex-wrap items-center gap-3 text-muted-foreground text-xs">
+                  <select
+                    className="h-7 rounded-md border bg-background px-1 text-foreground text-xs focus-visible:ring-2 focus-visible:ring-foreground"
+                    value={mode}
+                    onChange={(e) => {
+                      setMode(e.target.value);
+                      setDirty(true);
+                    }}
+                  >
+                    <option value="prepend">prepend（正文最前）</option>
+                    <option value="append">append（硬尾之前）</option>
+                    <option value="replace">replace（替换正文）</option>
+                  </select>
+                  <span className="ml-auto font-mono tabular-nums">
+                    {Array.from(prompt).length}
+                    {chain.prompt_max_runes > 0 ? ` / ${chain.prompt_max_runes}` : ""} 字符
+                  </span>
+                </div>
+                <p className="text-muted-foreground text-[11px] leading-relaxed">
+                  覆盖优先于配置默认，且不受「继承时也生效」限制；只作用于当前 Agent。
+                </p>
+              </>
+            )}
             <button
               type="button"
               className="justify-self-start rounded-md bg-foreground px-2.5 py-1 font-medium text-background text-xs disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-foreground"
-              disabled={busy}
+              disabled={saveDisabled}
               onClick={() => void savePrompt()}
             >
-              保存提示词
+              {choice === "inherit"
+                ? "恢复继承（删除覆盖）"
+                : choice === "disabled"
+                  ? "保存为不注入"
+                  : "保存本 Agent 覆盖"}
             </button>
           </div>
         </details>
