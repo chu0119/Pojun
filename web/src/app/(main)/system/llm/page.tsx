@@ -307,6 +307,8 @@ function PoolSheet({
 // 模型配置抽屉（新建 / 编辑共用同一套表单）
 export default function LLMPage() {
   const [profiles, setProfiles] = React.useState<LLMProfile[]>([]);
+  // 独立提示词上限由后端下发；0 = 未知（不预校验，保存时以后端文案为准）。
+  const [promptMaxRunes, setPromptMaxRunes] = React.useState(0);
   const [pool, setPool] = React.useState<LLMPoolStatus | null>(null);
   const [poolOpen, setPoolOpen] = React.useState(false);
   // 抽屉的开关和内容分开存：关闭时 editing 保持不变，否则关闭动画期间标题会从
@@ -331,7 +333,9 @@ export default function LLMPage() {
 
   const load = React.useCallback(async () => {
     try {
-      setProfiles(await api.llmProfiles());
+      const meta = await api.llmProfilesMeta();
+      setProfiles(meta.profiles);
+      setPromptMaxRunes(meta.promptMaxRunes);
     } catch {
       /* ignore */
     }
@@ -566,7 +570,13 @@ export default function LLMPage() {
         </TabsContent>
       </Tabs>
 
-      <ProfileSheet profile={editing} open={editOpen} onOpenChange={setEditOpen} onSaved={() => void load()} />
+      <ProfileSheet
+        profile={editing}
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        onSaved={() => void load()}
+        promptMaxRunes={promptMaxRunes}
+      />
       <PoolSheet open={poolOpen} onOpenChange={setPoolOpen} pool={pool} onReload={loadPool} />
 
       {/* ── 删除二次确认 ── */}

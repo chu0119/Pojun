@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -8,7 +9,9 @@ import (
 	"github.com/chu0119/pojun/db"
 )
 
-const maxProfilePromptRunes = 8000
+// 独立提示词上限。上限只在这里定义一处；保存校验、报错文案与两个接口的
+// prompt_max_runes 字段都从它派生，前端不再写死数字。
+const maxProfilePromptRunes = 65535
 
 func validProfilePromptMode(m string) bool {
 	switch m {
@@ -41,7 +44,7 @@ func normalizeProfilePromptRequest(old db.PromptInfo, text, mode *string, apply 
 		next.ApplyInherited = *apply
 	}
 	if utf8.RuneCountInString(next.Text) > maxProfilePromptRunes {
-		return db.PromptInfo{}, "独立提示词过长（上限 8000 字符）"
+		return db.PromptInfo{}, fmt.Sprintf("独立提示词过长（上限 %d 字符）", maxProfilePromptRunes)
 	}
 	if next.Mode != "" && !validProfilePromptMode(next.Mode) {
 		return db.PromptInfo{}, "prompt_mode 只能是 prepend / append / replace"

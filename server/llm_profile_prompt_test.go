@@ -50,8 +50,15 @@ func TestNormalizeProfilePromptRequest(t *testing.T) {
 	if _, err := normalizeProfilePromptRequest(db.PromptInfo{}, strPtr("x"), strPtr("bogus"), nil); err == "" {
 		t.Fatal("invalid mode must be rejected")
 	}
-	if _, err := normalizeProfilePromptRequest(db.PromptInfo{}, strPtr(strings.Repeat("a", 8001)), nil, nil); err == "" {
+	if _, err := normalizeProfilePromptRequest(db.PromptInfo{}, strPtr(strings.Repeat("a", 65536)), nil, nil); err == "" {
 		t.Fatal("over-length prompt must be rejected")
+	}
+	// 新上限：65535 个码点（含多字节）必须通过，65536 必须拒绝。
+	if _, err := normalizeProfilePromptRequest(db.PromptInfo{}, strPtr(strings.Repeat("好", 65535)), nil, nil); err != "" {
+		t.Fatalf("65535-rune prompt must pass: %s", err)
+	}
+	if _, err := normalizeProfilePromptRequest(db.PromptInfo{}, strPtr(strings.Repeat("好", 65536)), nil, nil); err == "" {
+		t.Fatal("65536-rune prompt must be rejected")
 	}
 }
 
@@ -474,7 +481,7 @@ func TestSaveProfilePromptThreeState(t *testing.T) {
 	// Over-length is a 400, not a DB 500.
 	rr = save(map[string]any{
 		"id": id, "name": name, "format": "openai", "model": "m2",
-		"prompt": strings.Repeat("a", 8001), "prompt_mode": "prepend",
+		"prompt": strings.Repeat("a", 65536), "prompt_mode": "prepend",
 	})
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("over-length should be 400, got %d: %s", rr.Code, rr.Body.String())

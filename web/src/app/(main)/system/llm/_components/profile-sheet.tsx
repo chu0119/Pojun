@@ -111,11 +111,15 @@ export function ProfileSheet({
   open,
   onOpenChange,
   onSaved,
+  promptMaxRunes = 0,
 }: {
   profile: LLMProfile | null; // null = 新建（走三步向导）
   open: boolean;
   onOpenChange: (o: boolean) => void;
   onSaved: (id: string) => void;
+  // 独立提示词上限，由后端经 /llm/profiles 下发；0 = 未知，此时不做客户端预校验，
+  // 保存失败直接显示后端的报错文案（文案里的数字同样来自后端常量）。
+  promptMaxRunes?: number;
 }) {
   const isNew = !profile;
   // ── 向导状态（仅新建） ──
@@ -188,7 +192,7 @@ export function ProfileSheet({
     });
   const dirty = open && coreSnapshot() !== initialRef.current;
   const promptChars = Array.from(prompt).length;
-  const promptTooLong = promptChars > 8000;
+  const promptTooLong = promptMaxRunes > 0 && promptChars > promptMaxRunes;
 
   // 每次打开重灌表单；新建重置向导到第 1 步并拉预设。
   React.useEffect(() => {
@@ -393,7 +397,7 @@ export function ProfileSheet({
       return;
     }
     if (promptTooLong) {
-      toast.error("独立提示词过长（上限 8000 字符）");
+      toast.error(`独立提示词过长（上限 ${promptMaxRunes} 字符）`);
       return;
     }
     if (saving) return;
@@ -789,7 +793,8 @@ export function ProfileSheet({
         />
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
           <span className={cn("tabular-nums", promptTooLong ? "text-destructive" : "text-muted-foreground")}>
-            {promptChars} / 8000 字符 · 约 {Math.ceil(promptChars / 2)} tokens（估算）
+            {promptChars}
+            {promptMaxRunes > 0 ? ` / ${promptMaxRunes}` : ""} 字符 · 约 {Math.ceil(promptChars / 2)} tokens（估算）
           </span>
           <span className="text-muted-foreground">纯文本：{"{{.Now}}"} 等变量原样发送，不会被替换</span>
         </div>

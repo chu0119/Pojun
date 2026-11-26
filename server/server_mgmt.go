@@ -1855,7 +1855,7 @@ func (s *Server) pgListProfiles(w http.ResponseWriter, r *http.Request) {
 			p.EffortOverrides = ovs[p.ID]
 		}
 	}
-	writeJSON(w, 200, map[string]any{"profiles": llmProfileDTOs(ps)})
+	writeJSON(w, 200, map[string]any{"profiles": llmProfileDTOs(ps), "prompt_max_runes": maxProfilePromptRunes})
 }
 
 func (s *Server) pgSaveProfile(w http.ResponseWriter, r *http.Request) {

@@ -1696,6 +1696,8 @@ export interface AgentPromptChain {
   totals: { segments: number; chars: number; est_tokens: number };
   warnings: string[];
   static_only: boolean;
+  /** 独立提示词上限，与 LLM 配置列表同源；页面据此渲染计数器与预校验。 */
+  prompt_max_runes: number;
 }
 
 // ---- MCP ----

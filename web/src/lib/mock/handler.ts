@@ -2429,6 +2429,7 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
           ? { ...p, prompt: edit.prompt, prompt_mode: edit.mode, prompt_apply_inherited: edit.inherit }
           : p;
       }),
+      prompt_max_runes: 65535,
     };
   }
   if (path === "/llm/profiles" && m === "POST") {

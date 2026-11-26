@@ -1359,7 +1359,13 @@ export const api = {
       session_header_key,
       user_agent,
     }),
-  llmProfiles: () => get<{ profiles: LLMProfile[] }>("/llm/profiles").then((r) => arr(r.profiles)),
+  // 上限值由后端下发（prompt_max_runes），前端不写死数字；列表与装配链同源。
+  llmProfilesMeta: () =>
+    get<{ profiles: LLMProfile[]; prompt_max_runes?: number }>("/llm/profiles").then((r) => ({
+      profiles: arr(r.profiles),
+      promptMaxRunes: r.prompt_max_runes ?? 0,
+    })),
+  llmProfiles: () => api.llmProfilesMeta().then((r) => r.profiles),
   saveLLMProfile: (p: {
     id?: number; // omit/0 = create; set = update that profile
     name: string;

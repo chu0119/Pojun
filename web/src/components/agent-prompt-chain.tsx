@@ -2438,7 +2438,10 @@ function ConfigActions({
                 <input type="checkbox" checked={inherit} onChange={(e) => setInherit(e.target.checked)} />
                 继承时也生效
               </label>
-              <span className="ml-auto font-mono text-muted-foreground">{prompt.length} 字符</span>
+              <span className="ml-auto font-mono text-muted-foreground">
+                {Array.from(prompt).length}
+                {chain.prompt_max_runes > 0 ? ` / ${chain.prompt_max_runes}` : ""} 字符
+              </span>
             </div>
             <button
               type="button"

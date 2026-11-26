@@ -463,6 +463,13 @@
   schema 不兼容降级、`taskCols` 不含回执列、UA 常量一致性。
 
 ## [Unreleased]
+### 变更：独立提示词上限提升到 65535 字符
+
+- 上限从 8000 提升到 65535 个 Unicode 码点；常量、数据库 CHECK 与报错文案同源，
+  旧数据不受影响（约束先删再建，保持幂等）。
+- `GET /api/llm/profiles` 与装配链响应顶层新增 `prompt_max_runes`，前端计数器与
+  预校验改读接口值，页面不再写死数字；超过旧上限的提示词可正常保存并参与装配。
+
 ### 新增（issue #41）
 
 - **curl 系工具支持可选 `user_agent`（issue #41）**：`http_probe` / `api_contract` /

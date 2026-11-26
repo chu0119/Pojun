@@ -236,5 +236,6 @@ export function mockPromptChain(agentKey: string, profileId?: string | number): 
       "MCP「playwright」上次健康检查失败，缓存可能过期。",
     ],
     static_only: true,
+    prompt_max_runes: 65535,
   };
 }

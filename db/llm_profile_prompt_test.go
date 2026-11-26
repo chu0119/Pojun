@@ -79,8 +79,11 @@ SELECT count(*) FROM information_schema.columns
 	if err := insert(base+"-mode", "x", "bogus"); err == nil {
 		t.Fatal("invalid prompt_mode must be rejected")
 	}
-	if err := insert(base+"-len", strings.Repeat("a", 8001), "append"); err == nil {
-		t.Fatal("8001-char prompt must be rejected")
+	if err := insert(base+"-len", strings.Repeat("a", 65536), "append"); err == nil {
+		t.Fatal("65536-char prompt must be rejected")
+	}
+	if err := insert(base+"-max", strings.Repeat("a", 65535), "append"); err != nil {
+		t.Fatalf("65535-char prompt must pass: %v", err)
 	}
 	if err := insert(base+"-ok", "x", "append"); err != nil {
 		t.Fatalf("valid prompt rejected: %v", err)

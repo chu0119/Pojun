@@ -121,6 +121,8 @@ type agentPromptChain struct {
 	Totals     promptChainTotals    `json:"totals"`
 	Warnings   []string             `json:"warnings"`
 	StaticOnly bool                 `json:"static_only"`
+	// 独立提示词上限。与 LLM 配置列表同源，页面据此渲染计数器与预校验。
+	PromptMaxRunes int `json:"prompt_max_runes"`
 }
 
 func (s *Server) pgAgentPromptChain(w http.ResponseWriter, r *http.Request) {
@@ -361,7 +363,7 @@ func (s *Server) buildAgentPromptChain(pg *db.DB, a *db.Agent, profileParam stri
 		Totals: promptChainTotals{
 			Segments: len(out), Chars: totalChars, EstTokens: (totalChars + 1) / 2,
 		},
-		Warnings: warnings, StaticOnly: true,
+		Warnings: warnings, StaticOnly: true, PromptMaxRunes: maxProfilePromptRunes,
 	}, nil
 }
 

@@ -508,7 +508,7 @@ ALTER TABLE llm_profiles ADD  CONSTRAINT llm_profiles_prompt_mode_check
     CHECK (prompt_mode IN ('','prepend','append','replace'));
 ALTER TABLE llm_profiles DROP CONSTRAINT IF EXISTS llm_profiles_prompt_len_check;
 ALTER TABLE llm_profiles ADD  CONSTRAINT llm_profiles_prompt_len_check
-    CHECK (char_length(prompt) <= 8000);
+    CHECK (char_length(prompt) <= 65535);
 -- 二值等价：有正文必有模式，无正文必无模式，杜绝「存了字却不生效」的死状态。
 ALTER TABLE llm_profiles DROP CONSTRAINT IF EXISTS llm_profiles_prompt_pair_check;
 ALTER TABLE llm_profiles ADD  CONSTRAINT llm_profiles_prompt_pair_check
