@@ -1680,8 +1680,11 @@ export interface PromptChainMCP {
 
 export interface PromptChainSkill {
   name: string;
+  /** 完整描述；一句话用途由界面取首个语义单元，单行视觉省略。 */
   description: string;
   in_index: boolean;
+  /** 速查块里的实际状态：有描述 / 预算用尽只剩名称 / 不在速查块。 */
+  index_state: "described" | "name_only" | "absent";
   mcp_gated: string[];
 }
 

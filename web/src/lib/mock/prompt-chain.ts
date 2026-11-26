@@ -219,11 +219,11 @@ export function mockPromptChain(agentKey: string, profileId?: string | number): 
       },
     ],
     skills: [
-      { name: "web-recon", description: "站点侦察", in_index: true, mcp_gated: ["playwright"] },
-      { name: "web-exploit", description: "Web 漏洞验证", in_index: true, mcp_gated: [] },
-      { name: "mini-program", description: "小程序逆向", in_index: true, mcp_gated: [] },
-      { name: "traffic-replay", description: "流量重放", in_index: false, mcp_gated: [] },
-      { name: "report-writing", description: "报告撰写", in_index: true, mcp_gated: [] },
+      { name: "web-recon", description: "站点侦察", in_index: true, mcp_gated: ["playwright"], index_state: "described" },
+      { name: "web-exploit", description: "Web 漏洞验证", in_index: true, mcp_gated: [], index_state: "described" },
+      { name: "mini-program", description: "小程序逆向", in_index: true, mcp_gated: [], index_state: "described" },
+      { name: "traffic-replay", description: "流量重放", in_index: false, mcp_gated: [], index_state: "absent" },
+      { name: "report-writing", description: "报告撰写", in_index: true, mcp_gated: [], index_state: "name_only" },
     ],
     totals: {
       // 与 server/prompt_chain.go 同口径：只累计 present 段，token 估算 (chars+1)/2。

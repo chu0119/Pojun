@@ -52,12 +52,11 @@ func wireAgentAugment(pg *db.DB, skillDir string, hostTools func() ([]actool.Cor
 				if sk.Dir == "" {
 					continue
 				}
+				// 索引行 = 描述的第一个语义单元（到句号/分号/换行），不按字符硬切：
+				// 切多少由作者写的句子决定，超出预算时按整行降级为「仅名称」（见下方 maxRunes）。
 				d := strings.TrimSpace(sk.Description)
 				if i := strings.IndexAny(d, "。；;\n"); i > 0 {
 					d = d[:i]
-				}
-				if r := []rune(d); len(r) > 80 {
-					d = string(r[:80]) + "…"
 				}
 				idxDesc[filepath.Base(sk.Dir)] = d
 			}
