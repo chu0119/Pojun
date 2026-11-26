@@ -1798,3 +1798,29 @@ ALTER TABLE agent_profile_effort_overrides
 ALTER TABLE agent_profile_effort_overrides
     ADD CONSTRAINT agent_profile_effort_overrides_effort_check
     CHECK (reasoning_effort IN ('low','medium','high','xhigh','max'));
+
+-- ============================================================================
+-- 异步清理队列（任务删除后的流量/LLM/文件分批清理）
+-- 与 db/cleanup.go 的 EnsureCleanupJobsTable 保持一致；全部 IF NOT EXISTS，
+-- 旧库启动时幂等升级。done/failed 行保留作审计；同一 (task, kind) 同时只有
+-- 一个 pending/running 作业，避免并发删除重复做昂贵清理。
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS cleanup_jobs (
+  id          BIGSERIAL PRIMARY KEY,
+  task_id     BIGINT,
+  kind        TEXT NOT NULL,
+  payload     JSONB NOT NULL DEFAULT '{}'::jsonb,
+  state       TEXT NOT NULL DEFAULT 'pending',
+  attempts    INT NOT NULL DEFAULT 0,
+  total       BIGINT NOT NULL DEFAULT 0,
+  done        BIGINT NOT NULL DEFAULT 0,
+  last_error  TEXT NOT NULL DEFAULT '',
+  run_after   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_cleanup_jobs_state ON cleanup_jobs(state, run_after, id);
+CREATE INDEX IF NOT EXISTS idx_cleanup_jobs_task ON cleanup_jobs(task_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cleanup_jobs_active
+  ON cleanup_jobs(task_id, kind)
+  WHERE state IN ('pending','running') AND task_id IS NOT NULL;
