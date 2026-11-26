@@ -114,47 +114,56 @@ export function usePromptChain({
   const stageRef = React.useRef<HTMLDivElement>(null);
   const reqRef = React.useRef(0);
   const dirtyRef = React.useRef(false);
+  // 用户此刻真正在看的那组 key。load() 读这个 ref，而不是闭包里的 agentKey/profileId：
+  // 保存回调可能被尚未卸载的编辑区持有，切换 Agent 后若还用旧 key 重载，就会以最新
+  // 序号通过校验、把上一个 Agent 的链写进当前页面（且不会自愈）。
+  const keyRef = React.useRef({ agentKey, profileId });
+  keyRef.current = { agentKey, profileId };
 
   const model = React.useMemo(() => (chain ? buildChainModel(chain) : null), [chain]);
 
-  const load = React.useCallback(
-    async (keepData = false) => {
-      const seq = ++reqRef.current;
-      setLoading(true);
-      setError("");
-      try {
-        const data = await api.agentPromptChain(agentKey, profileId);
-        if (reqRef.current === seq) {
-          setChain(normalizeChain(data));
-          setStale(false);
-        }
-      } catch (e) {
-        if (reqRef.current !== seq) return;
-        if (keepData) {
-          setStale(true);
-          toast.error(`刷新装配链失败：${(e as Error).message}`);
-        } else {
-          setChain(null);
-          setError((e as Error).message);
-        }
-      } finally {
-        if (reqRef.current === seq) setLoading(false);
-      }
-    },
-    [agentKey, profileId],
-  );
-
+  // 声明在 loader 之前：挂载时先跑它（序号 1），load 取序号 2；切换 key 时它先让
+  // 在途的旧请求失效，再开始新请求。
   React.useEffect(() => {
-    if (active) void load();
-  }, [active, load, reloadKey]);
-
-  // 切换 Agent / 预览配置时先清掉旧图：否则加载期间会短暂显示上一个 Agent 的装配链。
-  React.useEffect(() => {
+    reqRef.current++;
     setChain(null);
     setExpanded(new Set());
     setFocusIdState(null);
     setStale(false);
+    setLoading(false);
   }, [agentKey, profileId]);
+
+  const load = React.useCallback(async (keepData = false) => {
+    const started = keyRef.current;
+    const seq = ++reqRef.current;
+    setLoading(true);
+    setError("");
+    try {
+      const data = await api.agentPromptChain(started.agentKey, started.profileId);
+      if (reqRef.current !== seq) return;
+      const now = keyRef.current;
+      if (now.agentKey !== started.agentKey || now.profileId !== started.profileId) return;
+      // 纵深防御：任何指名了别的 Agent 的载荷都不渲染。
+      if (data.agent_key && data.agent_key !== started.agentKey) return;
+      setChain(normalizeChain(data));
+      setStale(false);
+    } catch (e) {
+      if (reqRef.current !== seq) return;
+      if (keepData) {
+        setStale(true);
+        toast.error(`刷新装配链失败：${(e as Error).message}`);
+      } else {
+        setChain(null);
+        setError((e as Error).message);
+      }
+    } finally {
+      if (reqRef.current === seq) setLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (active) void load();
+  }, [active, agentKey, profileId, reloadKey, load]);
 
   const item = React.useCallback(
     (id: string | null): ChainItem | undefined => {
@@ -230,6 +239,12 @@ export function usePromptChain({
       setExpanded((prev) => (prev.has(parent.id) ? prev : new Set(prev).add(parent.id)));
     }
   }, [model, sel, item, parentOf, onSelect]);
+
+  // focusId 指向已消失的对象（解绑 Skill、段被替换）时清空：否则清单与关系图都
+  // 没有 tabIndex=0 的落点，Tab 键直接跳过整块内容。
+  React.useEffect(() => {
+    if (focusId && !item(focusId)) setFocusIdState(null);
+  }, [model, focusId, item]);
 
   const toggle = React.useCallback((id: string) => {
     setExpanded((prev) => {

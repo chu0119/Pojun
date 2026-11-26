@@ -172,7 +172,11 @@ export function ChainMap({ pc }: { pc: PromptChainController }) {
             const side = n.col === "left" || n.col === "right";
             const selected = selTop === n.id;
             const rel = related.has(n.id);
-            const focusable = (pc.focusId ?? model.items[0]?.id) === n.id;
+            // focusId 可能指向清单成员（如 MCP 告警点「查看」得到的 mcp:2），它不在
+            // 关系图节点里；此时若不回退，整张图没有一个 tabIndex=0，Tab 直接跳过。
+            const focusTarget =
+              pc.focusId && g.nodes.some((x) => x.id === pc.focusId) ? pc.focusId : (model.items[0]?.id ?? g.nodes[0]?.id);
+            const focusable = focusTarget === n.id;
             const borderWidth = n.id === "model" ? "border-[3px]" : selected ? "border-2" : "border";
             const borderStyle = n.id === "model" ? "border-double" : n.col === "out" ? "border-dashed" : "";
             const borderTone = selected || rel ? "border-foreground" : "border-[var(--cn-border)]";

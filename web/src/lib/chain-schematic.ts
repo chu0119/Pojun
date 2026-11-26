@@ -110,7 +110,9 @@ export function layoutSchematic({ width, trunk, sources, sidecar, hasExcluded }:
   const G = SCHEMATIC_G;
   const W = Math.round(width);
   const mode: SchematicLayout["mode"] = W >= 672 ? "three" : W >= 520 ? "two" : "one";
-  if (mode === "one") {
+  // 空 trunk 不可能是正常输入（schematicInputFromModel 总会带 model），但布局函数
+  // 是导出函数：直接给空数组调用会读 trunk[0]/last 而抛错或产出 Infinity 高度。
+  if (mode === "one" || trunk.length === 0) {
     return { mode, w: W, h: 0, nodes: [], edges: [], caps: [], boxes: [], boundary: null, ticks: [], side: 0, trunkW: 0 };
   }
   const side = mode === "three" ? Math.max(G.SIDE_MIN, Math.min(G.SIDE_MAX, Math.round(W * 0.2))) : G.SIDE_MIN;

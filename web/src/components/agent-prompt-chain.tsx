@@ -9,7 +9,7 @@ import { ChainList } from "@/components/chain/chain-list";
 import { ChainMap } from "@/components/chain/chain-map";
 import type { PromptChainController } from "@/components/chain/use-prompt-chain";
 import { Button } from "@/components/ui/button";
-import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 
 // 装配链外壳：舞台（清单或关系图）+ 检视器。两者读同一份模型、同一个选中。
@@ -139,6 +139,8 @@ export function AgentPromptChain({
       {!wide && !!pc.chain && (
         <Sheet open={panelOpen} onOpenChange={onPanelOpenChange}>
           <SheetContent side="right" className="w-full overflow-y-auto p-4 sm:max-w-[480px]">
+            {/* Radix 要求对话框有可访问名称，否则读屏拿到一个无名 dialog。 */}
+            <SheetTitle className="sr-only">装配链检视器</SheetTitle>
             <ChainInspector pc={pc} />
           </SheetContent>
         </Sheet>
