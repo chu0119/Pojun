@@ -125,3 +125,21 @@ Recorder 按 profile 各包一层，因此**失败尝试也归属在它自己的
 - 新增一条 LLM 调用路径（新 agent/新裁判）时：必须走同一 `llm.Provider` 解析链（共享限流/熔断/录制），而不是绕开自建 HTTP——目标拆解当年就是为了这个才把 provider 改成调用方注入的（`agent/goals.go:81` 注释）。
 - 判定"该不该转移/重试"时先问：**这次失败重放到另一个模型上，会不会重复产出或重复副作用？** 会 → 只能上抛；不会 → 才允许换。这是贯穿五层的一致判据。
 - 改配额判定文案（`IsQuotaExhaustedMessage`）务必保持"收窄"倾向：误把限流当欠费会无意义轮换并烧光链上所有 key。
+
+## 十、原生视觉（图片输入）
+
+**能力判定**（`llmpresets.ResolveVisionStored`）按下列顺序解析，结果同时用于请求侧守卫和配置页 UI（两者必须同源）：
+
+1. 用户三态 `llm_profiles.vision_mode`：`''`=自动 / `on` / `off`（`profile` 来源，压过一切）；
+2. 探测缓存：`vision_probe`（`on`/`off`）且 `vision_probe_sig` 等于当前 `format|base_url|model` 指纹（`probe` 来源）；
+3. 预设模型条目的显式 `ModelEntry.Vision`（`preset`）；
+4. 模型名启发（`*-vl`、`vision`、`claude-3/4/5`、`gpt-4o/4.1/5`、`gemini-*`、`glm-4v`、`qwen*vl*`、`pixtral/llava/internvl` 等；排除 `o1-mini/o3-mini`，`name`）；
+5. 默认 **关闭**（`default`）——纯文本模型收到的请求里不会出现图片，与旧版本逐字节一致。
+
+**请求侧守卫**（`agent.VisionGuard`）：关闭时递归把所有 image 块（含 `tool_result` 内嵌）换成 `[图片已省略：…]`；开启时单请求只保留最近 6 张，更早的换占位。守卫在 server 侧包在 `llmrec.Wrap` **之外**（`providerForProfileEffort`），因此审计表记录的是真正发出的字节；`llmrec` 落库前还会清洗 `image` 块的 base64（含小图，`llmrec/llmrec.go:scrubImageB64`），transcript 落盘由 Norma v0.4.5 负责脱图。
+
+**view_image**（`agent/tools_image.go`）：只读，路径经 `codeAuditResolve` + `EvalSymlinks` 锁在任务目录内；按 magic 判 png/jpeg/gif/webp；单张 ≤5MB、单次 ≤4 张、总量 ≤10MB；返回「文本头 + image 块」，文本头声明图片来自目标/外部、只作数据。注册在 worker / mainagent 工具清单与视觉开启时的 chat 工具集；非视觉配置调用直接返回可操作错误（去配置页把视觉设为自动/支持、点「测试视觉」）。
+
+**「测试视觉」与自动探测**（`server/vision_probe.go`，`POST /api/llm/vision-probe {profile_id}`）：发一张 64×64 纯红 PNG 问颜色，回复含红/red/crimson 即通过；`max_tokens=64`、`thinking=disabled`、30s 超时。两个易踩的坑：配了 `SessionHeaderKey` 的网关必须挂一次性 session id（否则 400），且 `Provider.Complete` 的第二个返回值是 **stopReason 不是正文**——只认 `msg.Text()`。保存配置后若为自动档且「没测过/指纹变了」则后台补测一次；同 profile 并发保存去重；网络/网关错误不落库；启动 20s 后为存量配置串行补测；`POJUN_VISION_AUTOPROBE=0` 可关。
+
+**MCP 图片**：`mcphttp` 的 `content[type=image]` 不再被丢弃，转成 `llm.ImageBase64Block`（单次最多 4 张、base64 ≤7MB），并补 `[工具返回 N 张图片]` 文本；文本仍走 `<UNTRUSTED_TOOL_OUTPUT>` 边界，图片块原样保留。
