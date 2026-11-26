@@ -31,7 +31,6 @@ const (
 	settingTLSSANs         = "tls_self_signed_sans"
 	settingTLSFirewallAuto = "tls_firewall_auto"
 	settingTLSACME         = "tls_acme"
-	settingTLSMigrationKey = "tls_migration_https_v1"
 
 	defaultTLSAddr = ":8787"
 )
@@ -92,7 +91,9 @@ func (s *Server) initTLS() {
 	s.loadTLSSettings()
 }
 
-// loadTLSSettings 从 PG 读取设置；首次运行按“新装/升级”给出不同默认值。
+// loadTLSSettings 从 PG 读取设置。HTTPS 是显式 opt-in：没有 tls_mode 时保持
+// off（纯 HTTP），只有设置页/API 明确保存过才启用。这样新装与存量升级都不会
+// 因为 301/证书信任打断现有部署（Windows Docker Desktop、非同机反代等）。
 func (s *Server) loadTLSSettings() {
 	tm := s.tlsMgr
 	if tm == nil {
@@ -103,20 +104,7 @@ func (s *Server) loadTLSSettings() {
 		pg := s.m.pg
 		mode, ok, _ := pg.GetSetting(settingTLSMode)
 		if !ok || strings.TrimSpace(mode) == "" {
-			// 首次启用 HTTPS：新装与存量统一给自签（升级即 HTTPS），迁移只做一次；
-			// 之后管理员改成 off 不会被覆盖。默认值来自产品决策——公开版默认只监听
-			// 回环，本机明文仍直通，远端显式暴露时才需要处理 301/证书信任。
-			//
-			// 先写 mode 再写标记：两步之间崩溃时标记缺失，下次仍会按自签重试；
-			// 反过来（先标记）会让崩溃窗口落到 off，静默失去升级即 HTTPS 的行为。
-			if v, hasMarker, _ := pg.GetSetting(settingTLSMigrationKey); hasMarker && v == "1" {
-				mode = string(tlsmgr.ModeOff)
-			} else {
-				mode = string(tlsmgr.ModeSelfSigned)
-				_ = pg.SetSetting(settingTLSMode, mode)
-				_ = pg.SetSetting(settingTLSMigrationKey, "1")
-				log.Printf("[tls] 首次启用 HTTPS（模式 %s）；如需关闭请到设置页切换", mode)
-			}
+			mode = string(tlsmgr.ModeOff)
 		}
 		set.Mode = tlsmgr.Mode(strings.TrimSpace(mode))
 		if v, ok, _ := pg.GetSetting(settingTLSAddr); ok && strings.TrimSpace(v) != "" {
@@ -126,7 +114,9 @@ func (s *Server) loadTLSSettings() {
 		if v, ok, _ := pg.GetSetting(settingTLSHSTS); ok {
 			set.HSTS = v == "1"
 		} else {
-			set.HSTS = set.Mode != tlsmgr.ModeSelfSigned
+			// 默认关闭：off 模式没有 TLS；自签下发 HSTS 会让浏览器无法跳过硬性
+			// 证书告警。导入/ACME（公信证书）保持历史默认开启。
+			set.HSTS = set.Mode == tlsmgr.ModeImport || set.Mode == tlsmgr.ModeACME
 		}
 		if v, ok, _ := pg.GetSetting(settingTLSFirewallAuto); ok {
 			set.FirewallAuto = v == "1"
