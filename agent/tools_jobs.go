@@ -37,6 +37,7 @@ import (
 	"time"
 
 	actool "github.com/Autumn-27/norma/tool"
+	"github.com/chu0119/pojun/resource"
 )
 
 // jobLifecycleMu 串行化「作业启动+登记」与「暂停/删除清理」。
@@ -144,6 +145,7 @@ func (t *ToolSet) jobStart() actool.CoreTool {
 			"后续任意意图或 planner 都能用 job_status/job_output 取结果。\n"+
 			"作业落在 tasks/<id>/shared/jobs/：脚本、日志、退出码。适合超过单意图预算的动作；"+
 			"一次性的短命令仍用 Bash。\n"+
+			"资源自适应开启时受全局/单任务后台作业上限约束，超限会排队；不要把长任务拆成一堆并行作业。\n"+
 			"注意：启动后不要立刻反复 job_output 空转——先去做别的，隔一段时间或换意图再看。",
 		obj(map[string]any{
 			"name":    str("作业名（字母数字-_，同名会覆盖旧作业）"),
@@ -168,6 +170,19 @@ func (t *ToolSet) jobStart() actool.CoreTool {
 			if dir == "" {
 				return actool.Errorf("任务共享目录不可用（runDir 未注入）"), nil
 			}
+			// 资源计划闸门（默认关闭）：超过全局/单任务后台作业上限时排队等待。
+			// 槽位在作业进程退出后释放；计划未启用时立即返回空 release，行为与
+			// 升级前完全一致。
+			releaseJob, gateErr := resource.AcquireJob(ctx, t.taskID)
+			if gateErr != nil {
+				return actool.Errorf(fmt.Sprintf("资源自适应：当前后台作业已达上限，等待超时（可调低作业并发或稍后重试）：%v", gateErr)), nil
+			}
+			started := false
+			defer func() {
+				if !started {
+					releaseJob()
+				}
+			}()
 			// 暂停/删除清理（KillJobsForTaskDir）持写锁。这里把「启动 + 元数据落盘」
 			// 整体放进写锁：①清理要么在启动前完成（随后 ctx 检查拒绝），要么等登记
 			// 完成后再扫到并杀掉，不会漏掉中途启动的作业；②同名并发启动被串行化——
@@ -207,9 +222,14 @@ func (t *ToolSet) jobStart() actool.CoreTool {
 					jobWaitGone(old.PID, 2*time.Second)
 				}
 			}
-			cmd := exec.Command(resolveBash(), "-c",
-				`bash "$0" >> "$2" 2>&1; rc=$?; echo $rc > "$1"; exit $rc`,
-				scriptEnv, rcEnv, logEnv)
+			// 资源计划启用时给作业内层套 timeout（墙钟）与 nice（降优先级）。
+			// timeout 必须在内层，保证超时后这一层仍能写回 rc；未启用时两者都是
+			// 空操作，命令行与升级前逐字节一致。
+			inner := resource.PlanTimeoutPrefix() + `bash "$0" >> "$2" 2>&1`
+			prog, pargs := resource.WrapJobCommand(resolveBash(), []string{"-c",
+				inner + `; rc=$?; echo $rc > "$1"; exit $rc`,
+				scriptEnv, rcEnv, logEnv})
+			cmd := exec.Command(prog, pargs...)
 			cmd.Dir = filepath.Dir(dir)
 			// 独立进程组：job_stop 杀整组，内层脚本/子进程一起结束（不再只杀外层包装 shell）。
 			cmd.SysProcAttr = jobSysProcAttr()
@@ -229,13 +249,18 @@ func (t *ToolSet) jobStart() actool.CoreTool {
 			if err := cmd.Start(); err != nil {
 				return actool.Errorf("启动作业失败: " + err.Error()), nil
 			}
+			started = true
 			if jobStartAfterStartHook != nil {
 				jobStartAfterStartHook(cmd.Process.Pid)
 			}
 			pid := cmd.Process.Pid
 			// 作业跨 run 存活：用后台 Wait 收尸，不能 Release——Release 不回收子进程，
 			// 每个作业会留一个僵尸，长期运行把容器 pids limit 占满（此后所有 exec 都失败）。
-			go func() { _ = cmd.Wait() }()
+			// 槽位在作业真正退出后释放（资源计划未启用时 releaseJob 是空操作）。
+			go func() {
+				_ = cmd.Wait()
+				releaseJob()
+			}()
 			m := jobMeta{
 				Name: name, Command: a.Command, PID: pid,
 				Started: time.Now().Format(time.RFC3339),

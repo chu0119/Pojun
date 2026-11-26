@@ -507,6 +507,8 @@ func wireTools(pg *db.DB, domainReg map[string]actool.CoreTool) {
 		var bashNote string
 		if localExec {
 			bashNote = agent.EnvCapabilityNote()
+			// 资源自适应未启用时返回空串，Bash 描述与升级前一致。
+			bashNote += agent.ResourceCapabilityNote()
 			if len(shellHints) > 0 {
 				bashNote += "\n\n以下工具已安装在此 bash 环境中，可直接通过 Bash 调用：\n" + strings.Join(shellHints, "\n")
 			}

@@ -207,3 +207,30 @@ func TestBuildNucleiCmdProxy(t *testing.T) {
 	}
 	cancel()
 }
+
+// TestBuildNucleiCmdRateLimit：资源自适应降速时追加 -rate-limit；0 时不出现，
+// 保证默认命令与升级前逐项一致。
+func TestBuildNucleiCmdRateLimit(t *testing.T) {
+	dir := newNucleiTree(t)
+	const target = "https://example.com"
+	base := []string{"nuclei", "-target", target, "-t", dir, "-jsonl", "-silent", "-no-color", "-disable-update-check"}
+
+	cmd, cancel, err := BuildNucleiCmd(context.Background(), dir, ScanArgs{Target: target})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(cmd.Args, base) {
+		t.Fatalf("rate=0 args = %v, want untouched %v", cmd.Args, base)
+	}
+	cancel()
+
+	cmd, cancel, err = BuildNucleiCmd(context.Background(), dir, ScanArgs{Target: target, RateLimit: 75})
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := len(cmd.Args)
+	if n < 2 || cmd.Args[n-2] != "-rate-limit" || cmd.Args[n-1] != "75" {
+		t.Fatalf("rate-limited args 末尾 = %v", cmd.Args)
+	}
+	cancel()
+}

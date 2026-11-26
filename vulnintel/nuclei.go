@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -119,6 +120,9 @@ type ScanArgs struct {
 	// Proxy 是出口代理 URL（可空）。空=直连，命令里不出现 -proxy——
 	// nuclei 的 -proxy 是 string[]，空条目会让代理解析失败。
 	Proxy string
+	// RateLimit 是每秒请求上限（nuclei -rate-limit）。0 = 不添加该参数，
+	// 命令与升级前完全一致；资源自适应开启且容量偏小时由 agent 层缩放后传入。
+	RateLimit int
 }
 
 // EffectiveTimeout 归一化整轮超时：<=0 用 10m，>30m 钳到 30m。
@@ -214,6 +218,11 @@ func BuildNucleiCmd(ctx context.Context, templatesDir string, a ScanArgs) (*exec
 	}
 	if sev := strings.TrimSpace(a.Severity); sev != "" {
 		args = append(args, "-severity", sev)
+	}
+	// 资源自适应：容量小的机器/容器按比例降速，避免扫描器把 CPU/带宽打满。
+	// 0 = 不写该参数（升级前的默认命令）。
+	if a.RateLimit > 0 {
+		args = append(args, "-rate-limit", strconv.Itoa(a.RateLimit))
 	}
 	return exec.CommandContext(runCtx, "nuclei", args...), cancel, nil
 }
