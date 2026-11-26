@@ -65,8 +65,23 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
     resolve?.(ok);
   }, []);
 
-  const destructive = options?.destructive === true;
-  const hasDescription = options?.description !== undefined && options?.description !== null && options?.description !== "";
+  // 卸载时把还挂着的调用方按"取消"结束，否则它的 await 永远不会返回。
+  React.useEffect(
+    () => () => {
+      resolverRef.current?.(false);
+      resolverRef.current = null;
+    },
+    [],
+  );
+
+  // 关闭动画期间 options 已经是 null，但内容还要再渲染几十毫秒；
+  // 用最后一次的选项渲染，避免标题/描述在退场时闪成空白。
+  const lastRef = React.useRef<ConfirmOptions | null>(null);
+  if (options) lastRef.current = options;
+  const view = options ?? lastRef.current;
+
+  const destructive = view?.destructive === true;
+  const hasDescription = view?.description !== undefined && view?.description !== null && view?.description !== "";
 
   return (
     <ConfirmContext.Provider value={confirm}>
@@ -78,7 +93,9 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
         }}
       >
         <AlertDialogContent
-          className={options?.wide ? "max-w-md sm:max-w-lg" : undefined}
+          // 默认尺寸的 max-w 写在 data-[size=default] 变体里，特异性高于裸 max-w-*，
+          // 所以放宽宽度也必须带同一前缀，否则不生效。
+          className={view?.wide ? "data-[size=default]:max-w-md data-[size=default]:sm:max-w-lg" : undefined}
           // 没有描述时不生成 aria-describedby（Radix 对缺失描述会告警）。
           {...(hasDescription ? {} : { "aria-describedby": undefined })}
           onOpenAutoFocus={(event) => {
@@ -89,20 +106,20 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
           }}
         >
           <AlertDialogHeader>
-            <AlertDialogTitle>{options?.title ?? ""}</AlertDialogTitle>
+            <AlertDialogTitle>{view?.title ?? ""}</AlertDialogTitle>
             {hasDescription ? (
-              <AlertDialogDescription className="whitespace-pre-line">{options?.description}</AlertDialogDescription>
+              <AlertDialogDescription className="whitespace-pre-line">{view?.description}</AlertDialogDescription>
             ) : null}
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel ref={cancelRef} onClick={() => settle(false)}>
-              {options?.cancelText ?? "取消"}
+              {view?.cancelText ?? "取消"}
             </AlertDialogCancel>
             <AlertDialogAction
               variant={destructive ? "destructive-solid" : "default"}
               onClick={() => settle(true)}
             >
-              {options?.confirmText ?? "确定"}
+              {view?.confirmText ?? "确定"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

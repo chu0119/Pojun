@@ -1363,7 +1363,7 @@ export function ProfileSheet({
             <AlertDialogFooter>
               <AlertDialogCancel>继续编辑</AlertDialogCancel>
               <AlertDialogAction
-                className="bg-destructive text-white hover:bg-destructive/90"
+                variant="destructive-solid"
                 onClick={() => {
                   setConfirmClose(false);
                   onOpenChange(false);

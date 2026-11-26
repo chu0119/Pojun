@@ -2614,7 +2614,7 @@ function TaskArtifactsCard({ taskId }: { taskId: string }) {
             <AlertDialogCancel disabled={deleting}>取消</AlertDialogCancel>
             <AlertDialogAction
               disabled={deleting}
-              className="bg-destructive text-white hover:bg-destructive/90"
+              variant="destructive-solid"
               onClick={(e) => {
                 e.preventDefault();
                 void deleteSelected();
