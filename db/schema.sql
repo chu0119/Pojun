@@ -514,6 +514,22 @@ ALTER TABLE llm_profiles DROP CONSTRAINT IF EXISTS llm_profiles_prompt_pair_chec
 ALTER TABLE llm_profiles ADD  CONSTRAINT llm_profiles_prompt_pair_check
     CHECK ((prompt = '') = (prompt_mode = ''));
 
+-- 原生视觉能力（v0.4.123）：vision_mode 是用户三态(''=自动/on=支持/off=不支持)；
+-- vision_probe 是「测试视觉」探测缓存结果（''=没测过/已失效/on/off），
+-- vision_probe_sig 是探测时的配置指纹（format|base_url|model）——配置一改指纹
+-- 就对不上、结果作废，下次保存重新探测一次。默认空 = 全部走自动推断，旧配置
+-- 行为不变（纯文本模型收到的请求里不会出现图片）。
+ALTER TABLE llm_profiles ADD COLUMN IF NOT EXISTS vision_mode TEXT NOT NULL DEFAULT '';
+ALTER TABLE llm_profiles ADD COLUMN IF NOT EXISTS vision_probe TEXT NOT NULL DEFAULT '';
+ALTER TABLE llm_profiles ADD COLUMN IF NOT EXISTS vision_probe_sig TEXT NOT NULL DEFAULT '';
+-- 先删再建，保证每次启动幂等。
+ALTER TABLE llm_profiles DROP CONSTRAINT IF EXISTS llm_profiles_vision_mode_check;
+ALTER TABLE llm_profiles ADD  CONSTRAINT llm_profiles_vision_mode_check
+    CHECK (vision_mode IN ('','on','off'));
+ALTER TABLE llm_profiles DROP CONSTRAINT IF EXISTS llm_profiles_vision_probe_check;
+ALTER TABLE llm_profiles ADD  CONSTRAINT llm_profiles_vision_probe_check
+    CHECK (vision_probe IN ('','on','off'));
+
 -- 资产 URL 结构指纹（v0.4.94 经验层）：64-bit simhash（路径段归一+参数名+title/长度
 -- 分桶），同 root_domain 下汉明距离近的 endpoint 归同簇，供变体分析找同类端点。
 ALTER TABLE assets ADD COLUMN IF NOT EXISTS simhash BIGINT NOT NULL DEFAULT 0;

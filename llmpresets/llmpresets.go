@@ -4,7 +4,9 @@
 package llmpresets
 
 import (
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"log"
 	"os"
@@ -31,6 +33,9 @@ type ModelEntry struct {
 	ThinkingType    string `json:"thinking_type,omitempty"`
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 	UserAgent       string `json:"user_agent,omitempty"`
+	// Vision 该模型是否接受图片输入：nil=未知（按模型名启发），true/false=
+	// 显式结论（压过名字启发；显式 false 用于同名不同模态的型号）。
+	Vision *bool `json:"vision,omitempty"`
 }
 
 // Preset 是一条厂商预设：新建向导第一步选中的卡片。
@@ -51,6 +56,121 @@ type Preset struct {
 	MaxTokens        int    `json:"max_tokens,omitempty"`         // 输出上限预填（Anthropic 协议必填）
 	ThinkingType     string `json:"thinking_type,omitempty"`      // 思考开关预填（GLM 等强制思考的模型）
 	ReasoningEffort  string `json:"reasoning_effort,omitempty"`   // 思考强度预填
+}
+
+// 视觉能力来源（UI 展示“这个结论是怎么来的”）。
+const (
+	VisionSourceProfile = "profile" // 用户在 LLM 配置里显式选了支持/不支持
+	VisionSourceProbe   = "probe"   // 按当前配置指纹实测得到的结论
+	VisionSourcePreset  = "preset"  // 预设模型条目的显式标记
+	VisionSourceName    = "name"    // 模型名启发
+	VisionSourceDefault = "default" // 都说不上 → 不支持（保守）
+)
+
+// visionNameRules 是保守的模型名启发：只收“公认多模态”的家族。宁可漏判（用户
+// 可在配置里强制打开或用「测试视觉」确认），也不要把纯文本模型当视觉模型——
+// 那会让每次带图请求都吃一个 400。
+var visionNameRules = []string{
+	"-vl", "vl-", "vision", "multimodal",
+	"claude-3", "claude-4", "claude-5",
+	"claude-opus", "claude-sonnet", "claude-haiku",
+	"gpt-4o", "gpt-4.1", "gpt-5", "gpt-4-turbo", "gpt-4-vision",
+	"gemini-", "grok-4",
+	"llama-4", "gemma-3", "pixtral", "llava", "internvl", "minicpm-v",
+	"qwen-vl", "qwen2-vl", "qwen2.5-vl", "qwen3-vl",
+	"glm-4v", "glm-4.1v", "glm-4.5v",
+	"deepseek-vl", "kimi-vl", "yi-vl", "phi-3.5-vision", "phi-4-multimodal",
+	"nova-pro", "nova-lite",
+}
+
+// visionNameExclusions 是名字会命中上面规则、但已知纯文本的型号。
+var visionNameExclusions = []string{"o1-mini", "o3-mini"}
+
+// VisionFromName reports whether the model name implies image input.
+// known=false means the name says nothing; callers then default to off.
+func VisionFromName(model string) (supported, known bool) {
+	m := strings.ToLower(strings.TrimSpace(model))
+	if m == "" {
+		return false, false
+	}
+	for _, ex := range visionNameExclusions {
+		if strings.Contains(m, ex) {
+			return false, true
+		}
+	}
+	for _, rule := range visionNameRules {
+		if strings.Contains(m, rule) {
+			return true, true
+		}
+	}
+	// o1/o3/o4 全量模型支持图片（mini 已在排除表里）。
+	for _, p := range []string{"o1", "o3", "o4"} {
+		if m == p || strings.HasPrefix(m, p+"-") {
+			return true, true
+		}
+	}
+	return false, false
+}
+
+// ResolveVision turns the profile's tri-state mode + preset/name knowledge into
+// the effective capability. mode: "" auto, "on"/"off" forced (the DB stores the
+// canonical three values; legacy true/false spellings are tolerated).
+func ResolveVision(model, mode string) (supported bool, source string) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "on", "true", "yes", "1":
+		return true, VisionSourceProfile
+	case "off", "false", "no", "0":
+		return false, VisionSourceProfile
+	}
+	id := strings.ToLower(strings.TrimSpace(model))
+	if id != "" {
+		for _, p := range All() {
+			for _, m := range p.Models {
+				if strings.ToLower(m.ID) == id && m.Vision != nil {
+					return *m.Vision, VisionSourcePreset
+				}
+			}
+		}
+	}
+	if v, known := VisionFromName(model); known {
+		return v, VisionSourceName
+	}
+	return false, VisionSourceDefault
+}
+
+// VisionSignature fingerprints the settings that determine image capability.
+// Stored probe results carry this value; a save that changes format, base URL
+// or model invalidates them so the next save re-probes once, while an unchanged
+// save never spends another image request. The API key is deliberately not part
+// of it (rotating a key does not change what the endpoint can do).
+func VisionSignature(format, baseURL, model string) string {
+	raw := strings.ToLower(strings.TrimSpace(format)) + "|" +
+		strings.ToLower(strings.TrimSuffix(strings.TrimSpace(baseURL), "/")) + "|" +
+		strings.ToLower(strings.TrimSpace(model))
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:12])
+}
+
+// ResolveVisionStored resolves vision capability with a persisted probe result.
+// Precedence: user override → probe result whose signature matches the current
+// config → preset/model-name inference (ResolveVision). Callers pass the
+// profile's current signature from VisionSignature.
+func ResolveVisionStored(model, mode, probe, probeSig, sig string) (supported bool, source string) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "on", "true", "yes", "1":
+		return true, VisionSourceProfile
+	case "off", "false", "no", "0":
+		return false, VisionSourceProfile
+	}
+	if sig != "" && probeSig == sig {
+		switch strings.ToLower(strings.TrimSpace(probe)) {
+		case "on":
+			return true, VisionSourceProbe
+		case "off":
+			return false, VisionSourceProbe
+		}
+	}
+	return ResolveVision(model, mode)
 }
 
 // MetaEntry 是一个模型的推断元数据。
