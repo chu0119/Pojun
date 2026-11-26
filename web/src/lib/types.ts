@@ -1434,6 +1434,12 @@ export interface LLMProfile {
   prompt_apply_inherited?: boolean;
   // 反向引用：哪些 Agent 覆盖了本配置的思考强度（只读）。
   effort_overrides?: { agent_key: string; reasoning_effort: string; updated_at?: string }[];
+  // 视觉能力三态：""=自动（探测缓存 > 预设 > 模型名 > 默认关）| "on"=强制支持 | "off"=强制不支持
+  vision_mode?: "" | "on" | "off";
+  // 解析后的实际能力（只读，后端算好返回）与结论来源：
+  // profile=用户指定 | probe=已探测 | preset=厂商预设 | name=模型名推断 | default=默认不支持
+  vision?: boolean;
+  vision_source?: "profile" | "probe" | "preset" | "name" | "default";
 }
 
 // ─── LLM 厂商知识层（v0.4.91 配置重构）───
@@ -1470,6 +1476,9 @@ export interface LLMModelMeta {
   max_output_k?: number;
   reasoning: boolean;
   source: "meta" | "preset" | "none";
+  // 自动档的真实结论（配置页即时显示）：vision_source 含义同 LLMProfile。
+  vision?: boolean;
+  vision_source?: "profile" | "probe" | "preset" | "name" | "default";
 }
 export interface LLMCheckResult {
   ok: boolean;

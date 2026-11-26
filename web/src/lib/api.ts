@@ -1368,9 +1368,18 @@ export const api = {
     prompt?: string;
     prompt_mode?: string;
     prompt_apply_inherited?: boolean;
+    // 视觉三态：""=自动/on=支持/off=不支持
+    vision_mode?: "" | "on" | "off";
   }) => post<{ id: number }>("/llm/profiles", p),
   deleteLLMProfile: (id: string) => del<{ deleted: number }>(`/llm/profiles/${id}`),
   activateLLMProfile: (id: string) => post<{ ok: boolean }>("/llm/profiles/active", { id: Number(id) }),
+  // 「测试视觉」：发一张 64×64 纯红 PNG 问颜色，确认模型/网关真的能读图。
+  // 只读配置（除缓存探测结论外不改设置）；成功/失败都会写回探测缓存。
+  llmVisionProbe: (profile_id: number) =>
+    post<{ ok: boolean; reply?: string; latency_ms?: number; error?: string; hint?: string }>(
+      "/llm/vision-probe",
+      { profile_id },
+    ),
   // 轮询链的实际顺序 + 各配置的熔断状态。
   llmPool: () => get<LLMPoolStatus>("/llm/pool"),
   // 清除熔断，让下一次调用立刻重试该配置；不传 id = 全部清除。

@@ -9,6 +9,7 @@ import {
   ChevronDownIcon,
   EyeIcon,
   EyeOffIcon,
+  ImageIcon,
   Loader2Icon,
   PlugZapIcon,
   RefreshCwIcon,
@@ -89,6 +90,22 @@ const FORMAT_LABELS: Record<string, string> = {
   "openai-responses": "OpenAI Responses 协议",
 };
 
+// 视觉三态：存库 ''=自动，UI 用 NONE 哨兵；on/off 原样。
+const VISION_MODES: { value: string; label: string }[] = [
+  { value: NONE, label: "自动（按模型推断）" },
+  { value: "on", label: "支持图片输入" },
+  { value: "off", label: "仅文本（不发图片）" },
+];
+
+// 结论来源文案：让用户知道「支持/不支持」是实测、用户指定还是猜的。
+const VISION_SOURCE_LABELS: Record<string, string> = {
+  profile: "用户指定",
+  probe: "已探测",
+  preset: "厂商预设",
+  name: "模型名推断",
+  default: "默认（未识别为视觉模型）",
+};
+
 export function ProfileSheet({
   profile,
   open,
@@ -133,6 +150,11 @@ export function ProfileSheet({
   const [sessionHeaderKey, setSessionHeaderKey] = React.useState("");
   const [userAgent, setUserAgent] = React.useState("");
   const [retry, setRetry] = React.useState<LLMRetryOverride>(ZERO_OVERRIDE);
+  // 视觉：三态 + 本地「测试视觉」结果 + 模型元数据推断（自动档即时结论）。
+  const [visionMode, setVisionMode] = React.useState(NONE);
+  const [modelVision, setModelVision] = React.useState<{ vision: boolean; source: string } | null>(null);
+  const [probeVerdict, setProbeVerdict] = React.useState<{ ok: boolean; reply?: string } | null>(null);
+  const [probing, setProbing] = React.useState(false);
   const [advOpen, setAdvOpen] = React.useState(false);
   // ── 独立提示词（本配置） ──
   const [prompt, setPrompt] = React.useState("");
@@ -162,7 +184,7 @@ export function ProfileSheet({
     JSON.stringify({
       name, format, model, baseUrl, proxy, apiKey, cw, rps, rpm, thinkingType, effort,
       priority, poolExclude, streaming, maxTokens, maxTokensField, sessionHeaderKey, userAgent,
-      retry, presetId: presetIdStore, prompt, promptMode, promptApplyInherited,
+      retry, presetId: presetIdStore, prompt, promptMode, promptApplyInherited, visionMode,
     });
   const dirty = open && coreSnapshot() !== initialRef.current;
   const promptChars = Array.from(prompt).length;
@@ -195,6 +217,9 @@ export function ProfileSheet({
     setSessionHeaderKey(p?.session_header_key ?? "");
     setUserAgent(p?.user_agent ?? "");
     setRetry(p?.retry ?? ZERO_OVERRIDE);
+    setVisionMode(fromStore(p?.vision_mode));
+    setModelVision(null);
+    setProbeVerdict(null);
     setApiKey("");
     setKeyHint(p?.api_key_hint ?? "");
     setPrompt(p?.prompt ?? "");
@@ -285,6 +310,8 @@ export function ProfileSheet({
       if (!cwTouched && meta.source !== "none" && meta.context_k > 0) setCw(String(meta.context_k));
       // 上限字段名自动推断（v0.4.93）：openai 格式 + reasoning 模型 → max_completion_tokens
       if (!mtfTouched && format === "openai" && meta.reasoning) setMaxTokensField("max_completion_tokens");
+      // 视觉：自动档的真实结论（预设/模型名/默认），配置页立即显示，不用等保存
+      setModelVision({ vision: !!meta.vision, source: meta.vision_source ?? "default" });
       // 模型级参数覆盖（v0.4.96，对照内部版 v0.9.64）：选中的列表模型自带预设级参数时应用
       const me = activePreset?.models.find((mm) => mm.id.toLowerCase() === m.toLowerCase());
       if (me) {
@@ -322,6 +349,40 @@ export function ProfileSheet({
       toast.error(`测试出错：${humanizeTestError((e as Error).message)}`, { duration: 10000 });
     } finally {
       setTesting(false);
+    }
+  }
+
+  // ── 「测试视觉」：发一张纯红小图，确认模型真的能读图 ──
+  async function testVision() {
+    if (probing) return;
+    if (!profileId) {
+      toast.error("先保存配置，再测试视觉");
+      return;
+    }
+    if (dirty) {
+      toast.error("先保存当前修改，再测试视觉（探测按已存配置发请求）");
+      return;
+    }
+    setProbing(true);
+    try {
+      const r = await api.llmVisionProbe(profileId);
+      if (r.ok) {
+        setProbeVerdict({ ok: true, reply: r.reply });
+        toast.success(`视觉测试通过 · ${r.latency_ms ?? "?"}ms`, {
+          description: r.reply ? `模型回答：${r.reply}` : undefined,
+        });
+        onSaved(String(profileId));
+      } else {
+        setProbeVerdict({ ok: false, reply: undefined });
+        toast.error(`视觉测试未通过：${r.error ?? "模型没有识别出图片"}` , {
+          description: r.hint,
+          duration: 12000,
+        });
+      }
+    } catch (e) {
+      toast.error(`视觉测试出错：${(e as Error).message}`, { duration: 12000 });
+    } finally {
+      setProbing(false);
     }
   }
 
@@ -365,6 +426,7 @@ export function ProfileSheet({
         prompt,
         prompt_mode: prompt.trim() ? promptMode : "",
         prompt_apply_inherited: prompt.trim() ? promptApplyInherited : false,
+        vision_mode: toStore(visionMode) as "" | "on" | "off",
       });
       if (andActivate && isNew) {
         try {
@@ -610,6 +672,79 @@ export function ProfileSheet({
           <SparklesIcon className="mt-0.5 size-3 shrink-0 text-primary" />
           <span>{hint}</span>
         </p>
+      </div>
+    );
+  })();
+
+  // 视觉三态 + 实际结论 + 「测试视觉」。结论优先取本次探测结果，其次是后端
+  // 解析好的 profile（含探测缓存），最后是选模型时拿到的元数据推断。
+  const visionSection = (() => {
+    const mode = toStore(visionMode);
+    let supported: boolean | null = null;
+    let source = "default";
+    if (mode === "on") {
+      supported = true;
+      source = "profile";
+    } else if (mode === "off") {
+      supported = false;
+      source = "profile";
+    } else if (probeVerdict) {
+      supported = probeVerdict.ok;
+      source = "probe";
+    } else if (profile && profile.model.trim().toLowerCase() === model.trim().toLowerCase()) {
+      supported = !!profile.vision;
+      source = profile.vision_source ?? "default";
+    } else if (modelVision) {
+      supported = modelVision.vision;
+      source = modelVision.source;
+    }
+    const sourceLabel = VISION_SOURCE_LABELS[source] ?? source;
+    const conclusion =
+      supported === null
+        ? "保存后可确认（未识别模型名）"
+        : supported
+          ? `支持图片输入（${sourceLabel}）`
+          : `仅文本，不发图片（${sourceLabel}）`;
+    return (
+      <div className="grid gap-2">
+        <Label htmlFor="p-vision">视觉（图片输入）</Label>
+        <Select value={visionMode} onValueChange={setVisionMode}>
+          <SelectTrigger id="p-vision">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {VISION_MODES.map((v) => (
+              <SelectItem key={v.value} value={v.value}>
+                {v.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="flex items-start gap-1.5 rounded-md bg-muted/50 px-2 py-1.5 text-muted-foreground text-xs">
+          <ImageIcon className="mt-0.5 size-3 shrink-0 text-primary" />
+          <span>
+            实际结论：<b className={supported ? "text-foreground" : ""}>{conclusion}</b>
+            。自动档按「探测缓存 → 厂商预设 → 模型名」推断，识别不了就按仅文本处理（请求里不会出现图片）。
+          </span>
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={probing || !profileId}
+            onClick={() => void testVision()}
+            title={!profileId ? "先保存配置再测试" : "发一张纯红小图，确认模型/网关真的能读图"}
+          >
+            {probing ? <Loader2Icon className="animate-spin" /> : <ImageIcon />} 测试视觉
+          </Button>
+          {!profileId && <span className="text-muted-foreground text-xs">先保存配置再测试</span>}
+          {probeVerdict && (
+            <span className={cn("text-xs", probeVerdict.ok ? "text-emerald-600 dark:text-emerald-400" : "text-destructive")}>
+              本次测试：{probeVerdict.ok ? "支持图片" : "未识别出图片"}
+            </span>
+          )}
+        </div>
       </div>
     );
   })();
@@ -1033,6 +1168,7 @@ export function ProfileSheet({
                 <>
                   {modelField}
                   {cwField}
+                  {visionSection}
                   {promptSection}
                   {effortRefsSection}
                   {advancedSection}
@@ -1045,6 +1181,7 @@ export function ProfileSheet({
               {nameField}
               {modelField}
               {cwField}
+              {visionSection}
               {baseUrlField}
               {keyField}
               {proxyField}

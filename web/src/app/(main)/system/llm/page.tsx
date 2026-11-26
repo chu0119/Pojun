@@ -65,6 +65,15 @@ const FORMAT_BADGE_CLS: Record<string, string> = {
   "openai-responses": "border-sky-500/40 text-sky-600 dark:text-sky-400",
 };
 
+// 「视觉」徽标的 hover 说明：结论是怎么来的（实测 / 用户指定 / 预设 / 名字推断）。
+const VISION_SOURCE_LABELS: Record<string, string> = {
+  profile: "用户指定",
+  probe: "已探测（测试视觉）",
+  preset: "厂商预设",
+  name: "模型名推断",
+  default: "默认",
+};
+
 function cooldownText(secs: number) {
   if (secs <= 0) return "";
   if (secs < 60) return `${secs}s`;
@@ -464,6 +473,15 @@ export default function LLMPage() {
                           </Badge>
                           {p.prompt?.trim() && (
                             <Badge variant="outline" className="px-1.5 py-0 text-[10px]">独立提示词</Badge>
+                          )}
+                          {p.vision && (
+                            <Badge
+                              variant="outline"
+                              className="border-sky-500/40 px-1.5 py-0 text-[10px] text-sky-600 dark:text-sky-400"
+                              title={`视觉：支持图片输入（${VISION_SOURCE_LABELS[p.vision_source ?? "default"] ?? p.vision_source}）`}
+                            >
+                              视觉
+                            </Badge>
                           )}
                           <Badge variant="outline" className={cn("ml-auto", h.cls)} title={h.hint}>
                             {h.label}
