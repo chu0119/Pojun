@@ -96,7 +96,7 @@ export function UpdateCard() {
       }
     }
     setRestarting(false);
-    toast.error("等待服务重启超时。请检查后端日志，或确认 pojun 是通过 start.sh / start.bat 启动的。");
+    toast.error("等待服务重启超时。若本次升级启用了 HTTPS，请改用 https:// 地址访问确认版本；否则检查后端日志，或确认 pojun 是通过 start.sh / start.bat 启动的。");
   }, []);
 
   // 订阅更新进度。SSE 不走 Next 的 /api 重写（那层会缓冲，事件推不出来）。

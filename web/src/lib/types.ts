@@ -2617,3 +2617,78 @@ export interface AgentLLMRoute {
   observed_at: string;
   warnings: string[];
 }
+
+// ---- 内置 HTTPS 与证书管理 ----
+export type TLSMode = "off" | "selfsigned" | "import" | "acme";
+
+export interface TLSACMEConfig {
+  identifiers: string[];
+  email: string;
+  staging: boolean;
+  /** http-01 | tls-alpn-01 */
+  challenge: string;
+  http_addr: string;
+  tls_addr: string;
+}
+
+export interface TLSSettings {
+  mode: TLSMode;
+  https_addr: string;
+  hsts: boolean;
+  self_signed_sans: string[];
+  firewall_auto: boolean;
+  acme: TLSACMEConfig;
+}
+
+export interface TLSCertInfo {
+  subject: string;
+  issuer: string;
+  sans: string[];
+  not_before: string;
+  not_after: string;
+  /** selfsigned | import | acme | file */
+  source: string;
+}
+
+export interface TLSACMEStatus {
+  running: boolean;
+  last_error?: string;
+  next_renew?: string;
+  identifiers?: string[];
+  email?: string;
+  staging?: boolean;
+  challenge?: string;
+}
+
+export interface TLSStatus {
+  mode: TLSMode;
+  https_addr: string;
+  cert?: TLSCertInfo;
+  ca_available: boolean;
+  last_error?: string;
+  needs_restart: boolean;
+  acme: TLSACMEStatus;
+}
+
+export interface TLSFirewallStatus {
+  available: boolean;
+  backend?: string;
+  active?: boolean;
+  hint?: string;
+  error?: string;
+  leases?: { id: string; port: number; proto: string; backend: string; expires_at: string }[];
+}
+
+export interface TLSStatusResp {
+  status: TLSStatus;
+  settings: TLSSettings;
+  /** 当前进程是否真的以 TLS 监听。 */
+  active: boolean;
+  /** 当前进程实际监听的地址（与设置不同即需要重启）。 */
+  active_addr?: string;
+  /** 设置表里是否保存过监听地址；false 时以启动参数 -addr 为准。 */
+  addr_saved?: boolean;
+  listen_addr: string;
+  urls: string[];
+  firewall: TLSFirewallStatus;
+}

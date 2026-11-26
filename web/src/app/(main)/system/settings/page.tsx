@@ -18,6 +18,7 @@ import { CHAT_SEND_MODE_OPTIONS, type ChatSendMode, setChatSendMode, useChatSend
 import type { Settings } from "@/lib/types";
 
 import { UpdateCard } from "./_components/update-card";
+import { TLSCard } from "./_components/tls-card";
 
 export default function SystemSettingsPage() {
   const [trafficCapture, setTrafficCapture] = React.useState(false);
@@ -657,6 +658,11 @@ export default function SystemSettingsPage() {
             </div>
           </CardContent>
         </Card>
+
+        {/* HTTPS 与证书：与「网络与流量」同区，跨两列。 */}
+        <div className="order-16 lg:col-span-2">
+          <TLSCard />
+        </div>
 
         <Card className="order-21">
           <CardHeader>

@@ -139,6 +139,10 @@ import type {
   ListenerStartResp,
   ListenerView,
   UpdateCheck,
+  TLSACMEConfig,
+  TLSCertInfo,
+  TLSSettings,
+  TLSStatusResp,
   UsageStats,
   VulnIntelConfigPatch,
   VulnIntelStatus,
@@ -978,6 +982,29 @@ export const api = {
   // ---- app settings (runtime toggles) ----
   settings: () => get<Settings>(`/settings`),
   setSettings: (patch: Partial<Settings>) => put<Settings>(`/settings`, patch),
+
+  // ---- 内置 HTTPS 与证书管理 ----
+  tlsStatus: () => get<TLSStatusResp>(`/tls/status`),
+  saveTLSSettings: (patch: Partial<TLSSettings>) =>
+    put<{ ok: boolean; needs_restart: boolean; settings: TLSSettings }>(`/tls/settings`, patch),
+  tlsImport: (certPEM: string, keyPEM: string) =>
+    post<{ ok: boolean; cert: TLSCertInfo; needs_restart: boolean }>(`/tls/import`, {
+      cert_pem: certPEM,
+      key_pem: keyPEM,
+    }),
+  tlsSelfSigned: (sans: string[]) =>
+    post<{ ok: boolean; cert: TLSCertInfo; needs_restart: boolean }>(`/tls/selfsigned`, { sans }),
+  tlsIssueACME: (cfg: TLSACMEConfig) => post<{ ok: boolean; running: boolean; needs_restart?: boolean }>(`/tls/acme`, cfg),
+  tlsCancelACME: () => post<{ ok: boolean }>(`/tls/acme/cancel`, {}),
+  tlsRestart: () => post<{ ok: boolean; restarting: boolean }>(`/tls/restart`, {}),
+  downloadTLSCA: async () => {
+    const token = getToken();
+    const r = await fetch(`/api/tls/ca.pem`, {
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    });
+    if (!r.ok) throw new Error(`下载 CA 失败: ${r.status}`);
+    triggerBlobDownload(await r.blob(), "pojun-ca.pem");
+  },
   // Run a real "test" search with the given (or saved) config to verify it works.
   testWebSearch: (patch: {
     web_search_backend?: string;
