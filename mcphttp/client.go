@@ -302,25 +302,69 @@ func (c *Client) wrap(rt remoteTool) actool.CoreTool {
 				return actool.Errorf("Error: " + err.Error()), nil
 			}
 			var res struct {
-				Content []struct {
-					Type string `json:"type"`
-					Text string `json:"text"`
-				} `json:"content"`
-				IsError bool `json:"isError"`
+				Content []mcpContentBlock `json:"content"`
+				IsError bool              `json:"isError"`
 			}
 			if err := json.Unmarshal(raw, &res); err != nil {
 				return actool.Errorf("Error: bad MCP response: " + err.Error()), nil
 			}
-			var text string
-			for _, blk := range res.Content {
-				text += blk.Text
-			}
-			// 与内置/自定义工具一致：超长输出走 Capture——按会话 MaxOutputChars（默认
-			// 30000）截断，配了 ToolOutputDir 时全量溢写到磁盘只留 head + 指针，避免大
-			// MCP 结果整段灌爆上下文。
-			return actool.Result{Content: []llm.ContentBlock{llm.TextBlock(actool.Capture(tc, text))}, IsError: res.IsError}, nil
+			return mcpResultBlocks(tc, res.Content, res.IsError), nil
 		},
 	})
+}
+
+// mcpContentBlock mirrors the subset of MCP content this client understands:
+// text and image. Shared by the CoreTool wrapper and its test.
+type mcpContentBlock struct {
+	Type     string `json:"type"`
+	Text     string `json:"text"`
+	Data     string `json:"data"`     // image base64
+	MimeType string `json:"mimeType"` // image media type
+}
+
+const (
+	mcpMaxImages   = 4
+	mcpMaxImageB64 = 7 << 20 // ~5MB decoded
+)
+
+// mcpResultBlocks turns MCP content into result blocks. Image content
+// (Playwright/Chrome screenshots) used to vanish because only `text` was
+// concatenated; it is now kept as image blocks with a text marker, so the
+// untrusted-content wrapper always has text to wrap even when a non-vision
+// model later strips the images.
+func mcpResultBlocks(tc *actool.ToolContext, content []mcpContentBlock, isError bool) actool.Result {
+	var text strings.Builder
+	var images []llm.ContentBlock
+	skipped := 0
+	for _, blk := range content {
+		if blk.Type != "image" {
+			text.WriteString(blk.Text)
+			continue
+		}
+		if blk.Data == "" || len(images) >= mcpMaxImages || len(blk.Data) > mcpMaxImageB64 {
+			skipped++
+			continue
+		}
+		mime := blk.MimeType
+		if mime == "" {
+			mime = "image/png"
+		}
+		images = append(images, llm.ImageBase64Block(mime, blk.Data))
+	}
+	if len(images) > 0 || skipped > 0 {
+		text.WriteString(fmt.Sprintf("\n[工具返回 %d 张图片", len(images)))
+		if skipped > 0 {
+			text.WriteString(fmt.Sprintf("，另有 %d 张因数量/体积超限被省略", skipped))
+		}
+		text.WriteString("]")
+	}
+	// 与内置/自定义工具一致：超长输出走 Capture——按会话 MaxOutputChars（默认
+	// 30000）截断，配了 ToolOutputDir 时全量溢写到磁盘只留 head + 指针，避免大
+	// MCP 结果整段灌爆上下文。图片是二进制，不走 Capture。
+	blocks := make([]llm.ContentBlock, 0, len(images)+1)
+	blocks = append(blocks, llm.TextBlock(actool.Capture(tc, text.String())))
+	blocks = append(blocks, images...)
+	return actool.Result{Content: blocks, IsError: isError}
 }
 
 // Call invokes one tool and returns the concatenated text of its content blocks

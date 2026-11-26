@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"iter"
 	"log"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -30,6 +31,10 @@ var BodyMode = func() string { return "full" }
 const maxErrorBodyBytes = 64 << 10
 
 func applyBodyMode(mode, status, reqBody, respBody, rawReq, rawResp string) (string, string, string, string) {
+	// 图片 base64 先清洗再截断/落库：一张截图 ~1MB，审计表会被撑爆，删任务时
+	// 这些大 TEXT 也会拖慢清理。线上请求不受影响（这里只处理审计副本）。
+	reqBody, rawReq = scrubImageB64(reqBody), scrubImageB64(rawReq)
+	respBody, rawResp = scrubImageB64(respBody), scrubImageB64(rawResp)
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "off":
 		return "", "", "", ""
@@ -42,6 +47,42 @@ func applyBodyMode(mode, status, reqBody, respBody, rawReq, rawResp string) (str
 	default:
 		return reqBody, respBody, rawReq, rawResp
 	}
+}
+
+// imageJSONDataRE matches "data":"<long base64>" in a serialized image block.
+var imageJSONDataRE = regexp.MustCompile(`("data"\s*:\s*")[A-Za-z0-9+/=]{512,}"`)
+
+// imageStructDataRE matches the unambiguous image-block shape
+// ("type":"image" … "source":{… "data":"…"}) at ANY payload length, so even a
+// tiny probe image (a 64×64 solid PNG is only a couple hundred base64 chars)
+// never lands in the audit table.
+var imageStructDataRE = regexp.MustCompile(`("type"\s*:\s*"image"[^{}]*?"source"\s*:\s*\{[^{}]*?"data"\s*:\s*")[A-Za-z0-9+/=]+"`)
+
+// imageDataURIRE matches a data:image/...;base64 payload inside an
+// image_url (OpenAI shape). The prefix alone identifies it as image data, so no
+// length floor is needed.
+var imageDataURIRE = regexp.MustCompile(`data:image/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=]+`)
+
+// scrubImageB64 replaces base64 image payloads with a short marker so audit rows
+// stay small. The request that actually goes on the wire is unaffected.
+func scrubImageB64(s string) string {
+	if s == "" || (!strings.Contains(s, "base64") && !strings.Contains(s, `"data"`)) {
+		return s
+	}
+	replaceData := func(m string) string {
+		// Keep the `"data":"` prefix, replace the payload up to the closing quote.
+		i := strings.Index(m, `":"`)
+		if i < 0 {
+			return m
+		}
+		start := i + 3
+		return m[:start] + `[image omitted ` + strconv.Itoa(len(m)-start-1) + ` bytes]"`
+	}
+	s = imageStructDataRE.ReplaceAllStringFunc(s, replaceData)
+	s = imageJSONDataRE.ReplaceAllStringFunc(s, replaceData)
+	return imageDataURIRE.ReplaceAllStringFunc(s, func(m string) string {
+		return "data:image/…;base64,[omitted " + strconv.Itoa(len(m)) + " bytes]"
+	})
 }
 
 func resolveBodyMode(mode func() string) string {
