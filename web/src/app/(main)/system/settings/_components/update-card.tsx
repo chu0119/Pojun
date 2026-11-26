@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { api, sseUrl } from "@/lib/api";
+import { readEmbeddedBuildId } from "@/lib/build-policy";
 import type { UpdateCheck, UpdateProgress } from "@/lib/types";
 
 /** 等待新版本上线的最长时间。一次升级要经过三次进程启动（暂存 → 换装 → 新版），
@@ -76,6 +77,9 @@ export function UpdateCard() {
   // （那一次只负责把 pojun.new 换上去然后立刻退出），只看连通性会误判成功。
   const waitForNewVersion = React.useCallback(async (fromVersion: string) => {
     setRestarting(true);
+    // 同版本重新构建（或只换了前端）时 version 不变，只有 web_build 会变；
+    // 只比 version 会让"换装完成"永远等不到。
+    const fromWebBuild = readEmbeddedBuildId();
     const deadline = Date.now() + RESTART_TIMEOUT_MS;
     while (Date.now() < deadline) {
       await sleep(2000);
@@ -83,9 +87,11 @@ export function UpdateCard() {
         // /api/health 已去身份（公网指纹治理）：版本查询走鉴权的 /api/version。
         const r = await fetch("/api/version", { cache: "no-store" });
         if (r.ok) {
-          const j = (await r.json()) as { version?: string };
-          if (j.version && j.version !== fromVersion) {
-            toast.success(`已更新到 ${j.version}，正在重新加载页面`);
+          const j = (await r.json()) as { version?: string; web_build?: string };
+          const versionChanged = !!j.version && j.version !== fromVersion;
+          const webChanged = !!fromWebBuild && !!j.web_build && j.web_build !== fromWebBuild;
+          if (versionChanged || webChanged) {
+            toast.success(`已更新到 ${j.version || "新构建"}，正在重新加载页面`);
             await sleep(800);
             window.location.reload();
             return;

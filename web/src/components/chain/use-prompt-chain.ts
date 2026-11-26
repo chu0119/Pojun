@@ -6,6 +6,7 @@ import { toast } from "sonner";
 
 import { api } from "@/lib/api";
 import { buildChainModel, type ChainItem, type ChainModel } from "@/lib/chain-model";
+import { setAppDirty } from "@/lib/dirty-state";
 import type { AgentPromptChain as AgentPromptChainData } from "@/lib/types";
 
 // Go 的 nil slice 序列化成 null；mock 模式未知路由返回 {}。取数后统一补形，
@@ -213,8 +214,16 @@ export function usePromptChain({
   const confirmDiscard = React.useCallback((): boolean => {
     if (!dirtyRef.current) return true;
     const go = window.confirm("独立提示词有未保存的修改，离开会丢失。继续？");
-    if (go) dirtyRef.current = false;
-    return go;
+    if (go) {
+      dirtyRef.current = false;
+      setAppDirty(false);
+      return true;
+    }
+    // confirm 返回 false 有两种来源：用户点了取消，或浏览器已压制弹窗（Chrome
+    // 的"阻止此页面创建更多对话框"）。两者都必须给出可见反馈，否则就是"点了
+    // 没反应"。
+    toast.warning("未切换：独立提示词有未保存的修改");
+    return false;
   }, []);
 
   const select = React.useCallback(
@@ -297,7 +306,12 @@ export function usePromptChain({
 
   const setDirty = React.useCallback((v: boolean) => {
     dirtyRef.current = v;
+    // 根布局里的 BuildGuard 看不到这个 ref，需要一份模块级镜像才能判断能否自动重载。
+    setAppDirty(v);
   }, []);
+
+  // 离开链页时清掉镜像：否则草稿标记会跟着用户走到别的页面。
+  React.useEffect(() => () => setAppDirty(false), []);
 
   React.useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
