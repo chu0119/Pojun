@@ -677,6 +677,8 @@ ALTER TABLE tasks ADD COLUMN IF NOT EXISTS queue_mode TEXT NOT NULL DEFAULT '';
 -- 暂停开始时间；补旧库。NULL=当前未处于暂停。恢复时按 (now-paused_at)
 -- 顺延 deadline_at，避免窗口外休眠消耗任务的有效运行预算。
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS paused_at TIMESTAMPTZ;
+-- 累计暂停秒数（v0.9.90）：分钟预算 = 首次运行至今 - 累计暂停 - 当前暂停。
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS paused_total_seconds BIGINT NOT NULL DEFAULT 0;
 -- 可选的任务名称;补旧库。空串=未命名,前端展示时回退到描述。
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT '';
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS category_id BIGINT REFERENCES task_categories(id) ON DELETE SET NULL;

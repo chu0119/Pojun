@@ -116,6 +116,13 @@ func DropLocalExecTools(tools []actool.CoreTool) []actool.CoreTool {
 
 type guardedTool struct{ actool.CoreTool }
 
+func (g *guardedTool) AcceptsRawInput() bool {
+	if r, ok := g.CoreTool.(interface{ AcceptsRawInput() bool }); ok {
+		return r.AcceptsRawInput()
+	}
+	return false
+}
+
 func (g *guardedTool) Call(ctx context.Context, in json.RawMessage, tc *actool.ToolContext) (res actool.Result, err error) {
 	defer func() {
 		if r := recover(); r != nil {

@@ -130,6 +130,13 @@ type overriddenTool struct {
 	schema map[string]any
 }
 
+func (o *overriddenTool) AcceptsRawInput() bool {
+	if r, ok := o.CoreTool.(interface{ AcceptsRawInput() bool }); ok {
+		return r.AcceptsRawInput()
+	}
+	return false
+}
+
 func (o *overriddenTool) Description() string         { return o.desc }
 func (o *overriddenTool) InputSchema() map[string]any { return o.schema }
 

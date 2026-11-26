@@ -12,14 +12,14 @@ import (
 
 // Config controls one sync run.
 type Config struct {
-	NvdAPIKey    string        // optional; lifts the 5 req/30s anonymous cap
-	ProxyURL     string        // global egress proxy for outbound fetches (empty = direct)
-	GitHubToken  string        // optional; lifts GitHub search limits for PoC aggregation
-	PocEnabled   bool          // aggregate GitHub PoC repos for recently synced CVEs
-	BackfillDays int           // first-run lookback; 0 (default) = full catalog (~409k records,
-	                           // ≈205 pages: ~22 min anonymous / ~3 min with a key, split across runs)
-	PageDelay    time.Duration // inter-request delay; 0 = derived from the key
-	MaxRuntime   time.Duration // per-run ceiling (default 30m) — the rest waits for the next tick
+	NvdAPIKey    string // optional; lifts the 5 req/30s anonymous cap
+	ProxyURL     string // global egress proxy for outbound fetches (empty = direct)
+	GitHubToken  string // optional; lifts GitHub search limits for PoC aggregation
+	PocEnabled   bool   // aggregate GitHub PoC repos for recently synced CVEs
+	BackfillDays int    // first-run lookback; 0 (default) = full catalog (~409k records,
+	// ≈205 pages: ~22 min anonymous / ~3 min with a key, split across runs)
+	PageDelay  time.Duration // inter-request delay; 0 = derived from the key
+	MaxRuntime time.Duration // per-run ceiling (default 30m) — the rest waits for the next tick
 }
 
 // Run executes one full sync: KEV flags first (cheap, high signal), then the
@@ -177,7 +177,7 @@ func syncKEV(ctx context.Context, st *Store, cfg Config) error {
 		if ctx.Err() != nil {
 			break
 		}
-		if err := st.MarkKEV(ctx, e.CVEID, e.DateAdded); err != nil {
+		if err := st.MarkKEVEntry(ctx, e); err != nil {
 			log.Printf("[vulnintel] kev mark %s: %v", e.CVEID, err)
 			continue
 		}

@@ -142,6 +142,13 @@ func escapeAttr(s string) string {
 // untrustedTool 是运行时工具装饰器：只改模型看到的回执，不改工具行为。
 type untrustedTool struct{ actool.CoreTool }
 
+func (u *untrustedTool) AcceptsRawInput() bool {
+	if r, ok := u.CoreTool.(interface{ AcceptsRawInput() bool }); ok {
+		return r.AcceptsRawInput()
+	}
+	return false
+}
+
 func (u *untrustedTool) Call(ctx context.Context, in json.RawMessage, tc *actool.ToolContext) (actool.Result, error) {
 	res, err := u.CoreTool.Call(ctx, in, tc)
 	if err != nil {

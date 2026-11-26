@@ -99,8 +99,20 @@ func (e *Engine) taskBudgetStatus(t *Task) *taskBudgetStatus {
 			}
 		}
 	}
-	if first := t.lifecycleSnapshot().FirstRunAt; first > 0 {
-		st.MinutesUsed = time.Since(time.Unix(first, 0)).Minutes()
+	// 分钟预算 = 首次运行至今 - 累计暂停 - 当前这次暂停。直接读 DB 而不是
+	// t.FirstRunAt：后者在 lifecycleMu 下写，裸读会和 StampTaskFirstRun 竞态；
+	// 暂停时长不扣除会让“暂停一段时间再恢复”直接撞上限收尾。
+	if lifecycle := t.lifecycleSnapshot(); lifecycle.FirstRunAt > 0 {
+		var secs float64
+		err := e.m.pg.QueryRow(`SELECT GREATEST(0,
+  EXTRACT(EPOCH FROM (now() - first_run_at))
+  - COALESCE(paused_total_seconds,0)
+  - CASE WHEN paused_at IS NOT NULL THEN EXTRACT(EPOCH FROM (now() - paused_at)) ELSE 0 END)
+FROM tasks WHERE id=$1 AND first_run_at IS NOT NULL`, t.ID).Scan(&secs)
+		if err != nil {
+			secs = time.Since(time.Unix(lifecycle.FirstRunAt, 0)).Seconds()
+		}
+		st.MinutesUsed = secs / 60
 	}
 	maxPct := 0.0
 	if cfg.Tokens > 0 {

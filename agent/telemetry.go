@@ -17,6 +17,13 @@ import (
 
 type tracedTool struct{ actool.CoreTool }
 
+func (t *tracedTool) AcceptsRawInput() bool {
+	if r, ok := t.CoreTool.(interface{ AcceptsRawInput() bool }); ok {
+		return r.AcceptsRawInput()
+	}
+	return false
+}
+
 func (t *tracedTool) Call(ctx context.Context, in json.RawMessage, tc *actool.ToolContext) (actool.Result, error) {
 	ctx, span := telemetry.Start(ctx, "execute_tool."+t.Name(),
 		attribute.String("tool.name", t.Name()),

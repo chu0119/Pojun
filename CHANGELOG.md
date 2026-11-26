@@ -35,6 +35,17 @@
   tools_suspicious`；发现后按排序 name+description 算 SHA-256，变化/疑似注入在
   MCP 页告警，不自动禁用（避免打断运行中任务）。
 
+### 修复：写工具 RawInput、暂停预算与 KEV 检索
+
+- `report_finding`/`record_fact` 启用 SDK `RawInput`，并让 guarded/untrusted/traced/
+  overridden 包装层透传 `AcceptsRawInput`——`normalizeToolInput` 的参数容错此前
+  永远跑不到（schema 校验先拒绝）。
+- `tasks.paused_total_seconds` 累计暂停时长；分钟预算改为“首次运行至今 − 累计暂停 −
+  当前暂停”，暂停很久再恢复不再瞬间超预算收尾。
+- KEV 条目补最小 `vuln_cpe_products` 行，`search_vulns` 不再因 INNER JOIN 隐藏
+  “只有 KEV、NVD 未补到”的 CVE；`SaveSyncState` 的页级进度不再把 `last_sync_at`
+  刷成 now（中断不会伪装成刚成功）。
+
 ## [0.4.122] - 2026-11-26
 ### 修复：终态经验落库 UTF-8 截断（#75）
 

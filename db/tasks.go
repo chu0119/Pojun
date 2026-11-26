@@ -453,6 +453,11 @@ func (d *DB) GetTask(id int64) (*Task, error) {
 func (d *DB) SetPaused(id int64, paused bool) error {
 	_, err := d.Exec(`UPDATE tasks SET
 		paused=$1,
+		paused_total_seconds=CASE
+			WHEN NOT $1 AND paused_at IS NOT NULL
+			THEN paused_total_seconds + GREATEST(0, EXTRACT(EPOCH FROM (now() - paused_at)))::bigint
+			ELSE paused_total_seconds
+		END,
 		paused_at=CASE WHEN $1 THEN COALESCE(paused_at, now()) ELSE NULL END,
 		deadline_at=CASE
 			WHEN NOT $1 AND paused_at IS NOT NULL AND deadline_at IS NOT NULL

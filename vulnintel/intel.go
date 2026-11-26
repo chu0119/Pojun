@@ -117,21 +117,38 @@ func (s *Store) UpsertCVE(ctx context.Context, c CVE) error {
 // MarkKEV sets the in-the-wild exploitation flag. Rows unknown to the NVD sync
 // (KEV moves faster than NVD sometimes) get a stub row so the flag is visible.
 func (s *Store) MarkKEV(ctx context.Context, cveID string, added time.Time) error {
-	tag := "KEV: " + added.Format("2006-01-02")
-	res, err := s.db.ExecContext(ctx, `UPDATE vuln_cves SET kev=true, kev_date_added=$2 WHERE cve_id=$1`, cveID, nullTime(added))
+	return s.MarkKEVEntry(ctx, KevEntry{CVEID: cveID, DateAdded: added})
+}
+
+// MarkKEVEntry marks one KEV entry and, for CVEs the NVD sync has not reached
+// yet, inserts the minimal CPE product row that makes it reachable by
+// search_vulns (its JOIN would otherwise hide KEV-only records).
+func (s *Store) MarkKEVEntry(ctx context.Context, e KevEntry) error {
+	tag := "KEV: " + e.DateAdded.Format("2006-01-02")
+	res, err := s.db.ExecContext(ctx, `UPDATE vuln_cves SET kev=true, kev_date_added=$2 WHERE cve_id=$1`, e.CVEID, nullTime(e.DateAdded))
 	if err != nil {
-		return fmt.Errorf("mark kev %s: %w", cveID, err)
+		return fmt.Errorf("mark kev %s: %w", e.CVEID, err)
 	}
-	if n, _ := res.RowsAffected(); n > 0 {
-		return nil
+	if n, _ := res.RowsAffected(); n == 0 {
+		_, err = s.db.ExecContext(ctx, `INSERT INTO vuln_cves (cve_id, source, title, severity, kev, kev_date_added)
+			VALUES ($1,'kev',$2,'UNKNOWN',true,$3) ON CONFLICT (cve_id) DO UPDATE SET kev=true, kev_date_added=$3`,
+			e.CVEID, tag, nullTime(e.DateAdded))
+		if err != nil {
+			return fmt.Errorf("insert kev stub %s: %w", e.CVEID, err)
+		}
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO vuln_cves (cve_id, source, title, severity, kev, kev_date_added)
-		VALUES ($1,'kev',$2,'UNKNOWN',true,$3) ON CONFLICT (cve_id) DO UPDATE SET kev=true, kev_date_added=$3`,
-		cveID, tag, nullTime(added))
-	if err != nil {
-		return fmt.Errorf("insert kev stub %s: %w", cveID, err)
+	vendor, product := normalizeKEVProduct(e.Vendor), normalizeKEVProduct(e.Product)
+	if vendor != "" && product != "" {
+		_, _ = s.db.ExecContext(ctx, `INSERT INTO vuln_cpe_products (cve_id, vendor, product)
+			VALUES ($1,$2,$3) ON CONFLICT (cve_id,vendor,product) DO NOTHING`, e.CVEID, vendor, product)
 	}
 	return nil
+}
+
+func normalizeKEVProduct(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.NewReplacer(" ", "_", "/", "_", "\\", "_", "(", "", ")", "", ",", "").Replace(s)
+	return strings.Trim(s, "_-.")
 }
 
 // VulnHit 是 search_vulns 的单条结果（详情字段刻意精简，让 LLM 先看摘要）。
@@ -417,9 +434,9 @@ func (s *Store) GetSyncState(ctx context.Context, source string) (SyncState, err
 // SaveSyncState upserts the watermark row.
 func (s *Store) SaveSyncState(ctx context.Context, st SyncState) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO vuln_sync_state (source, last_sync_at, cursor, total_synced, last_error, enabled, page_cursor)
-		VALUES ($1, COALESCE($2::timestamptz, now()), $3, $4, $5, $6, $7)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (source) DO UPDATE SET
-		  last_sync_at=COALESCE($2::timestamptz, now()), cursor=EXCLUDED.cursor,
+		  last_sync_at=COALESCE($2::timestamptz, vuln_sync_state.last_sync_at), cursor=EXCLUDED.cursor,
 		  total_synced=EXCLUDED.total_synced, last_error=EXCLUDED.last_error, enabled=EXCLUDED.enabled,
 		  page_cursor=EXCLUDED.page_cursor`,
 		st.Source, st.LastSyncAt, st.Cursor, st.TotalSynced, st.LastError, st.Enabled, st.PageCursor)
