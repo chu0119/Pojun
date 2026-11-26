@@ -3,6 +3,33 @@
 本项目的重要变更记录在此文件中，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
 ## [Unreleased]
+### 能力：资源自适应（opt-in，内部版 v0.9.73 下放）
+
+- **默认零变化**：`resource_auto_tune` 缺省 `false`。未开启时只做只读容量探测与展示，
+  worker 仍按现有 `workers` 设置或默认 3，不限制作业、不缩放扫描、不修改 Go 运行时；
+  没有数据库迁移，升级不会改变存量部署行为。
+- **容量探测**：CPU/内存/负载/cgroup v1+v2/数据目录磁盘；容器内取 `memory.max` /
+  `cpu.max`（或 v1 对应文件）限额，失败只降级对应维度并给出可操作警告，不阻断启动。
+- **计划推导**：按 CPU/内存分档推导 worker（2–8）、任务并发建议、后台作业全局/单任务
+  上限、扫描速率（0.3–1×）、GOMEMLIMIT、GOMAXPROCS、hashcat/john 低负载参数；
+  每小时自动重算，扩容/限额调整无需重启。
+- **显式配置优先**：库里已有 `workers` 永远优先；只有从未配置且用户开启自动调优时才用
+  计划值；手工覆盖 worker 会显式写穿 `workers` 设置，不静默改写存量配置。
+- **作业闸门**：`job_start` 全局/单任务上限排队（10 分钟超时给可行动错误）；计划启用且
+  Linux 有 GNU 工具时自动 `nice -n 10` 与内层 `timeout --foreground --kill-after`，
+  超时仍写回退出码。计划未启用时命令行逐字节不变。
+- **扫描缩放**：计划缩放 <1 时 `scan_with_nuclei` 自动加 `-rate-limit`；Bash 描述追加
+  nuclei/ffuf/hashcat/john 低负载参数建议（公开版无 opsec 命令重写层，不做命令级强制）。
+- **设置页「资源自适应」卡片**：容量/计划/依据/生效值、自动/手动、阈值、4 项手工覆盖、
+  保存并应用、重新探测、一键应用推荐任务并发；新增
+  `GET/PUT /api/resource`、`POST /api/resource/retune`。
+- **部署护栏**：`install.sh` 按内存 65%/80%、CPU 80% 写 systemd
+  `MemoryHigh/MemoryMax/CPUQuota/TasksMax`（`POJUN_*` 覆盖，`POJUN_RESOURCE_LIMITS=0`
+  关闭，非法值直接报错）；新增 `scripts/apply-systemd-limits.sh [--dry-run|--disable]`
+  给存量部署补 drop-in；Docker 只按 cgroup 配额缩放、不改宿主。
+- **测试**：cgroup v1/v2、计划档位、手工覆盖、作业闸门、扫描缩放、API 往返/校验、
+  install/apply 脚参数归一、前端纯函数与静态构建。文档见 `docs/资源自适应.md`。
+
 ### 能力：内置 HTTPS 与证书管理（opt-in，内部版 v0.9.78 下放）
 
 - **默认不启用 HTTPS**：`tls_mode` 缺省为 `off`，新装与存量升级都不自动切换、不写迁移
