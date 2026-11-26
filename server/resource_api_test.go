@@ -54,8 +54,10 @@ func TestResourceAPIRequiresExplicitEnablePG(t *testing.T) {
 	}
 
 	td := t.TempDir()
-	s := New(context.Background(), m, td, td, td)
+	ctx, cancel := context.WithCancel(context.Background())
+	s := New(ctx, m, td, td, td)
 	defer s.Close()
+	defer cancel() // 停掉 server 的常驻 goroutine（资源每小时重算等）
 	// 测试结束后恢复进程级 Go 运行时（GOMAXPROCS/内存上限），避免影响同包其他测试。
 	defer s.applyGoRuntime(resource.NeutralPlan())
 	h := s.Handler()
