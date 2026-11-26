@@ -570,19 +570,20 @@ func (d *DB) DeleteTaskCascade(id int64, deleteAssets, deleteFindings bool, dele
 	return d.DeleteTaskCascadePrepared(id, deleteAssets, deleteFindings, deleteRecords, nil)
 }
 
-// DeleteTaskCascadePrepared coordinates reversible external deletion with the
-// PostgreSQL cascade. When prepare is non-nil, host ownership is resolved and
-// prepare is invoked inside this transaction while asset and anchor writers are
-// excluded. The locks remain held through commit, closing the window where a
-// host could become shared after its traffic had already been staged.
+// DeleteTaskCascadePrepared coordinates external cleanup with the PostgreSQL
+// cascade. When prepare is non-nil, host ownership is resolved and prepare is
+// invoked inside this transaction while asset and anchor writers are excluded.
 //
-// prepare must only stage reversible work. Any returned error or later database
-// error rolls PostgreSQL back; the caller remains responsible for rolling back
-// external work that its callback staged successfully.
+// prepare receives the transaction so it can enqueue durable cleanup jobs
+// atomically with the task row. It must not perform slow external work (traffic
+// index deletes, large file removal) inside the transaction — even though the
+// locks make it safe, holding them for minutes blocks every asset writer. Any
+// returned error or later database error rolls PostgreSQL back; the caller
+// remains responsible for rolling back external work its callback staged.
 func (d *DB) DeleteTaskCascadePrepared(
 	id int64,
 	deleteAssets, deleteFindings, deleteLLMRecords bool,
-	prepare func(TaskDeletePreparation) error,
+	prepare func(*sql.Tx, TaskDeletePreparation) error,
 ) (TaskDeleteResult, error) {
 	var result TaskDeleteResult
 	tx, err := d.Begin()
@@ -612,7 +613,7 @@ func (d *DB) DeleteTaskCascadePrepared(
 		if err != nil {
 			return result, err
 		}
-		if err := prepare(TaskDeletePreparation{
+		if err := prepare(tx, TaskDeletePreparation{
 			ExplorationID: expID,
 			TrafficHosts:  hosts,
 		}); err != nil {

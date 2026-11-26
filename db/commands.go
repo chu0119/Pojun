@@ -176,15 +176,20 @@ CREATE TABLE IF NOT EXISTS llm_records (
 );
 CREATE INDEX IF NOT EXISTS idx_llm_records_ts ON llm_records(ts);
 CREATE INDEX IF NOT EXISTS idx_llm_records_session ON llm_records(session_id);
+-- 任务删除按 task_id 清理；缺这个索引会全表扫大表，把删除拖成分钟级。
+CREATE INDEX IF NOT EXISTS idx_llm_records_task ON llm_records(task_id);
 `
 
-// llmRecordsMigrate adds new columns to existing tables.
+// llmRecordsMigrate adds new columns to existing tables. The index is repeated
+// here because CREATE TABLE IF NOT EXISTS is a no-op on an existing table: a
+// database created before this index would otherwise never get it.
 const llmRecordsMigrate = `
 ALTER TABLE llm_records ADD COLUMN IF NOT EXISTS task_id TEXT;
 ALTER TABLE llm_records ADD COLUMN IF NOT EXISTS worker TEXT;
 ALTER TABLE llm_records ADD COLUMN IF NOT EXISTS profile_name TEXT;
 ALTER TABLE llm_records ADD COLUMN IF NOT EXISTS raw_request TEXT;
 ALTER TABLE llm_records ADD COLUMN IF NOT EXISTS raw_response TEXT;
+CREATE INDEX IF NOT EXISTS idx_llm_records_task ON llm_records(task_id);
 `
 
 // EnsureLLMRecordsTable creates the llm_records table if it does not exist.

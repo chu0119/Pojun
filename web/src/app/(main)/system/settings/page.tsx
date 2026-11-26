@@ -22,6 +22,14 @@ import { TLSCard } from "./_components/tls-card";
 
 export default function SystemSettingsPage() {
   const [trafficCapture, setTrafficCapture] = React.useState(false);
+  const [trafficMode, setTrafficMode] = React.useState<"off" | "evidence" | "full">("off");
+  const [retentionCfg, setRetentionCfg] = React.useState({
+    evidenceHours: 24,
+    evidenceMaxGB: 2,
+    llmKeepDays: 0,
+    llmMaxRows: 0,
+  });
+  const [savingRetention, setSavingRetention] = React.useState(false);
   const [agentTrafficBinding, setAgentTrafficBinding] = React.useState(false);
   const [webSearch, setWebSearch] = React.useState(false);
   const [backend, setBackend] = React.useState("ddgs");
@@ -85,6 +93,13 @@ export default function SystemSettingsPage() {
 
   const apply = React.useCallback((s: Settings) => {
     setTrafficCapture(!!s.traffic_capture);
+    setTrafficMode(s.traffic_mode ?? (s.traffic_capture ? "full" : "off"));
+    setRetentionCfg({
+      evidenceHours: s.traffic_evidence_window_hours ?? 24,
+      evidenceMaxGB: s.traffic_evidence_max_gb ?? 2,
+      llmKeepDays: s.storage_llm_keep_days ?? 0,
+      llmMaxRows: s.storage_llm_max_rows ?? 0,
+    });
     setAgentTrafficBinding(!!s.agent_traffic_binding);
     setWebSearch(!!s.web_search_enabled);
     setBackend(s.web_search_backend || "ddgs");
@@ -305,14 +320,53 @@ export default function SystemSettingsPage() {
       .catch(() => setLlmProfileOpts([]));
   }, [apply]);
 
-  const toggleTraffic = (v: boolean) => {
-    setTrafficCapture(v); // optimistic
+  const changeTrafficMode = (mode: "off" | "evidence" | "full") => {
+    const prev = trafficMode;
+    setTrafficMode(mode); // optimistic
+    setTrafficCapture(mode !== "off");
     setSaving(true);
     api
-      .setSettings({ traffic_capture: v })
+      .setSettings({ traffic_mode: mode })
       .then(apply)
-      .catch(() => setTrafficCapture(!v)) // revert on failure
+      .catch(() => {
+        setTrafficMode(prev);
+        setTrafficCapture(prev !== "off");
+      })
       .finally(() => setSaving(false));
+  };
+
+  const saveRetention = () => {
+    const c = retentionCfg;
+    if (!Number.isInteger(c.evidenceHours) || c.evidenceHours < 0 || c.evidenceHours > 8760) {
+      toast.error("证据模式保留窗口必须在 0–8760 小时之间（0=不按时间清理）");
+      return;
+    }
+    if (!Number.isInteger(c.evidenceMaxGB) || c.evidenceMaxGB < 0 || c.evidenceMaxGB > 4096) {
+      toast.error("证据模式容量上限必须在 0–4096 GB 之间（0=不限）");
+      return;
+    }
+    if (!Number.isInteger(c.llmKeepDays) || c.llmKeepDays < 0 || c.llmKeepDays > 3650) {
+      toast.error("LLM 审计保留必须在 0–3650 天之间（0=关闭）");
+      return;
+    }
+    if (!Number.isInteger(c.llmMaxRows) || c.llmMaxRows < 0 || c.llmMaxRows > 10000000) {
+      toast.error("LLM 审计行数上限必须在 0–10000000 之间（0=不限）");
+      return;
+    }
+    setSavingRetention(true);
+    api
+      .setSettings({
+        traffic_evidence_window_hours: c.evidenceHours,
+        traffic_evidence_max_gb: c.evidenceMaxGB,
+        storage_llm_keep_days: c.llmKeepDays,
+        storage_llm_max_rows: c.llmMaxRows,
+      })
+      .then((s) => {
+        apply(s);
+        toast.success("已保存留存策略（由后台巡检执行，不会立即删除）");
+      })
+      .catch((e) => toast.error(`保存失败：${(e as Error).message}`))
+      .finally(() => setSavingRetention(false));
   };
 
   const toggleInjectPlanner = (v: boolean) => {
@@ -528,23 +582,103 @@ export default function SystemSettingsPage() {
               流量捕获
             </CardTitle>
             <CardDescription>
-              开启后，所有 Agent 的 HTTP 流量经记录代理全量落库，并向 Agent 注入 traffic_search / traffic_get
-              工具与代理配置（提示词含代理说明）。
-              <br />
-              关闭（默认）时不记录任何流量：Agent
-              <b>不会</b>拿到代理配置与流量工具，提示词也<b>不含</b>代理相关内容。切换后会即时重建 Agent 生效。
+              三段式：<b>完全关闭</b>（默认）不记录、不注入代理；<b>仅证据相关</b>正常抓取，但只长期保留已绑定到
+              漏洞/证据的流量，其余按短窗口自动清理；<b>全量保存</b>按“系统维护 → 流量保留”的天数保存。
+              切换后即时重建 Agent 生效。
             </CardDescription>
           </CardHeader>
-          <CardContent className="flex items-center justify-between gap-4">
-            <Label htmlFor="traffic-capture" className="font-normal text-muted-foreground text-sm">
-              {trafficCapture ? "已开启 · 正在记录流量并注入代理" : "已关闭 · 不记录、不注入代理"}
+          <CardContent className="flex flex-wrap items-center justify-between gap-4">
+            <Label htmlFor="traffic-mode" className="font-normal text-muted-foreground text-sm">
+              {trafficMode === "off"
+                ? "已关闭 · 不记录、不注入代理"
+                : trafficMode === "evidence"
+                  ? "仅证据相关 · 未绑定证据的流量按短窗口清理"
+                  : "全量保存 · 按保留策略清理"}
             </Label>
-            <Switch
-              id="traffic-capture"
-              checked={trafficCapture}
+            <Select
+              value={trafficMode}
+              onValueChange={(v) => changeTrafficMode(v as "off" | "evidence" | "full")}
               disabled={!loaded || saving}
-              onCheckedChange={toggleTraffic}
-            />
+            >
+              <SelectTrigger id="traffic-mode" className="w-44">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="off">完全关闭</SelectItem>
+                <SelectItem value="evidence">仅证据相关</SelectItem>
+                <SelectItem value="full">全量保存</SelectItem>
+              </SelectContent>
+            </Select>
+          </CardContent>
+        </Card>
+
+        <Card className="order-16">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <DatabaseIcon className="size-4" />
+              留存治理
+            </CardTitle>
+            <CardDescription>
+              证据模式只清理<b>未绑定证据</b>的流量；绑定到漏洞/证据的记录始终保留。LLM 审计按天数/行数上限分批清理，
+              0=关闭。策略由后台巡检执行（每 6 小时），保存后不会立即删除。
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
+            <div className="grid grid-cols-2 gap-3">
+              <label className="flex flex-col gap-1 text-sm">
+                <span>证据模式保留（小时）</span>
+                <Input
+                  type="number"
+                  min={0}
+                  max={8760}
+                  className="font-mono text-sm"
+                  value={retentionCfg.evidenceHours}
+                  disabled={!loaded || savingRetention}
+                  onChange={(e) => setRetentionCfg({ ...retentionCfg, evidenceHours: Number(e.target.value) })}
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm">
+                <span>证据模式上限（GB，0=不限）</span>
+                <Input
+                  type="number"
+                  min={0}
+                  max={4096}
+                  className="font-mono text-sm"
+                  value={retentionCfg.evidenceMaxGB}
+                  disabled={!loaded || savingRetention}
+                  onChange={(e) => setRetentionCfg({ ...retentionCfg, evidenceMaxGB: Number(e.target.value) })}
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm">
+                <span>LLM 审计保留（天，0=关）</span>
+                <Input
+                  type="number"
+                  min={0}
+                  max={3650}
+                  className="font-mono text-sm"
+                  value={retentionCfg.llmKeepDays}
+                  disabled={!loaded || savingRetention}
+                  onChange={(e) => setRetentionCfg({ ...retentionCfg, llmKeepDays: Number(e.target.value) })}
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm">
+                <span>LLM 审计行数上限（0=不限）</span>
+                <Input
+                  type="number"
+                  min={0}
+                  max={10000000}
+                  className="font-mono text-sm"
+                  value={retentionCfg.llmMaxRows}
+                  disabled={!loaded || savingRetention}
+                  onChange={(e) => setRetentionCfg({ ...retentionCfg, llmMaxRows: Number(e.target.value) })}
+                />
+              </label>
+            </div>
+            <div>
+              <Button size="sm" onClick={saveRetention} disabled={!loaded || savingRetention}>
+                {savingRetention ? "保存中…" : "保存留存策略"}
+              </Button>
+            </div>
           </CardContent>
         </Card>
 

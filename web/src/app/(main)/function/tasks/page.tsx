@@ -126,6 +126,7 @@ import type {
   TaskAuthConfigInput,
   AssetInterceptRuleInput,
   ChatAttachment,
+  CleanupJob,
   Company,
   DeleteTaskOptions,
   DeleteTaskResult,
@@ -238,6 +239,82 @@ function deleteSummary(result: DeleteTaskResult): string {
   return details.length > 0 ? `任务已删除（${details.join("，")}）` : "任务已删除";
 }
 
+const CLEANUP_KIND_LABEL: Record<string, string> = {
+  traffic: "流量索引",
+  llm: "LLM 审计",
+  files: "任务文件",
+};
+
+function cleanupKindLabel(kind: string): string {
+  return CLEANUP_KIND_LABEL[kind] ?? kind;
+}
+
+function cleanupProgress(job: CleanupJob): string {
+  if (job.state === "failed") return "失败";
+  if (job.state === "pending") return "排队中";
+  if (job.total > 0) return `${Math.min(100, Math.round((job.done / job.total) * 100))}%`;
+  return "处理中";
+}
+
+// CleanupBanner keeps the difference between “任务已经删掉” and “磁盘上的重活
+// 还在跑” visible. Traffic cleanup is deliberately asynchronous; hiding it would
+// make a long batch look like a hang.
+function CleanupBanner({
+  jobs,
+  retrying,
+  onRetry,
+}: {
+  jobs: CleanupJob[];
+  retrying: boolean;
+  onRetry: (id: number) => void;
+}) {
+  const active = jobs.filter((job) => job.state === "pending" || job.state === "running");
+  const failed = jobs.filter((job) => job.state === "failed");
+  if (active.length === 0 && failed.length === 0) return null;
+
+  return (
+    <Card className="mx-4 border-primary/30 bg-primary/5 lg:mx-6">
+      <CardContent className="flex flex-col gap-3 p-4">
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <Loader2Icon className="size-4 animate-spin text-primary" />
+          <span className="font-medium">
+            {active.length > 0 ? `正在后台清理 ${active.length} 项` : "有清理作业失败"}
+          </span>
+          <span className="text-muted-foreground text-xs">
+            任务已从列表移除；流量、LLM 审计与任务文件正在分批清理，可离开本页。
+          </span>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          {active.slice(0, 6).map((job) => (
+            <div key={job.id} className="flex flex-wrap items-center gap-2 text-xs">
+              <Badge variant="secondary">{cleanupKindLabel(job.kind)}</Badge>
+              {job.task_id != null && <span className="font-mono">#{job.task_id}</span>}
+              <span className="text-muted-foreground tabular-nums">
+                {job.done.toLocaleString()}
+                {job.total > 0 ? ` / ${job.total.toLocaleString()}` : ""} · {cleanupProgress(job)}
+              </span>
+            </div>
+          ))}
+          {active.length > 6 && <span className="text-muted-foreground text-xs">…等 {active.length} 项</span>}
+          {failed.map((job) => (
+            <div key={job.id} className="flex flex-wrap items-center gap-2 text-xs">
+              <Badge variant="destructive">{cleanupKindLabel(job.kind)}</Badge>
+              {job.task_id != null && <span className="font-mono">#{job.task_id}</span>}
+              <span className="max-w-[42rem] truncate text-muted-foreground" title={job.last_error}>
+                {job.last_error || "清理失败"}
+              </span>
+              <Button size="sm" variant="outline" disabled={retrying} onClick={() => onRetry(job.id)}>
+                {retrying && <Spinner data-icon="inline-start" />}
+                重试
+              </Button>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 // fmtDateTime renders a unix-seconds timestamp as a compact local date-time
 // (MM-DD HH:mm), or "—" when unset.
 function fmtDateTime(unix?: number): string {
@@ -345,6 +422,30 @@ export default function TasksPage() {
   // 冷启动引导：LLM 通道一个都没有时，新建任务必然跑不起来（体检 O1——此前
   // 允许空链提交，任务跑到引擎才失败）。null=探测中，不拦截。
   const [llmReady, setLlmReady] = React.useState<boolean | null>(null);
+  const [cleanupJobs, setCleanupJobs] = React.useState<CleanupJob[]>([]);
+  const [retryingCleanup, setRetryingCleanup] = React.useState(false);
+
+  // 删除后的流量/LLM/文件清理由服务端队列完成；这里只轮询进行中的作业，
+  // 让用户知道“任务已经消失，但磁盘上的重活还在跑”。
+  React.useEffect(() => {
+    let alive = true;
+    const tick = async () => {
+      try {
+        const res = await api.cleanupJobs(false);
+        if (alive) {
+          setCleanupJobs(res.jobs.filter((job) => job.state !== "done"));
+        }
+      } catch {
+        // 清理状态是辅助信息，探测失败不打扰用户。
+      }
+    };
+    void tick();
+    const timer = window.setInterval(tick, 5000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, []);
 
   React.useEffect(() => {
     let alive = true;
@@ -567,10 +668,14 @@ export default function TasksPage() {
     async (id: string, options: DeleteTaskOptions) => {
       try {
         const result = await api.deleteTask(id, options);
+        const suffix =
+          result.cleanup_queued || options.delete_traffic || options.delete_llm_records || options.delete_files
+            ? "；流量/文件/审计清理已转后台"
+            : "";
         if (result.cleanup_warning) {
-          toast.warning(`${deleteSummary(result)}；部分外部数据清理未完成：${result.cleanup_warning}`);
+          toast.warning(`${deleteSummary(result)}${suffix}；部分外部数据清理未完成：${result.cleanup_warning}`);
         } else {
-          toast.success(deleteSummary(result));
+          toast.success(`${deleteSummary(result)}${suffix}`);
         }
         load();
       } catch (e) {
@@ -815,8 +920,26 @@ export default function TasksPage() {
     [movingCategory, refreshCategoriesAndTasks, selectedIds],
   );
 
+  const retryCleanup = React.useCallback(async (id: number) => {
+    setRetryingCleanup(true);
+    try {
+      await api.retryCleanupJob(id);
+      toast.success("清理作业已重新排队");
+      const res = await api.cleanupJobs(false);
+      setCleanupJobs(res.jobs.filter((job) => job.state !== "done"));
+    } catch (error) {
+      toast.error(`重试清理失败：${(error as Error).message}`);
+    } finally {
+      setRetryingCleanup(false);
+    }
+  }, []);
+
   return (
-    <Tabs value={activeTab} onValueChange={setActiveTab} className="gap-4">
+    <>
+      {cleanupJobs.length > 0 && (
+        <CleanupBanner jobs={cleanupJobs} retrying={retryingCleanup} onRetry={retryCleanup} />
+      )}
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="gap-4">
       <TabsList className="mx-4 lg:mx-6">
         <TabsTrigger value="current">当前任务</TabsTrigger>
         <TabsTrigger value="archived">已归档</TabsTrigger>
@@ -1085,6 +1208,7 @@ export default function TasksPage() {
         <TaskArchivesPanel onChanged={load} />
       </TabsContent>
     </Tabs>
+    </>
   );
 }
 

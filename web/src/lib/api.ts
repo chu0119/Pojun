@@ -127,6 +127,7 @@ import type {
   TrafficResp,
   TrafficRetentionResult,
   TrafficRetentionStatus,
+  CleanupJob,
   ProxyPoolState,
   LocalProxyCandidate,
   MihomoStatus,
@@ -978,6 +979,10 @@ export const api = {
   trafficRetention: () => get<TrafficRetentionStatus>(`/traffic/retention`),
   trafficRetentionRun: (dryRun = true) =>
     post<TrafficRetentionResult>(`/traffic/retention`, { dry_run: dryRun }),
+  // 删除后的异步清理队列：流量/LLM/文件在后台分批处理。
+  cleanupJobs: (activeOnly = false) =>
+    get<{ jobs: CleanupJob[] }>(`/cleanup/jobs${activeOnly ? "?active=1" : ""}`),
+  retryCleanupJob: (id: number) => post<{ ok: boolean }>(`/cleanup/jobs/${id}/retry`, {}),
 
   // ---- app settings (runtime toggles) ----
   settings: () => get<Settings>(`/settings`),
