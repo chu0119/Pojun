@@ -89,5 +89,4 @@ curl -s   $B/_pojun_build.txt                     # 16 位 hex；带 If-None-Mat
 curl -s   -H "Authorization: Bearer <token>" $B/api/version   # version + web_build 一致
 ```
 
-`scripts/acceptance-webui.sh`（在 pojun skill 的 scripts 目录）把上面这套封装成
-一条命令，任一不符即非零退出。
+把这个矩阵写成脚本（或 CI 步骤）即可在每次换装后一条命令验收；本仓库不内置该脚本。

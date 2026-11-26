@@ -115,11 +115,12 @@ test("reloadOnce reloads at most once per cooldown window", () => {
   assert.equal(reloadOnce(), false);
 });
 
-test("reloadOnce still fires once when sessionStorage is blocked", () => {
+test("reloadOnce degrades to no auto-reload when sessionStorage is blocked", () => {
   resetReloadGuardForTest();
   const { state, runTimers } = fakeWindow({ storageFails: true });
-  assert.equal(reloadOnce(), true);
+  // 存储不可用就没有跨载入冷却：自动重载会把"每次加载都失败"变成无限重载，
+  // 所以这里必须返回 false，让调用方退化为只出横幅。
   assert.equal(reloadOnce(), false);
   runTimers();
-  assert.equal(state.reloads, 1);
+  assert.equal(state.reloads, 0);
 });

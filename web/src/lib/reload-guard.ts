@@ -14,16 +14,23 @@ export const RELOAD_COOLDOWN_MS = 30_000;
 
 const STORAGE_KEY = "pojun:last-reload-at";
 
-/** 本次页面生命周期内已经排过一次重载：即使 sessionStorage 不可用也不会循环。 */
+/** 本次页面生命周期内已排过一次重载。 */
 let scheduled = false;
 
-function readLastReloadAt(): number {
+/**
+ * 上次重载时刻；**null 表示存储不可用**。
+ *
+ * 存储不可用就没有跨载入冷却：`location.reload()` 会重置模块状态，若仍自动重载，
+ * 一个"每次加载都重现"的失败（例如按需 chunk 每次都 404）会变成无限重载，用户连
+ * 横幅都看不清。这种情况一律退化为"只提示，由用户点"。
+ */
+function readLastReloadAt(): number | null {
   try {
     const raw = window.sessionStorage.getItem(STORAGE_KEY);
     const n = raw ? Number(raw) : 0;
     return Number.isFinite(n) ? n : 0;
   } catch {
-    return 0;
+    return null;
   }
 }
 
@@ -31,17 +38,18 @@ function writeLastReloadAt(at: number): void {
   try {
     window.sessionStorage.setItem(STORAGE_KEY, String(at));
   } catch {
-    // 隐私模式/被禁用：退化成"每个页面生命周期一次"。
+    // 写入失败不影响本次重载：scheduled 已经置位，本页不会再排第二次。
   }
 }
 
 /**
- * 自动重载一次；冷却内或已排过则返回 false（调用方应退化为只提示）。
+ * 自动重载一次；冷却内、已排过、或存储不可用时返回 false（调用方应退化为只提示）。
  */
 export function reloadOnce(): boolean {
   if (typeof window === "undefined") return false;
   if (scheduled) return false;
   const last = readLastReloadAt();
+  if (last === null) return false;
   if (last > 0 && Date.now() - last < RELOAD_COOLDOWN_MS) return false;
   scheduled = true;
   writeLastReloadAt(Date.now());

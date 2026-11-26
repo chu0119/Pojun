@@ -120,14 +120,26 @@ func buildWebuiIndex(root fs.FS) (string, map[string][]byte) {
 // so the client can compare itself with the server without a separate request.
 func injectBuildMeta(html []byte, id string) []byte {
 	meta := []byte(`<meta name="pojun-build" content="` + id + `">`)
-	if i := bytes.Index(html, []byte("<head")); i >= 0 {
-		if j := bytes.IndexByte(html[i:], '>'); j >= 0 {
-			pos := i + j + 1
-			out := make([]byte, 0, len(html)+len(meta))
-			out = append(out, html[:pos]...)
-			out = append(out, meta...)
-			out = append(out, html[pos:]...)
-			return out
+	insert := func(pos int) []byte {
+		out := make([]byte, 0, len(html)+len(meta))
+		out = append(out, html[:pos]...)
+		out = append(out, meta...)
+		out = append(out, html[pos:]...)
+		return out
+	}
+	// 只认真正的 <head> 开始标签：`<header` 也以 `<head` 开头，命中它会插进错误位置。
+	if i := bytes.Index(html, []byte("<head")); i >= 0 && i+5 < len(html) {
+		switch html[i+5] {
+		case '>', ' ', '\t', '\r', '\n':
+			if j := bytes.IndexByte(html[i:], '>'); j >= 0 {
+				return insert(i + j + 1)
+			}
+		}
+	}
+	// 兜底：插在 doctype 之后，绝不能让 meta 排在 <!DOCTYPE> 前面（会进入怪异模式）。
+	if bytes.HasPrefix(html, []byte("<!DOCTYPE")) || bytes.HasPrefix(html, []byte("<!doctype")) {
+		if k := bytes.IndexByte(html, '>'); k >= 0 {
+			return insert(k + 1)
 		}
 	}
 	return append(meta, html...)

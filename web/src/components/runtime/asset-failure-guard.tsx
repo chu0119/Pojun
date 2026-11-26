@@ -5,6 +5,7 @@ import * as React from "react";
 import { RefreshCwIcon } from "lucide-react";
 
 import { isChunkLoadFailure, isNextAssetUrl } from "@/lib/build-policy";
+import { isAppDirty } from "@/lib/dirty-state";
 import { reloadNow, reloadOnce } from "@/lib/reload-guard";
 
 /**
@@ -20,6 +21,11 @@ export function AssetFailureGuard() {
   React.useEffect(() => {
     const handle = () => {
       if (typeof navigator !== "undefined" && !navigator.onLine) {
+        setFailed(true);
+        return;
+      }
+      // 有未保存的草稿时不抢用户的输入：只提示，重载由用户点。
+      if (isAppDirty()) {
         setFailed(true);
         return;
       }
