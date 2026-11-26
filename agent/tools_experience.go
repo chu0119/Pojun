@@ -17,7 +17,7 @@ import (
 func (t *ToolSet) searchExperience() actool.CoreTool {
 	return readTool(
 		"search_experience",
-		"检索经验（只读）：按关键词/维度查本任务的终态经验（成功、零产出、阻塞原因）与跨任务成功 playbook。"+
+		"检索经验（只读）：按关键词/维度查本任务的终态经验（成功、零产出、阻塞原因）与本任务成功 playbook。"+
 			"在重复同一方向、换打法、或判断某条路是否已经试过之前调用；返回 lesson/playbook 摘要与来源。",
 		obj(map[string]any{
 			"query":     str("关键词（可选）：匹配摘要/lesson/假设/验收标准"),
@@ -73,7 +73,7 @@ func (t *ToolSet) searchExperience() actool.CoreTool {
 			}
 			playbooks := []db.Playbook{}
 			if MatchPlaybooksFn != nil && (strings.TrimSpace(a.VulnClass) != "" || len(a.Techs) > 0) {
-				playbooks = MatchPlaybooksFn(strings.TrimSpace(a.VulnClass), a.Techs, "", limit)
+				playbooks = MatchPlaybooksFn(t.taskID, strings.TrimSpace(a.VulnClass), a.Techs, "", limit)
 			}
 			out := map[string]any{"lessons": lessons, "playbooks": playbooks}
 			if len(lessons) == 0 && len(playbooks) == 0 {

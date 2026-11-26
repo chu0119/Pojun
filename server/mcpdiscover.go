@@ -18,7 +18,7 @@ import (
 // mcpHealthCheckTimeout 是单个 MCP 启动/手动健康检查的上限。首次 npx 拉包
 // 可能较慢（线上实测 browser MCP 冷启动 26s），30s 会误报；45s 与手动 refresh
 // 的上限一致，同时多个坏服务器串行也不会无限拖住启动自检。
-const mcpHealthCheckTimeout = 45 * time.Second
+const mcpHealthCheckTimeout = 90 * time.Second
 
 // mcpClient is the shared surface of a connected MCP server (stdio, Streamable HTTP,
 // or legacy SSE),
@@ -76,8 +76,9 @@ func (s *Server) discoverAndCacheMCP(ctx context.Context, m *db.MCPServer) error
 		tools = append(tools, db.MCPTool{Name: t.Name(), Description: t.Description()})
 	}
 	if err := s.m.pg.SaveMCPTools(m.ID, tools); err != nil {
-		s.recordMCPHealth(m, false, start, err)
-		return err
+		// 工具缓存落库失败不是连接失败：MCP 已经连通、tools/list 也成功了。
+		// 把它记成健康失败会让一个纯存储抖动触发 10 分钟熔断（v0.9.90）。
+		log.Printf("[mcp] %s 工具缓存写入失败（连接正常，不熔断）: %v", m.Name, err)
 	}
 	s.recordMCPHealth(m, true, start, nil, len(tools))
 	log.Printf("[mcp] %s 健康检查通过：%d 个工具，%dms", m.Name, len(tools), time.Since(start).Milliseconds())

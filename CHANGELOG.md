@@ -2,6 +2,25 @@
 
 本项目的重要变更记录在此文件中，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [Unreleased]
+### 安全与稳定性：内部版 v0.9.68–v0.9.95 首批下放
+
+- **跨任务经验隔离**：`playbooks` 唯一键改为 `(key, root_domain, task_id)`，检索限定本任务；
+  同簇端点/同技术栈变体候选与 `search_experience` 同样按 `assets.task_ids` 过滤，避免
+  A 任务的成功链/证据摘录被 B 任务注入。历史 `task_id IS NULL` 行归 0（不再匹配真实任务），
+  需要保留时可按 `finding_id` 回填。
+- **证据事务与流量 WAL**：`evidence.Record/Bind` 把流量正文准备移出 PG 事务；SQLite DSN
+  增加 `journal_size_limit=512MB`/`wal_autocheckpoint=1000`；reclaim 单步 60s、WAL TRUNCATE
+  10s 超时并处理 busy，避免 `idle in transaction` 与 WAL 无界增长。
+- **归档保留终态经验**：任务归档快照/恢复纳入 `intent_reflections`，恢复不再因外键级联
+  静默清空经验层。
+- **依赖安全**：Go 1.26.11、`klauspost/compress` 1.20.2、Next 16.4.6、zod 4.6.7；
+  `shadcn` 移到 devDependencies（运行期不需要）。
+- **确定性修复**：eval 排除 duplicate/已合并 finding、token 逐列 COALESCE；覆盖率
+  `top_gaps` 进入摘要；`budget_warn` 原样送达 planner；MCP 缓存落库失败不再计健康失败、
+  启动自检 90s；Windows 暂存目录删除有界重试；`pojun-maint` 支持 `database.dsn`。
+- **新增 `threat-modeling` skill**：任务早期资产/信任边界/滥用场景/优先级→意图。
+
 ## [0.4.122] - 2026-11-26
 ### 修复：终态经验落库 UTF-8 截断（#75）
 

@@ -1,6 +1,7 @@
 package db
 
 import (
+	"encoding/json"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -138,18 +139,19 @@ func SimhashHex(v int64) string {
 // SimilarHTTPEndpoints 在同 root_domain 下找与 simhash 汉明距离 ≤6 的同类端点
 // （变体分析意图族的候选来源）。候选集为该域的全部 service 资产（有限集），
 // Go 内存算距离；excludeID 用于排除源资产。
-func (d *DB) SimilarHTTPEndpoints(rootDomain string, simhash int64, excludeID int64, limit int) ([]Asset, error) {
-	if d == nil || rootDomain == "" || simhash == 0 {
+func (d *DB) SimilarHTTPEndpoints(taskID int64, rootDomain string, simhash int64, excludeID int64, limit int) ([]Asset, error) {
+	if d == nil || taskID <= 0 || rootDomain == "" || simhash == 0 {
 		return nil, nil
 	}
 	if limit <= 0 {
 		limit = 2
 	}
 	rows, err := d.Query(`
-SELECT id, url, COALESCE(page_title,''), COALESCE(technologies,'{}'::text[]), simhash
+SELECT id, url, COALESCE(page_title,''), COALESCE(array_to_json(technologies)::text,'[]'), simhash
 FROM assets
-WHERE root_domain = $1 AND type = 'service' AND simhash <> 0 AND id <> $2`,
-		rootDomain, excludeID)
+WHERE root_domain = $1 AND type = 'service' AND simhash <> 0 AND id <> $2
+  AND $3 = ANY(task_ids)`,
+		rootDomain, excludeID, taskID)
 	if err != nil {
 		return nil, err
 	}
@@ -162,9 +164,11 @@ WHERE root_domain = $1 AND type = 'service' AND simhash <> 0 AND id <> $2`,
 	for rows.Next() {
 		var a Asset
 		var sh int64
-		if err := rows.Scan(&a.ID, &a.URL, &a.PageTitle, &a.Technologies, &sh); err != nil {
+		var techJSON string
+		if err := rows.Scan(&a.ID, &a.URL, &a.PageTitle, &techJSON, &sh); err != nil {
 			return nil, err
 		}
+		_ = json.Unmarshal([]byte(techJSON), &a.Technologies)
 		dist := Hamming64(simhash, sh)
 		if dist <= 6 {
 			cands = append(cands, cand{a, dist})
@@ -185,6 +189,41 @@ WHERE root_domain = $1 AND type = 'service' AND simhash <> 0 AND id <> $2`,
 		out = append(out, c.a)
 	}
 	return out, nil
+}
+
+// SimilarTechEndpoints 在同一任务范围内找与本 finding 资产共享技术栈的
+// endpoint/service/app（变体 2.0 的第二条候选来源，v0.9.86）。SimHash 只覆盖
+// “URL 结构同模式”，技术栈交集覆盖“同组件但结构不同”的同源实现。
+func (d *DB) SimilarTechEndpoints(taskID int64, techs []string, excludeID int64, limit int) ([]Asset, error) {
+	if d == nil || taskID <= 0 || len(techs) == 0 {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 2
+	}
+	rows, err := d.Query(`
+SELECT id, COALESCE(url,''), COALESCE(page_title,''), COALESCE(array_to_json(technologies)::text,'[]')
+FROM assets
+WHERE $1 = ANY(task_ids) AND id <> $2
+  AND type IN ('endpoint','service','app')
+  AND technologies && $3::text[]
+ORDER BY (COALESCE(url,'') <> '') DESC, id DESC
+LIMIT $4`, taskID, excludeID, techs, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Asset{}
+	for rows.Next() {
+		var a Asset
+		var techJSON string
+		if err := rows.Scan(&a.ID, &a.URL, &a.PageTitle, &techJSON); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(techJSON), &a.Technologies)
+		out = append(out, a)
+	}
+	return out, rows.Err()
 }
 
 // derefI64 安全解引用 *int64（nil=0）。

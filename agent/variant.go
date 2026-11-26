@@ -25,7 +25,9 @@ var (
 	// FindingAssetInfoFn 查 finding 绑定资产的分簇信息（root_domain/simhash/techs/URL/资产ID）。
 	FindingAssetInfoFn func(findingID int64) (rootDomain string, simhash int64, techs []string, assetURL string, assetID int64, ok bool)
 	// SimilarEndpointsFn 同簇端点查询（db.SimilarHTTPEndpoints）。
-	SimilarEndpointsFn func(rootDomain string, simhash int64, excludeID int64, limit int) ([]db.Asset, error)
+	SimilarEndpointsFn func(taskID int64, rootDomain string, simhash int64, excludeID int64, limit int) ([]db.Asset, error)
+	// SimilarTechEndpointsFn 同技术栈端点查询（db.SimilarTechEndpoints）。
+	SimilarTechEndpointsFn func(taskID int64, techs []string, excludeID int64, limit int) ([]db.Asset, error)
 	// VariantIntentsEnabledFn settings 开关（默认开）。
 	VariantIntentsEnabledFn func() bool
 )
@@ -36,6 +38,38 @@ func ValidateMarkerFromEvidence(evidence string) string {
 		return m
 	}
 	return ""
+}
+
+// variantCandidate 是一条变体候选与它的来源证据（SimHash 同簇 / 同技术栈）。
+type variantCandidate struct {
+	asset db.Asset
+	kind  string
+}
+
+func variantCandidates(taskID int64, rootDomain string, simhash int64, techs []string, srcAssetID int64) []variantCandidate {
+	var cands []variantCandidate
+	seen := map[int64]bool{}
+	if rootDomain != "" && simhash != 0 && SimilarEndpointsFn != nil {
+		if list, err := SimilarEndpointsFn(taskID, rootDomain, simhash, srcAssetID, 2); err == nil {
+			for _, a := range list {
+				if a.ID != 0 && !seen[a.ID] {
+					seen[a.ID] = true
+					cands = append(cands, variantCandidate{asset: a, kind: "endpoint_simhash"})
+				}
+			}
+		}
+	}
+	if len(cands) < 2 && len(techs) > 0 && SimilarTechEndpointsFn != nil {
+		if list, err := SimilarTechEndpointsFn(taskID, techs, srcAssetID, 2-len(cands)); err == nil {
+			for _, a := range list {
+				if a.ID != 0 && !seen[a.ID] {
+					seen[a.ID] = true
+					cands = append(cands, variantCandidate{asset: a, kind: "tech_stack"})
+				}
+			}
+		}
+	}
+	return cands
 }
 
 // DispatchVariantIntests 派发变体验证意图族（报告回调调用）。
@@ -57,19 +91,35 @@ func DispatchVariantIntents(ts *ToolSet, vulnClass, severity, evidence string, f
 		return 0, ""
 	}
 	findingID := findingNodeID
-	rootDomain, simhash, _, _, srcAssetID, ok := FindingAssetInfoFn(findingID)
-	if !ok || rootDomain == "" || simhash == 0 {
+	rootDomain, simhash, techs, _, srcAssetID, ok := FindingAssetInfoFn(findingID)
+	if !ok || srcAssetID == 0 {
 		return 0, ""
 	}
-	cands, err := SimilarEndpointsFn(rootDomain, simhash, srcAssetID, 2)
-	if err != nil || len(cands) == 0 {
+	cands := variantCandidates(ts.taskID, rootDomain, simhash, techs, srcAssetID)
+	if len(cands) == 0 {
 		return 0, ""
 	}
 	dispatched, notes := 0, ""
-	for _, cand := range cands {
-		summary := "变体验证：在 " + cand.URL + " 复现 " + vulnClass + " 同模式（同簇端点，SimHash 汉明距离 ≤6）"
-		hypothesis := "同 root_domain 下结构同模式的端点大概率复用同一实现，存在同漏洞变体"
-		criteria := "validate_finding 在该端点输出 pass 标记（同漏洞类同探针），或确认该端点实现不同/已修复并写回 fact"
+	for _, vc := range cands {
+		cand, kind := vc.asset, vc.kind
+		label := cand.URL
+		if label == "" {
+			label = cand.Domain
+		}
+		if label == "" {
+			label = "资产 #" + strconv.FormatInt(cand.ID, 10)
+		}
+		var summary, hypothesis, criteria string
+		switch kind {
+		case "tech_stack":
+			summary = "变体验证：在 " + label + " 复现 " + vulnClass + " 同模式（同技术栈资产）"
+			hypothesis = "同技术栈（" + strings.Join(techs, "/") + "）的资产常复用同一框架/实现，存在同漏洞变体"
+			criteria = "validate_finding 在该资产输出 pass 标记（同漏洞类同探针），或确认其实现不同/已修复并写回 fact"
+		default:
+			summary = "变体验证：在 " + label + " 复现 " + vulnClass + " 同模式（同簇端点，SimHash 汉明距离 ≤6）"
+			hypothesis = "同 root_domain 下结构同模式的端点大概率复用同一实现，存在同漏洞变体"
+			criteria = "validate_finding 在该端点输出 pass 标记（同漏洞类同探针），或确认该端点实现不同/已修复并写回 fact"
+		}
 		item := intentItem{
 			Summary:         summary,
 			Dimension:       inferDimension(vulnClass + " " + summary),
@@ -81,11 +131,14 @@ func DispatchVariantIntents(ts *ToolSet, vulnClass, severity, evidence string, f
 		}
 		if nid, err := ts.addOneIntent(item); err == nil && nid > 0 {
 			dispatched++
-			notes += " 变体意图 #" + strconv.FormatInt(nid, 10) + " → " + cand.URL + "。"
+			if ts.ts != nil {
+				_ = ts.ts.Link(findingNodeID, "variant_of", nid)
+			}
+			notes += " 变体意图 #" + strconv.FormatInt(nid, 10) + " → " + label + "（" + kind + "）。"
 		}
 	}
 	if dispatched > 0 {
-		notes = "已自动派发 " + itoaVariant(dispatched) + " 条同模式变体验证意图（SimHash 同簇端点）。" + notes
+		notes = "已自动派发 " + itoaVariant(dispatched) + " 条同模式变体验证意图（SimHash 同簇 / 同技术栈）。" + notes
 	}
 	return dispatched, notes
 }
@@ -96,7 +149,7 @@ func itoaVariant(n int) string { return strconv.Itoa(n) }
 var PlaybookInjectEnabledFn func() bool
 
 // MatchPlaybooksFn 检索先例（db.MatchPlaybooks）。nil = 经验层关闭。
-var MatchPlaybooksFn func(vulnClass string, techs []string, rootDomain string, limit int) []db.Playbook
+var MatchPlaybooksFn func(taskID int64, vulnClass string, techs []string, rootDomain string, limit int) []db.Playbook
 
 // TaskRootAndTechsFn 任务根域与资产技术栈快照（planner 注入的匹配键）。
 var TaskRootAndTechsFn func(taskID int64) (rootDomain string, techs []string)
@@ -108,7 +161,7 @@ func renderPlaybookPriorities(taskID int64) string {
 		return ""
 	}
 	rootDomain, techs := TaskRootAndTechsFn(taskID)
-	pbs := MatchPlaybooksFn("", techs, rootDomain, 3) // 空 vulnclass → 走 techs 交集优先
+	pbs := MatchPlaybooksFn(taskID, "", techs, rootDomain, 3) // 空 vulnclass → 走 techs 交集优先
 	if len(pbs) == 0 {
 		return ""
 	}

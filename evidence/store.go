@@ -223,12 +223,15 @@ func (s *Store) prepare(ctx context.Context, refs []db.TrafficRef) ([]db.Prepare
 }
 
 func (s *Store) Record(ctx context.Context, in db.RecordFindingInput, refs []db.TrafficRef) (out *db.RecordedFinding, err error) {
+	// 流量正文的读取/落盘是慢 IO（SQLite + 文件 + 全局写锁），必须放在证据事务
+	// 之外。旧写法先在事务里锁 tasks 行再 prepare，一旦 traffic 的 wmu 被长操作
+	// 占住，就会留下 idle-in-transaction 并拖死所有资产/证据写入（v0.9.77）。
+	prepared, skipped, err := s.prepare(ctx, refs)
+	if err != nil {
+		return nil, err
+	}
 	err = s.DB.WithEvidenceTx(ctx, func(tx *sql.Tx) error {
 		if err := db.LockTaskEvidenceTx(tx, in.TaskID); err != nil {
-			return err
-		}
-		prepared, skipped, err := s.prepare(ctx, refs)
-		if err != nil {
 			return err
 		}
 		out, err = db.RecordFindingTx(ctx, tx, in, prepared)
@@ -252,16 +255,15 @@ func (s *Store) Record(ctx context.Context, in db.RecordFindingInput, refs []db.
 }
 
 func (s *Store) Bind(ctx context.Context, findingID int64, refs []db.TrafficRef) (out *db.FindingTraffic, err error) {
-	var skipped []db.TrafficRef
+	// 与 Record 同理：先准备流量，再开事务，避免慢 IO 持有证据锁。
+	prepared, skipped, err := s.prepare(ctx, refs)
+	if err != nil {
+		return nil, err
+	}
 	err = s.DB.WithEvidenceTx(ctx, func(tx *sql.Tx) error {
 		if err := db.LockFindingEvidenceTx(tx, findingID, nil); err != nil {
 			return err
 		}
-		prepared, skip, err := s.prepare(ctx, refs)
-		if err != nil {
-			return err
-		}
-		skipped = skip
 		if err = db.AddFindingTrafficTx(tx, findingID, prepared); err != nil {
 			return err
 		}

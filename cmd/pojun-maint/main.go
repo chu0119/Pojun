@@ -168,6 +168,7 @@ func loadDSN(path string) (string, error) {
 	}
 	var c struct {
 		Database struct {
+			DSN      string `json:"dsn"`
 			Host     string `json:"host"`
 			Port     int    `json:"port"`
 			User     string `json:"user"`
@@ -180,6 +181,10 @@ func loadDSN(path string) (string, error) {
 		return "", err
 	}
 	d := c.Database
+	// 与 config.PostgresDSN 保持一致：允许 install.sh 之外的发行方式直接写 dsn。
+	if strings.TrimSpace(d.DSN) != "" {
+		return strings.TrimSpace(d.DSN), nil
+	}
 	if d.Host == "" || d.User == "" || d.DBName == "" {
 		return "", fmt.Errorf("config.json 缺少 database 配置")
 	}

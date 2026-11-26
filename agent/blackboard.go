@@ -585,6 +585,15 @@ func sliceMaps(v any) []map[string]any {
 	switch xs := v.(type) {
 	case []map[string]any:
 		return xs
+	case []CoverageGap:
+		out := make([]map[string]any, 0, len(xs))
+		for _, g := range xs {
+			out = append(out, map[string]any{
+				"dimension": g.Dimension, "label": g.Label, "asset_type": g.AssetType,
+				"untested": g.Untested, "samples": g.Samples, "score": g.Score,
+			})
+		}
+		return out
 	case []any:
 		out := make([]map[string]any, 0, len(xs))
 		for _, x := range xs {

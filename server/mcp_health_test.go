@@ -42,8 +42,9 @@ func TestRedactMCPErrorNilSafe(t *testing.T) {
 }
 
 func TestMCPHealthTimeoutBound(t *testing.T) {
-	// 启动自检不能无限等一个挂死的 stdio MCP；30s 是上限。
-	if mcpHealthCheckTimeout <= 0 || mcpHealthCheckTimeout > 60*time.Second {
+	// 启动自检不能无限等一个挂死的 stdio MCP；npx 冷启动实测常需 30–90s，
+	// 上限放宽到 90s（v0.9.90），超过仍需回到有界超时。
+	if mcpHealthCheckTimeout <= 0 || mcpHealthCheckTimeout > 90*time.Second {
 		t.Fatalf("mcpHealthCheckTimeout = %v", mcpHealthCheckTimeout)
 	}
 }

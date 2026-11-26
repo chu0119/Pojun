@@ -139,7 +139,7 @@ SELECT f.id, COALESCE(f.vulnclass,''), COALESCE(f.name,''), COALESCE(f.severity,
        COALESCE((SELECT string_agg(COALESCE(a.url, a.domain, a.ip), ' ')
                    FROM assets a
                   WHERE a.id IN (SELECT jsonb_array_elements_text(f.asset_ids)::bigint)), '')
-FROM findings f WHERE f.task_id=$1 ORDER BY f.id`, taskID)
+FROM findings f WHERE f.task_id=$1 AND f.status <> 'duplicate' AND f.merged_into_id IS NULL ORDER BY f.id`, taskID)
 	if err != nil {
 		return nil, err
 	}
@@ -236,7 +236,9 @@ FROM findings f WHERE f.task_id=$1 ORDER BY f.id`, taskID)
 	// ---- 用量/成本 ----
 	allPriced := true
 	usageRows, err := d.QueryContext(ctx, `
-SELECT COALESCE(model,''), COALESCE(SUM(input_tokens+cache_read+cache_write),0), COALESCE(SUM(output_tokens),0)
+SELECT COALESCE(model,''),
+       COALESCE(SUM(COALESCE(input_tokens,0)+COALESCE(cache_read,0)+COALESCE(cache_write,0)),0),
+       COALESCE(SUM(COALESCE(output_tokens,0)),0)
 FROM llm_usage WHERE task_id=$1::text GROUP BY model ORDER BY model`, taskKey)
 	if err != nil {
 		if !isMissingTable(err) {

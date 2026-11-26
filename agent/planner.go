@@ -244,6 +244,10 @@ func renderTriggers(ts *db.ExplorationStore, evs []TriggerEvent) string {
 			b.WriteString(fmt.Sprintf("\n- 人修改了目标，由「%s」变为「%s」—— 请据新目标调整探索方向（原方向若已不适用请停派）。", ev.OldGoal, ev.NewGoal))
 		case "finding":
 			b.WriteString(fmt.Sprintf("\n- 意图 #%d（%s）的 worker 报告了一个 finding：%s", ev.IntentID, intentSummary(ts, ev.IntentID), ev.Detail))
+		case "budget_warn":
+			// 任务级预算预警（server/task_budget.go）：正文是引擎生成的收敛指令，
+			// 必须原样送达；落 default 会被渲染成「意图 #0 的 worker 结束」，指令全丢。
+			b.WriteString("\n- " + ev.Detail)
 		case "coverage_gap":
 			// 引擎侧覆盖矩阵提醒（server/coverage_nudge.go）：某一类漏洞至今没有
 			// 任何意图覆盖。不是模型自己的判断，是确定性检查的结果，优先级高。

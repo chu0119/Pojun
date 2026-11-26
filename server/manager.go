@@ -2116,7 +2116,7 @@ func (s *taskFileDeleteStage) commit() error {
 	if s == nil || s.done {
 		return nil
 	}
-	err := os.RemoveAll(s.stageDir)
+	err := removeAllRetry(s.stageDir, 4)
 	s.done = true
 	return err
 }
@@ -2144,12 +2144,25 @@ func (s *taskFileDeleteStage) rollback() error {
 		}
 	}
 	if len(errs) == 0 && s.stageDir != "" {
-		if err := os.RemoveAll(s.stageDir); err != nil {
+		if err := removeAllRetry(s.stageDir, 4); err != nil {
 			errs = append(errs, fmt.Errorf("remove task file stage: %w", err))
 		}
 	}
 	s.done = true
 	return errors.Join(errs...)
+}
+
+// removeAllRetry 在 Windows 上重试目录删除：杀毒/索引/句柄释放会让
+// os.RemoveAll 偶发 ENOTEMPTY，稍等即可成功；重试耗尽后仍返回原错误。
+func removeAllRetry(path string, attempts int) error {
+	var err error
+	for i := 0; i < attempts; i++ {
+		if err = os.RemoveAll(path); err == nil {
+			return nil
+		}
+		time.Sleep(time.Duration(25*(i+1)) * time.Millisecond)
+	}
+	return err
 }
 
 // deleteTaskFiles retains the standalone helper contract used by focused tests.

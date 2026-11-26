@@ -56,6 +56,10 @@ type playbookFindingRow struct {
 
 // EnsurePlaybookSchema 建表/索引（幂等，测试与老库共用）。
 func (d *DB) EnsurePlaybookSchema() error {
+	// 幂等迁移（v0.9.70）：playbook 是任务级经验，不是全局共享库。旧表的
+	// 唯一键 (key,root_domain) 会让 A 任务的成功链被 B 任务检索到，steps 里
+	// 还带证据摘录；统一收敛为 (key,root_domain,task_id)。历史 NULL 行归到
+	// task 0（不再匹配任何真实任务），需要保留时按 finding_id 回填。
 	_, err := d.Exec(`
 CREATE TABLE IF NOT EXISTS playbooks (
     id          BIGSERIAL PRIMARY KEY,
@@ -68,13 +72,19 @@ CREATE TABLE IF NOT EXISTS playbooks (
     url_pattern TEXT NOT NULL DEFAULT '',
     steps       JSONB NOT NULL DEFAULT '[]',
     finding_id  BIGINT,
-    task_id     BIGINT,
+    task_id     BIGINT NOT NULL DEFAULT 0,
     used_count  INTEGER NOT NULL DEFAULT 1,
     last_used_at TIMESTAMPTZ,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE UNIQUE INDEX IF NOT EXISTS uq_playbooks_key ON playbooks(key, root_domain);
+ALTER TABLE playbooks ADD COLUMN IF NOT EXISTS task_id BIGINT;
+UPDATE playbooks SET task_id = 0 WHERE task_id IS NULL;
+ALTER TABLE playbooks ALTER COLUMN task_id SET DEFAULT 0;
+ALTER TABLE playbooks ALTER COLUMN task_id SET NOT NULL;
+DROP INDEX IF EXISTS uq_playbooks_key;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_playbooks_key ON playbooks(key, root_domain, task_id);
 CREATE INDEX IF NOT EXISTS idx_playbooks_tech ON playbooks USING gin(techs);
+CREATE INDEX IF NOT EXISTS idx_playbooks_task ON playbooks(task_id, vulnclass);
 `)
 	return err
 }
@@ -151,9 +161,12 @@ func (d *DB) CapturePlaybook(taskID int64, findingID int64, validateMarker strin
 	if len(f.AssetIDs) > 0 {
 		var ids []int64
 		if json.Unmarshal(f.AssetIDs, &ids) == nil && len(ids) > 0 {
-			row := d.QueryRow(`SELECT COALESCE(root_domain,''), COALESCE(url,''), COALESCE(technologies,'{}'::text[]) FROM assets WHERE id=$1`, ids[0])
-			if err := row.Scan(&rootDomain, &url, &techs); err != nil {
+			var techJSON string
+			row := d.QueryRow(`SELECT COALESCE(root_domain,''), COALESCE(url,''), COALESCE(array_to_json(technologies)::text,'[]') FROM assets WHERE id=$1`, ids[0])
+			if err := row.Scan(&rootDomain, &url, &techJSON); err != nil {
 				techs = nil
+			} else {
+				_ = json.Unmarshal([]byte(techJSON), &techs)
 			}
 		}
 	}
@@ -204,7 +217,7 @@ WHERE kind='fact' AND id IN (
 	// severity 取新旧更严重者（Go 侧定级，避免依赖自定义 SQL 函数）。
 	sev := f.Severity
 	var oldSev string
-	_ = d.QueryRow(`SELECT severity FROM playbooks WHERE key=$1 AND root_domain=$2`, key, rootDomain).Scan(&oldSev)
+	_ = d.QueryRow(`SELECT severity FROM playbooks WHERE key=$1 AND root_domain=$2 AND task_id=$3`, key, rootDomain, taskID).Scan(&oldSev)
 	if severityRank(oldSev) < severityRank(sev) {
 		sev = oldSev
 	}
@@ -212,7 +225,7 @@ WHERE kind='fact' AND id IN (
 	err = d.QueryRow(`
 INSERT INTO playbooks(name, key, vulnclass, severity, root_domain, techs, url_pattern, steps, finding_id, task_id)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10)
-ON CONFLICT (key, root_domain) DO UPDATE SET
+ON CONFLICT (key, root_domain, task_id) DO UPDATE SET
     used_count = playbooks.used_count + 1,
     last_used_at = now(),
     techs = (SELECT ARRAY(SELECT DISTINCT unnest(playbooks.techs || EXCLUDED.techs))),
@@ -227,18 +240,18 @@ RETURNING id`,
 
 // MatchPlaybooks 检索同类目标的历史成功先例：vulnclass 精确或技术栈交集，
 // Top limit 按 used_count DESC；root_domain 相同的排前（同目标族可信度最高）。
-func (d *DB) MatchPlaybooks(vulnclass string, techs []string, rootDomain string, limit int) []Playbook {
-	if d == nil || limit <= 0 {
+func (d *DB) MatchPlaybooks(taskID int64, vulnclass string, techs []string, rootDomain string, limit int) []Playbook {
+	if d == nil || taskID <= 0 || limit <= 0 {
 		return nil
 	}
 	rows, err := d.Query(`
-SELECT id, name, vulnclass, severity, COALESCE(root_domain,''), techs, COALESCE(url_pattern,''),
-       steps, used_count, last_used_at
+SELECT id, name, vulnclass, severity, COALESCE(root_domain,''), COALESCE(array_to_json(techs)::text,'[]'),
+       COALESCE(url_pattern,''), steps, used_count, last_used_at, task_id
 FROM playbooks
-WHERE vulnclass = $1
-   OR techs && $2::text[]
-ORDER BY (root_domain = $3) DESC, used_count DESC, last_used_at DESC NULLS LAST
-LIMIT $4`, vulnclass, techs, rootDomain, limit)
+WHERE task_id = $1
+  AND (vulnclass = $2 OR techs && $3::text[])
+ORDER BY (root_domain = $4) DESC, used_count DESC, last_used_at DESC NULLS LAST
+LIMIT $5`, taskID, vulnclass, techs, rootDomain, limit)
 	if err != nil {
 		return nil
 	}
@@ -246,11 +259,13 @@ LIMIT $4`, vulnclass, techs, rootDomain, limit)
 	var out []Playbook
 	for rows.Next() {
 		var p Playbook
+		var techJSON string
 		var stepsJSON []byte
-		if err := rows.Scan(&p.ID, &p.Name, &p.VulnClass, &p.Severity, &p.RootDomain, &p.Techs,
-			&p.URLPattern, &stepsJSON, &p.UsedCount, &p.LastUsedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.VulnClass, &p.Severity, &p.RootDomain, &techJSON,
+			&p.URLPattern, &stepsJSON, &p.UsedCount, &p.LastUsedAt, &p.TaskID); err != nil {
 			continue
 		}
+		_ = json.Unmarshal([]byte(techJSON), &p.Techs)
 		_ = json.Unmarshal(stepsJSON, &p.Steps)
 		out = append(out, p)
 	}

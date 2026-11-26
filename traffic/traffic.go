@@ -132,6 +132,11 @@ const (
 	// reclaimBudget caps one background reclamation. Deleting a busy host can free
 	// gigabytes, and the next deletion resumes wherever this one stopped.
 	reclaimBudget = 5 * time.Minute
+	// reclaimCheckpointTimeout bounds the final WAL truncate. TRUNCATE waits for
+	// every reader to finish its snapshot; a long traffic_search or a leaked rows
+	// iterator would otherwise hold wmu forever and, transitively, every evidence
+	// write that is waiting for the traffic store.
+	reclaimCheckpointTimeout = 10 * time.Second
 )
 
 // TrafficSearchDescription is persisted into the tool catalog for new and
@@ -214,7 +219,7 @@ func Open(dir, addr string) (*Traffic, error) {
 	index := filepath.Join(dir, "_index", "index.sqlite")
 	dsn := index
 	if !strings.ContainsRune(index, '?') {
-		dsn = "file:" + index + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
+		dsn = "file:" + index + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=journal_size_limit(536870912)&_pragma=wal_autocheckpoint(1000)"
 	}
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -299,7 +304,7 @@ func (t *Traffic) initIndex() error {
 	// Re-applied rather than left to the DSN so the bare-DSN fallback in Open is
 	// still correct: journal_mode persists in the file header, which is what every
 	// later connection reads.
-	for _, p := range []string{`PRAGMA journal_mode=WAL`, `PRAGMA busy_timeout=5000`} {
+	for _, p := range []string{`PRAGMA journal_mode=WAL`, `PRAGMA busy_timeout=5000`, `PRAGMA journal_size_limit=536870912`, `PRAGMA wal_autocheckpoint=1000`} {
 		if _, err := conn.ExecContext(ctx, p); err != nil {
 			return err
 		}
@@ -1872,7 +1877,9 @@ func (t *Traffic) reclaim() {
 		merges := reclaimMergeSteps
 		for step := 0; ; step++ {
 			t.wmu.Lock()
-			progressed, err := t.reclaimChunk(ctx, conn, &merges)
+			chunkCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			progressed, err := t.reclaimChunk(chunkCtx, conn, &merges)
+			cancel()
 			t.wmu.Unlock()
 			if err != nil {
 				log.Printf("[traffic] 回收索引空间失败：%v", err)
@@ -1898,8 +1905,16 @@ func (t *Traffic) reclaim() {
 		// would leave the log itself sitting at its high-water mark.
 		t.wmu.Lock()
 		defer t.wmu.Unlock()
-		if _, err := conn.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
-			log.Printf("[traffic] 截断 WAL 失败：%v", err)
+		ckCtx, cancel := context.WithTimeout(context.Background(), reclaimCheckpointTimeout)
+		defer cancel()
+		if _, err := conn.ExecContext(ckCtx, `PRAGMA busy_timeout=5000`); err != nil {
+			log.Printf("[traffic] 设置 WAL 检查点超时失败：%v", err)
+		}
+		var busy, logFrames, checkpointed int
+		if err := conn.QueryRowContext(ckCtx, `PRAGMA wal_checkpoint(TRUNCATE)`).Scan(&busy, &logFrames, &checkpointed); err != nil {
+			log.Printf("[traffic] 截断 WAL 失败（被占用或超时，下轮继续）：%v", err)
+		} else if busy != 0 {
+			log.Printf("[traffic] WAL 截断被读者占用（busy=%d log=%d checkpointed=%d），下轮继续", busy, logFrames, checkpointed)
 		}
 	})
 }
