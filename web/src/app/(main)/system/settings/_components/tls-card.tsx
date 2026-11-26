@@ -319,8 +319,8 @@ export function TLSCard() {
           )}
         </CardTitle>
         <CardDescription>
-          默认以<b>明文 HTTP</b> 提供服务；在此显式启用后，HTTPS 与 HTTP 共用同一端口（默认 8787）， 远程 http://
-          访问会被 301 到 https://，本机回环明文直通，不占用 80 端口。公网 IP 可申请 Let&apos;s Encrypt 免费 IP
+          默认<b>不启用 HTTPS</b>（纯 HTTP，下方可显式开启）。启用后 HTTPS 与 HTTP 共用同一端口（默认 8787）：远程
+          http:// 访问会被 301 到 https://，本机回环明文直通，不占用 80 端口。公网 IP 可申请 Let&apos;s Encrypt 免费 IP
           证书；内网用自签；域名可导入现有证书或走 ACME。
         </CardDescription>
       </CardHeader>
