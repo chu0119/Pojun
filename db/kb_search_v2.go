@@ -21,26 +21,44 @@ import (
 	"unicode/utf8"
 )
 
-// Search 是 agent 检索入口：默认 auto（v2 失败回退 legacy）。
+// Search 是 agent 检索入口：默认 auto（v2 失败/0 命中回退 legacy）。
+// 日志只在拿到最终结果后写一次，避免 v2 0 命中 + legacy 命中时把
+// 零结果率记成 100%。
 func (s *KBStore) Search(q KBSearchQuery) ([]*KBSearchHit, error) {
+	started := time.Now()
 	mode := strings.ToLower(strings.TrimSpace(q.Mode))
+	query := strings.TrimSpace(q.Query)
 	if mode == "legacy" {
-		return s.searchLegacy(q)
+		hits, err := s.searchLegacy(q)
+		if err != nil {
+			return nil, err
+		}
+		if !q.NoLog {
+			s.logRetrieval(q, query, len(hits), hits,
+				int(time.Since(started).Milliseconds()), "legacy")
+		}
+		return hits, nil
 	}
-	hits, err := s.searchV2(q)
-	if err != nil {
-		return s.searchLegacy(q)
-	}
-	if len(hits) == 0 && strings.TrimSpace(q.Query) != "" {
+	hits, candidates, err := s.searchV2(q)
+	chosen := "v2"
+	if err != nil || (len(hits) == 0 && query != "") {
 		// 存量/同步行 search_text 为空时 v2 会 0 命中；先回退 legacy，
 		// 启动回填完成后再走 v2。不能只靠「有一行非空」判断。
-		return s.searchLegacy(q)
+		var legacy []*KBSearchHit
+		legacy, err = s.searchLegacy(q)
+		if err != nil {
+			return nil, err
+		}
+		hits, candidates, chosen = legacy, len(legacy), "legacy"
+	}
+	if !q.NoLog {
+		s.logRetrieval(q, query, candidates, hits,
+			int(time.Since(started).Milliseconds()), chosen)
 	}
 	return hits, nil
 }
 
-func (s *KBStore) searchV2(q KBSearchQuery) ([]*KBSearchHit, error) {
-	started := time.Now()
+func (s *KBStore) searchV2(q KBSearchQuery) ([]*KBSearchHit, int, error) {
 	if q.Limit <= 0 {
 		q.Limit = 8
 	}
@@ -50,23 +68,23 @@ func (s *KBStore) searchV2(q KBSearchQuery) ([]*KBSearchHit, error) {
 	query := strings.TrimSpace(q.Query)
 	if query == "" && len(q.Tags) == 0 && len(q.Products) == 0 &&
 		len(q.VulnClasses) == 0 && len(q.CVEIDs) == 0 {
-		return []*KBSearchHit{}, nil
+		return []*KBSearchHit{}, 0, nil
 	}
 
 	conds, args := kbBaseConds(q)
 	lexical, err := s.kbLexicalCandidates(query, conds, args)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	structured, err := s.kbStructuredCandidates(q, conds, args)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	var usage []*KBEntry
 	if query == "" {
 		usage, err = s.kbUsageCandidates(conds, args)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	}
 
@@ -114,11 +132,7 @@ func (s *KBStore) searchV2(q KBSearchQuery) ([]*KBSearchHit, error) {
 	if len(out) > q.Limit {
 		out = out[:q.Limit]
 	}
-	if !q.NoLog {
-		s.logRetrieval(q, query, len(lexical)+len(structured)+len(usage), out,
-			int(time.Since(started).Milliseconds()))
-	}
-	return out, nil
+	return out, len(lexical) + len(structured) + len(usage), nil
 }
 
 func kbBaseConds(q KBSearchQuery) ([]string, []any) {
@@ -230,7 +244,7 @@ func (s *KBStore) scanKBEntries(query string, args ...any) ([]*KBEntry, error) {
 	return out, rows.Err()
 }
 
-func (s *KBStore) logRetrieval(q KBSearchQuery, query string, candidates int, hits []*KBSearchHit, latencyMS int) {
+func (s *KBStore) logRetrieval(q KBSearchQuery, query string, candidates int, hits []*KBSearchHit, latencyMS int, mode string) {
 	ids := make([]int64, 0, len(hits))
 	scores := make([]float64, 0, len(hits))
 	for _, h := range hits {
@@ -246,15 +260,18 @@ func (s *KBStore) logRetrieval(q KBSearchQuery, query string, candidates int, hi
 		// 归因必填：宁可记 unknown，也不要落一行空 actor 让统计看起来正常、实际全空。
 		actor = "unknown"
 	}
+	if strings.TrimSpace(mode) == "" {
+		mode = "v2"
+	}
 	query = utf8Clean(query)
 	filters = jsonbClean(filters)
 	if _, err := s.db.Exec(`INSERT INTO kb_retrieval_logs
 		(actor, task_id, mode, query, tokens, filters, candidates, returned, top_ids, top_scores, latency_ms)
-		VALUES ($1, $2, 'v2', $3, $4::text[], $5::jsonb, $6, $7,
+		VALUES ($1, $2, $11, $3, $4::text[], $5::jsonb, $6, $7,
 		        (SELECT ARRAY(SELECT jsonb_array_elements_text($8::jsonb)::bigint)),
 		        (SELECT ARRAY(SELECT jsonb_array_elements_text($9::jsonb)::real)), $10)`,
 		actor, q.TaskID, query, marshalStringArray(kbTokenize(query)), string(filters),
-		candidates, len(hits), string(rawIDs), string(rawScores), latencyMS); err != nil {
+		candidates, len(hits), string(rawIDs), string(rawScores), latencyMS, mode); err != nil {
 		// 检索本身已经返回；日志写失败只影响归因，不能反过来让搜索失败。
 		// 但静默吞掉会让统计“看起来正常、实际全空”，所以至少留一条服务端日志。
 		log.Printf("[kb] 检索日志写入失败 actor=%q task=%d: %v", actor, q.TaskID, err)

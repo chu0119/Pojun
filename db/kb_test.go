@@ -348,6 +348,44 @@ func TestKBRetrievalLogAttribution(t *testing.T) {
 	}
 }
 
+// v2 0 命中回退 legacy 时只能记一条日志，且记录的是最终结果——否则
+// 「零结果率」会把一次成功检索算成失败。
+func TestKBSearchFallbackLogsFinalResultOnce(t *testing.T) {
+	d := openKBTestDB(t)
+	s := d.KB()
+	if _, err := d.Exec(`DELETE FROM kb_retrieval_logs`); err != nil {
+		t.Fatal(err)
+	}
+	title := fmt.Sprintf("zzkbfallback%d", time.Now().UnixNano())
+	e, err := s.Create(KBEntryInput{Title: title, Detail: "legacy fallback 正文", Status: KBStatusApproved})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanupKBEntry(t, s, e.ID)
+	// 模拟 v2 之前导入的存量行：search_text 为空 → v2 0 命中 → legacy ILIKE 命中。
+	if _, err := d.Exec(`UPDATE kb_entries SET search_text='' WHERE id=$1`, e.ID); err != nil {
+		t.Fatal(err)
+	}
+	hits, err := s.Search(KBSearchQuery{
+		Query: title, Limit: 5, Actor: "fallback-test", TaskID: 900002,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) == 0 {
+		t.Fatal("legacy 回退应命中")
+	}
+	var n, returned int
+	var mode string
+	if err := d.QueryRow(`SELECT count(*), COALESCE(max(returned),0), COALESCE(max(mode),'')
+		FROM kb_retrieval_logs`).Scan(&n, &returned, &mode); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 || returned < 1 || mode != "legacy" {
+		t.Fatalf("回退日志应只有一条且记录最终结果: n=%d returned=%d mode=%q", n, returned, mode)
+	}
+}
+
 func TestKBSearchEmptyKBReturnsExplicitEmpty(t *testing.T) {
 	d := openKBTestDB(t)
 	s := d.KB()
