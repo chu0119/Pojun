@@ -3299,6 +3299,8 @@ func (t *ToolSet) PlannerTools() []actool.CoreTool {
 		t.searchVulns(), t.getVuln(), t.getPoc(), t.scanWithNuclei(), t.netContext(),
 		// search_experience（v0.4.103）：按需检索终态经验与跨任务 playbook。
 		t.searchExperience(),
+		// kb_search / kb_get / kb_mark_used：跨任务实战知识库（内置/人工采纳的条目）。
+		t.kbSearch(), t.kbGet(), t.kbMarkUsed(),
 		// listener_*：回连接收器（红队 C2 前置）——start/stop 走 ask 审批，sessions 只读。
 		t.listenerStart(), t.listenerStop(), t.listenerSessions(),
 		// auth_request：用资产上已登记的凭据组装带认证的请求（横向/越权验证的前提）。

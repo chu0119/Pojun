@@ -734,6 +734,8 @@ func (t *ToolSet) WorkerTools() []actool.CoreTool {
 		t.searchVulns(), t.getVuln(), t.getPoc(), t.scanWithNuclei(), t.netContext(),
 		// search_experience（v0.4.103）：按关键词/维度查本任务终态经验与跨任务成功 playbook。
 		t.searchExperience(),
+		// kb_search / kb_get / kb_mark_used：跨任务实战知识库（内置/人工采纳的条目）。
+		t.kbSearch(), t.kbGet(), t.kbMarkUsed(),
 		// listener_*：回连接收器（红队 C2 前置）——start/stop 走 ask 审批，sessions 只读。
 		t.listenerStart(), t.listenerStop(), t.listenerSessions(),
 		// http_probe（v0.4.27）：批量探活领域工具——替代逐条手写 curl（任务 5 实测
@@ -826,6 +828,8 @@ func (t *ToolSet) MainAgentTools() []actool.CoreTool {
 		t.searchRecentCritical(),
 		// search_experience（v0.4.103）：按需检索终态经验与跨任务 playbook。
 		t.searchExperience(),
+		// kb_search / kb_get / kb_mark_used：跨任务实战知识库（内置/人工采纳的条目）。
+		t.kbSearch(), t.kbGet(), t.kbMarkUsed(),
 	}
 }
 
