@@ -99,7 +99,7 @@ type promptChainMCP struct {
 
 type promptChainSkill struct {
 	Name string `json:"name"`
-	// 完整描述，不做字符截断；一句话用途由界面取首个语义单元、单行视觉省略。
+	// 完整描述，不做字符截断；模型侧的速查索引行只取首个语义单元，页面另行按行截断展示。
 	Description string `json:"description"`
 	InIndex     bool   `json:"in_index"`
 	// 它在速查块里的实际状态：described（有描述）/ name_only（预算用尽只留名称）/

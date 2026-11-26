@@ -82,8 +82,10 @@ SELECT count(*) FROM information_schema.columns
 	if err := insert(base+"-len", strings.Repeat("a", 65536), "append"); err == nil {
 		t.Fatal("65536-char prompt must be rejected")
 	}
-	if err := insert(base+"-max", strings.Repeat("a", 65535), "append"); err != nil {
-		t.Fatalf("65535-char prompt must pass: %v", err)
+	// 用 CJK 钉住「按字符」而不是「按字节」：65535 个三字节字符约 196KB，
+	// 若 CHECK 改成 octet_length，这条会失败。
+	if err := insert(base+"-max", strings.Repeat("好", 65535), "append"); err != nil {
+		t.Fatalf("65535-char (CJK) prompt must pass: %v", err)
 	}
 	if err := insert(base+"-ok", "x", "append"); err != nil {
 		t.Fatalf("valid prompt rejected: %v", err)

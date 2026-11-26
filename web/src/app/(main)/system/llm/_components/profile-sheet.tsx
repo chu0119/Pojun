@@ -191,7 +191,10 @@ export function ProfileSheet({
       retry, presetId: presetIdStore, prompt, promptMode, promptApplyInherited, visionMode,
     });
   const dirty = open && coreSnapshot() !== initialRef.current;
-  const promptChars = Array.from(prompt).length;
+  // 与后端同一口径：先 CRLF→LF、去尾部空白，再按码点计数。否则行尾多打一个空格
+  // 就会让前端提前拦下一个后端本可接受的提示词。
+  const promptNormalized = prompt.replace(/\r\n/g, "\n").replace(/[ \t\r\n]+$/, "");
+  const promptChars = Array.from(promptNormalized).length;
   const promptTooLong = promptMaxRunes > 0 && promptChars > promptMaxRunes;
 
   // 每次打开重灌表单；新建重置向导到第 1 步并拉预设。
