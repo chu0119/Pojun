@@ -40,6 +40,12 @@ func TestScrubImageB64SmallImageBlock(t *testing.T) {
 		if !strings.Contains(got, "omitted") {
 			t.Fatalf("缺少省略标记: %q", got)
 		}
+		// 只替换 payload：块类型与媒体类型仍要可读，否则审计日志失去排障价值。
+		if strings.Contains(raw, `"type":"image"`) {
+			if !strings.Contains(got, `"type":"image"`) || !strings.Contains(got, "image/png") {
+				t.Fatalf("清洗破坏了图片块的元数据: %q", got)
+			}
+		}
 	}
 }
 

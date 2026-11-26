@@ -70,12 +70,15 @@ func scrubImageB64(s string) string {
 		return s
 	}
 	replaceData := func(m string) string {
-		// Keep the `"data":"` prefix, replace the payload up to the closing quote.
-		i := strings.Index(m, `":"`)
+		// Keep everything up to and including `"data":"`, replace the payload up to
+		// the closing quote. LastIndex matters for the struct-shaped match, which
+		// also contains `"type":"image"` ahead of the data field.
+		const marker = `"data":"`
+		i := strings.LastIndex(m, marker)
 		if i < 0 {
 			return m
 		}
-		start := i + 3
+		start := i + len(marker)
 		return m[:start] + `[image omitted ` + strconv.Itoa(len(m)-start-1) + ` bytes]"`
 	}
 	s = imageStructDataRE.ReplaceAllStringFunc(s, replaceData)
