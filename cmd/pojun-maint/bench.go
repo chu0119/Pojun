@@ -17,8 +17,11 @@ import (
 //	pojun-maint bench score --config ... --scenario dvwa-sqli-xss --task 18 [--out run.json]
 //	pojun-maint bench validate [--scenario <dir>|builtin-id]
 //	pojun-maint bench compare --a run-a.json --b run-b.json [--out diff.json] [--markdown diff.md]
+//	pojun-maint bench retrieval --config ... [--golden golden.jsonl] [--out metrics.json] [--build-golden]
 //
 // score 只读任务数据：不重跑 agent、不改 DB、不发网络请求。
+// retrieval 只读知识库：默认跑 eval.BuiltinGoldenQueries()（3 个随包 kb-pack 的
+// 小样本），不访问外网；--build-golden 用库内 approved 标题生成自检基线。
 func runBench(args []string) {
 	if len(args) == 0 {
 		benchUsage()
@@ -33,6 +36,9 @@ func runBench(args []string) {
 	aPath := fs.String("a", "", "compare: 基线 RunResult JSON")
 	bPath := fs.String("b", "", "compare: 新 RunResult JSON")
 	mdPath := fs.String("markdown", "", "compare: 额外输出 Markdown 报告")
+	goldenPath := fs.String("golden", "", "retrieval: golden JSONL（缺省用内置小样本）")
+	buildGolden := fs.Bool("build-golden", false, "retrieval: 用库内 approved 标题生成 golden JSONL 到 --out")
+	goldenLimit := fs.Int("limit", 120, "retrieval --build-golden: 最多生成条数")
 	_ = fs.Parse(args[1:])
 
 	switch sub {
@@ -110,6 +116,58 @@ func runBench(args []string) {
 		}
 		if cmp.Regressed {
 			os.Exit(1) // 回归时给 CI/脚本一个非零退出码
+		}
+
+	case "retrieval":
+		dsn, err := loadDSN(*cfgPath)
+		if err != nil {
+			fail(err)
+		}
+		pg, err := db.OpenReadOnly(dsn)
+		if err != nil {
+			fail(fmt.Errorf("连接数据库失败：%w", err))
+		}
+		defer pg.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		defer cancel()
+		if *buildGolden {
+			queries, err := eval.BuildGoldenFromKB(ctx, pg.KB(), *goldenLimit)
+			if err != nil {
+				fail(err)
+			}
+			if *outPath == "" {
+				fail(fmt.Errorf("--build-golden 需要 --out <golden.jsonl>"))
+			}
+			if err := eval.WriteGoldenQueries(*outPath, queries); err != nil {
+				fail(err)
+			}
+			fmt.Printf("已用 %d 条 approved 标题生成 %s\n", len(queries), *outPath)
+			return
+		}
+		queries := eval.BuiltinGoldenQueries()
+		source := "builtin"
+		if strings.TrimSpace(*goldenPath) != "" {
+			queries, err = eval.LoadGoldenQueries(*goldenPath)
+			if err != nil {
+				fail(err)
+			}
+			source = *goldenPath
+		}
+		if len(queries) == 0 {
+			fail(fmt.Errorf("没有可评测的查询（golden 为空）"))
+		}
+		m := eval.EvaluateQueries(ctx, pg.KB(), queries)
+		fmt.Printf("检索评测：%d 条查询（来源 %s）\n", len(queries), source)
+		fmt.Printf("Recall@5=%.3f  MRR@10=%.3f  nDCG@10=%.3f  无结果率=%.1f%%  P95=%.0fms\n",
+			m.RecallAt5, m.MRRAt10, m.NDCGAt10, m.NoResultRate*100, m.P95LatencyMS)
+		if m.RecallAt5 == 0 && m.NoResultRate > 0 {
+			fmt.Println("提示：内置样本依赖随包 kb-pack 已导入且为 approved。若库是空的，先运行 pojun-maint library import。")
+		}
+		if *outPath != "" {
+			if err := eval.WriteJSON(*outPath, m); err != nil {
+				fail(err)
+			}
+			fmt.Printf("已写入 %s\n", *outPath)
 		}
 
 	default:
@@ -194,5 +252,7 @@ func benchUsage() {
 	fmt.Fprintln(os.Stderr, `usage:
   pojun-maint bench score    --config <config.json> --scenario <builtin-id|scenario.json> --task <id> [--out run.json]
   pojun-maint bench validate [--scenario <scenarios-dir|builtin-id>]
-  pojun-maint bench compare  --a <baseline.json> --b <new.json> [--out diff.json] [--markdown diff.md]`)
+  pojun-maint bench compare  --a <baseline.json> --b <new.json> [--out diff.json] [--markdown diff.md]
+  pojun-maint bench retrieval --config <config.json> [--golden <golden.jsonl>] [--out metrics.json]
+  pojun-maint bench retrieval --config <config.json> --build-golden --out <golden.jsonl> [--limit 120]`)
 }
