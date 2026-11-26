@@ -2,7 +2,7 @@
 
 本项目的重要变更记录在此文件中，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
-## [Unreleased]
+## [0.4.123] - 2026-11-26
 ### 能力：资源自适应（opt-in，内部版 v0.9.73 下放）
 
 - **默认零变化**：`resource_auto_tune` 缺省 `false`。未开启时只做只读容量探测与展示，

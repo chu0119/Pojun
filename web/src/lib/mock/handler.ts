@@ -1025,7 +1025,7 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
   const task = q.get("task") ?? undefined;
 
   // demo 顶栏展示当前版本；真实后端由 ldflags 注入。
-  if (path === "/version" && m === "GET") return { service: "pojun", version: "v0.4.122" };
+  if (path === "/version" && m === "GET") return { service: "pojun", version: "v0.4.123" };
   if (path === "/hostenv/status" && m === "GET") return structuredClone(hostenvStatus);
   if (path === "/vulnintel/status" && m === "GET") return structuredClone(D.vulnintelStatus);
 

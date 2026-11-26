@@ -1049,7 +1049,7 @@ curl -fsSL .../install.sh | sudo bash -s -- --mode=docker
 
 ```bash
 git clone --depth 1 https://github.com/chu0119/Pojun.git pojun && cd pojun
-cp .env.example .env      # 至少改 POSTGRES_PASSWORD；POJUN_TAG 可钉到具体版本（如 v0.4.122）
+cp .env.example .env      # 至少改 POSTGRES_PASSWORD；POJUN_TAG 可钉到具体版本（如 v0.4.123）
 docker compose up -d      # → http://127.0.0.1:8787
 ```
 
@@ -1325,7 +1325,7 @@ HexStrike 工具桥（150+ 安全工具桥接）/ Context7 文档检索。
 | 交付 | Markdown | 公文级 Word（封面/目录/复测/流量证据/修复路线图）+ 一漏洞一 docx |
 | 部署 | 多服务 / K8s 依赖 | Go 单体 + PostgreSQL + 内嵌前端；单机可跑 |
 
-### 截至 v0.4.122，只有破军把它们放进同一条闭环
+### 截至 v0.4.123，只有破军把它们放进同一条闭环
 
 这里说「只有」不是营销口号，而是指**组合能力**：单独看每一项都能找到相似实现，
 但同时满足「目标闸门 + 证据分级 + 确定性回归 + 上下文分层 + 范围硬约束 + 出口回执
