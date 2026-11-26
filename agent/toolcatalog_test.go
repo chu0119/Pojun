@@ -51,6 +51,11 @@ func TestBuiltinToolSeeds(t *testing.T) {
 			t.Errorf("SDK tool %q should not be seeded", k)
 		}
 	}
+	// view_image 是能力型工具（按当前 profile 是否支持视觉逐 agent 装配），刻意
+	// 不入表：入表后 ToolResolve 会按 DB 绑定丢弃 chat 自定义 agent 的那一份。
+	if _, ok := byKey["view_image"]; ok {
+		t.Error("view_image 不应入 tools 目录（无 DB 行才能穿透 ToolResolve）")
+	}
 }
 
 // TestDecorateToolInjectsDefaults verifies a schema "default" fills a missing param

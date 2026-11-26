@@ -59,6 +59,16 @@ func builtinToolsByAgent() map[string][]actool.CoreTool {
 // 是主因)。误判兜底:goal_met 的 reason 有提示词约束,人工可从归档/已修复再发起复测翻案。
 var defaultUnbound = map[string]bool{}
 
+// unseededTools 是不进 tools 表的「能力型」工具：它们由代码按运行配置（当前
+// profile 是否支持视觉）逐个 agent 决定是否装配，而不是靠 DB 绑定。
+// 一旦入表，ToolResolve 那条「未绑定本 agent 即丢弃」会把 chat 里的自定义
+// agent（auto/pentest/reporter/任意 key）刚追加的 view_image 全部丢掉——而那些
+// key 永远不会出现在任何 seed 的 Agents 里。没有 DB 行 = ToolResolve 原样放行，
+// 与 SDK DefaultTools 同一处理方式；工具自身在非视觉配置下给可操作错误。
+var unseededTools = map[string]bool{
+	"view_image": true,
+}
+
 // BuiltinToolSeeds 把各 agent 的内置工具集去重合并成 seed 列表：同名工具（如 list_assets
 // 多个 agent 都有）合成一条，Agents 取并集；defaultUnbound 里的工具则强制绑定为空。
 func BuiltinToolSeeds() []ToolSeed {
@@ -73,6 +83,9 @@ func BuiltinToolSeeds() []ToolSeed {
 	var keys []string
 	for _, ak := range order {
 		for _, t := range byAgent[ak] {
+			if unseededTools[t.Name()] {
+				continue
+			}
 			a, ok := m[t.Name()]
 			if !ok {
 				a = &acc{tool: t}
