@@ -2784,3 +2784,88 @@ export interface KnowledgeRetrievalStats {
   actors: number;
   attributed_rate: number;
 }
+
+/** 资源自适应（GET/PUT /api/resource）。 */
+export interface ResourceCapacity {
+  cpu_cores: number;
+  mem_total: number;
+  mem_available: number;
+  mem_current: number;
+  disk_total: number;
+  disk_free: number;
+  load1: number;
+  cgroup_v2: boolean;
+  in_container: boolean;
+  mem_from_cgroup?: boolean;
+  cpu_from_cgroup?: boolean;
+  warnings?: string[];
+  detected_at?: string;
+}
+
+export interface ResourcePlan {
+  enabled: boolean;
+  mode: "auto" | "manual" | string;
+  workers: number;
+  task_concurrency: number;
+  max_jobs: number;
+  job_max_per_task: number;
+  job_memory_mb: number;
+  job_cpu_percent: number;
+  job_runtime_s: number;
+  scanner_scale: number;
+  gomemlimit_mb: number;
+  gomaxprocs: number;
+  cracker_workload: number;
+  cracker_runtime_s: number;
+  reasons?: string[];
+  generated_at?: string;
+}
+
+export interface ResourceManual {
+  workers?: number;
+  max_jobs?: number;
+  job_max_per_task?: number;
+  job_memory_mb?: number;
+  job_cpu_percent?: number;
+  scanner_scale?: number;
+  gomemlimit_mb?: number;
+  gomaxprocs?: number;
+  cracker_workload?: number;
+  cracker_runtime_s?: number;
+}
+
+export interface ResourceSettings {
+  auto_tune: boolean;
+  mode: "auto" | "manual";
+  threshold_high: number;
+  threshold_critical: number;
+  auto_pause_scans: boolean;
+  manual: ResourceManual;
+}
+
+/** 生效值：与计划分开，因为显式 workers / 任务并发设置优先于计划。 */
+export interface ResourceEffective {
+  workers?: number;
+  task_concurrency_enabled?: boolean;
+  task_concurrency_limit?: number;
+  job_gate?: boolean;
+  scanner_scale?: number;
+  gomaxprocs?: number;
+  gomemlimit_mb?: number;
+}
+
+export interface ResourceStatus {
+  capacity: ResourceCapacity;
+  plan: ResourcePlan;
+  initialized: boolean;
+  settings: ResourceSettings;
+  effective?: ResourceEffective;
+  usage: {
+    mem_current: number;
+    mem_total: number;
+    load1: number;
+    cgroup_v2: boolean;
+    container: boolean;
+  };
+  generated_at?: string;
+}

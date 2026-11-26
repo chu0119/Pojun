@@ -87,6 +87,8 @@ import type {
   NotificationMeta,
   PromptVar,
   PromptVersion,
+  ResourceManual,
+  ResourceStatus,
   SessionTokenUsage,
   Settings,
   LLMPreset,
@@ -991,6 +993,18 @@ export const api = {
   // ---- app settings (runtime toggles) ----
   settings: () => get<Settings>(`/settings`),
   setSettings: (patch: Partial<Settings>) => put<Settings>(`/settings`, patch),
+
+  // ---- 资源自适应（容量探测 / 计划 / 手工覆盖） ----
+  resourceStatus: () => get<ResourceStatus>(`/resource`),
+  updateResource: (patch: {
+    auto_tune?: boolean;
+    mode?: "auto" | "manual";
+    threshold_high?: number;
+    threshold_critical?: number;
+    auto_pause_scans?: boolean;
+    manual?: ResourceManual;
+  }) => put<ResourceStatus>(`/resource`, patch),
+  retuneResource: () => post<ResourceStatus>(`/resource/retune`, {}),
 
   // ---- 内置 HTTPS 与证书管理 ----
   tlsStatus: () => get<TLSStatusResp>(`/tls/status`),

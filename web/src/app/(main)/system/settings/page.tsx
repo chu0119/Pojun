@@ -19,6 +19,7 @@ import type { Settings } from "@/lib/types";
 
 import { UpdateCard } from "./_components/update-card";
 import { TLSCard } from "./_components/tls-card";
+import { ResourceCard } from "./_components/resource-card";
 
 export default function SystemSettingsPage() {
   const [trafficCapture, setTrafficCapture] = React.useState(false);
@@ -1110,6 +1111,8 @@ export default function SystemSettingsPage() {
             </div>
           </CardContent>
         </Card>
+
+        <ResourceCard className="order-26 lg:col-span-2" />
 
         <Card className="order-23">
           <CardHeader>
