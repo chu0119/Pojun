@@ -94,6 +94,8 @@ import type {
   LLMPreset,
   LLMModelMeta,
   LLMCheckResult,
+  LLMURLHint,
+  LLMProbeResult,
   AuthCheckResult,
   TaskCredential,
   TaskCredentialCheck,
@@ -1388,7 +1390,7 @@ export const api = {
     prompt_apply_inherited?: boolean;
     // 视觉三态：""=自动/on=支持/off=不支持
     vision_mode?: "" | "on" | "off";
-  }) => post<{ id: number }>("/llm/profiles", p),
+  }) => post<{ id: number; base_url?: string; normalized?: boolean; note?: string }>("/llm/profiles", p),
   deleteLLMProfile: (id: string) => del<{ deleted: number }>(`/llm/profiles/${id}`),
   activateLLMProfile: (id: string) => post<{ ok: boolean }>("/llm/profiles/active", { id: Number(id) }),
   // 「测试视觉」：发一张 64×64 纯红 PNG 问颜色，确认模型/网关真的能读图。
@@ -1415,9 +1417,42 @@ export const api = {
       user_agent,
     }),
 
-  // 厂商知识层（v0.4.91）：预设清单 / 模型元数据推断 / 连通分诊
+  // 厂商知识层（v0.4.91）：预设清单 / 模型元数据推断 / 连通分诊 / 地址归一与探测
   llmPresets: () => get<{ presets: LLMPreset[] }>("/llm/presets"),
-  llmModelMeta: (model: string) => get<LLMModelMeta>(`/llm/model-meta?model=${encodeURIComponent(model)}`),
+  llmModelMeta: (model: string, format = "") =>
+    get<LLMModelMeta>(
+      `/llm/model-meta?model=${encodeURIComponent(model)}${format ? `&format=${encodeURIComponent(format)}` : ""}`,
+    ),
+  // Base URL 失焦提示：纯本地归一 + 协议建议（不发网络请求）。
+  llmURLHint: (format: string, base_url: string, model = "") =>
+    post<LLMURLHint>("/llm/url-hint", { format, base_url, model }),
+  // 自动探测可用组合（当前协议×地址候选 + 备选协议，最多 4 组，总预算 25s）。
+  llmProbe: (
+    provider: string,
+    model: string,
+    base_url: string,
+    api_key: string,
+    proxy = "",
+    thinking_type = "",
+    reasoning_effort = "",
+    profile_id?: number,
+    streaming?: boolean,
+    session_header_key = "",
+    user_agent = "",
+  ) =>
+    post<LLMProbeResult>("/llm/probe", {
+      provider,
+      model,
+      base_url,
+      api_key,
+      proxy,
+      thinking_type,
+      reasoning_effort,
+      profile_id,
+      streaming,
+      session_header_key,
+      user_agent,
+    }),
   llmCheck: (provider: string, base_url: string, api_key: string, proxy = "", profile_id?: number, user_agent = "") =>
     post<LLMCheckResult>("/llm/check", {
       provider,

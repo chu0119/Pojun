@@ -1474,11 +1474,52 @@ export interface LLMModelMeta {
   model: string;
   context_k: number;
   max_output_k?: number;
+  /** 建议的输出上限（只填空值，不覆盖用户手改）。 */
+  max_tokens?: number;
+  /** 建议的输出上限字段名（openai 协议的 reasoning 模型用 max_completion_tokens）。 */
+  max_tokens_field?: string;
+  thinking_type?: string;
+  reasoning_effort?: string;
   reasoning: boolean;
   source: "meta" | "preset" | "none";
   // 自动档的真实结论（配置页即时显示）：vision_source 含义同 LLMProfile。
   vision?: boolean;
   vision_source?: "profile" | "probe" | "preset" | "name" | "default";
+}
+
+/** POST /api/llm/url-hint —— Base URL 失焦时的本地归一结论（不发网络请求）。 */
+export interface LLMURLHint {
+  normalized: string;
+  changed: boolean;
+  /** true=修正无歧义，可直接写回输入框；false=只提示。 */
+  confident: boolean;
+  note?: string;
+  /** 协议建议（空=无强信号）；切换必须由用户确认。 */
+  suggested_format?: "" | "anthropic" | "openai" | "openai-responses";
+  suggested_base_url?: string;
+  protocol_reason?: string;
+}
+
+/** POST /api/llm/probe 的一条逐组合结果。 */
+export interface LLMProbeAttempt {
+  provider: string;
+  base_url: string;
+  stage: "models" | "chat";
+  ok: boolean;
+  reachable?: boolean;
+  status_code?: number;
+  error_class?: string;
+  error?: string;
+  models_count?: number;
+}
+
+/** POST /api/llm/probe 的结论：可用组合 + 逐条结果 + 一键修正建议。 */
+export interface LLMProbeResult {
+  ok: boolean;
+  normalized: string;
+  best: { provider: string; base_url: string; latency_ms: number; reply?: string };
+  attempts: LLMProbeAttempt[];
+  suggestion?: { provider: string; base_url: string; reason: string };
 }
 export interface LLMCheckResult {
   ok: boolean;

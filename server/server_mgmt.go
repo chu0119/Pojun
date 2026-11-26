@@ -27,6 +27,7 @@ import (
 	"github.com/Autumn-27/norma/skill"
 	"github.com/chu0119/pojun/agent"
 	"github.com/chu0119/pojun/db"
+	"github.com/chu0119/pojun/llmpresets"
 )
 
 // validSkillName checks the agentskills.io name constraints, widened so a skill can
@@ -1919,6 +1920,28 @@ func (s *Server) pgSaveProfile(w http.ResponseWriter, r *http.Request) {
 	if p.Format != "openai" || p.MaxTokensField != llm.MaxTokensFieldCompletion {
 		p.MaxTokensField = ""
 	}
+	// Base URL 按协议收敛：完整端点去掉后缀、openai 缺版本段补 /v1、anthropic
+	// 去多余 /v1。只确定的部分自动改，落库后测试/运行与用户看到的一致。
+	norm := llmpresets.NormalizeBaseURL(p.Format, p.BaseURL)
+	if norm.Changed {
+		p.BaseURL = norm.Normalized
+	}
+	// 模型参数自动补全：只对**新建**配置填默认值，且只填空值。更新时一律保留
+	// 原值——旧客户端的空串可能代表「用户显式选了协议默认字段名」，服务端没有
+	// touched 信息，替用户改掉就成了「覆盖手改」。编辑路径的补全由前端在选模型
+	// 时按 /api/llm/model-meta 做，用户可亲眼看到并改回。
+	if p.ID == 0 {
+		defaults := llmpresets.LookupModelDefaults(p.Model, p.Format)
+		if p.ContextWindowK <= 0 && defaults.ContextK > 0 {
+			p.ContextWindowK = defaults.ContextK
+		}
+		if p.MaxTokens == 0 && defaults.MaxTokens > 0 {
+			p.MaxTokens = defaults.MaxTokens
+		}
+		if p.Format == "openai" && p.MaxTokensField == "" && defaults.MaxTokensField != "" {
+			p.MaxTokensField = defaults.MaxTokensField
+		}
+	}
 	// 视觉三态只接受 ''/on/off（DB CHECK 同样约束）；非法值在这里挡掉，别把
 	// SQLSTATE 23514 变成 500。
 	p.VisionMode = strings.ToLower(strings.TrimSpace(p.VisionMode))
@@ -1971,7 +1994,14 @@ func (s *Server) pgSaveProfile(w http.ResponseWriter, r *http.Request) {
 	// 视觉自动探测：配置指纹变化（或从没测过）才在后台补测一次并落库；同配置
 	// 再次保存不消耗任何 token。用户显式选了支持/不支持时由调度器自行跳过。
 	s.scheduleVisionProbe(id)
-	writeJSON(w, 200, map[string]any{"id": id})
+	resp := map[string]any{"id": id}
+	if norm.Changed {
+		// 把归一后的地址带回前端，避免输入框仍显示旧值、用户以为没生效。
+		resp["base_url"] = p.BaseURL
+		resp["normalized"] = true
+		resp["note"] = norm.Note
+	}
+	writeJSON(w, 200, resp)
 }
 
 // pgGetLLMRetryPolicy 返回全局重试策略(五层各自的次数+间隔)。未配置过 → 全零，

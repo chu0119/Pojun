@@ -48,12 +48,11 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
-import type { LLMCheckResult, LLMPreset, LLMProfile, LLMRetryOverride } from "@/lib/types";
+import type { LLMPreset, LLMProfile, LLMRetryOverride, LLMURLHint } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 import { ProfileRetryFields, ZERO_OVERRIDE } from "./retry";
 import {
-  CHECK_CLASS_LABELS,
   CUSTOM_UA,
   EFFORT_LEVELS,
   MAX_TOKENS_FIELDS,
@@ -155,6 +154,8 @@ export function ProfileSheet({
   const [modelVision, setModelVision] = React.useState<{ vision: boolean; source: string } | null>(null);
   const [probeVerdict, setProbeVerdict] = React.useState<{ ok: boolean; reply?: string } | null>(null);
   const [probing, setProbing] = React.useState(false);
+  // Base URL 失焦提示 + 协议建议（本地归一，不发网络请求）。
+  const [urlHint, setUrlHint] = React.useState<LLMURLHint | null>(null);
   const [advOpen, setAdvOpen] = React.useState(false);
   // ── 独立提示词（本配置） ──
   const [prompt, setPrompt] = React.useState("");
@@ -220,6 +221,7 @@ export function ProfileSheet({
     setVisionMode(fromStore(p?.vision_mode));
     setModelVision(null);
     setProbeVerdict(null);
+    setUrlHint(null);
     setApiKey("");
     setKeyHint(p?.api_key_hint ?? "");
     setPrompt(p?.prompt ?? "");
@@ -300,33 +302,74 @@ export function ProfileSheet({
     }
   }
 
-  // 选模型后自动推断 context window（用户手动改过则不覆盖）
-  async function pickModel(m: string) {
-    setModel(m);
-    setModelsOpen(false);
+  // 模型参数自动补全：手填与列表选择共用；只填空值，不覆盖用户手改。
+  // 后端 /llm/model-meta 返回厂商知识层能确定的默认（context / 输出上限 /
+  // max_completion_tokens 字段名 / Anthropic max_tokens）。
+  async function inferModelMeta(m: string, fmt: string = format) {
+    const id = m.trim();
+    if (!id) return;
     try {
-      const meta = await api.llmModelMeta(m);
-      // context 自动填（用户手动改过则不覆盖）
-      if (!cwTouched && meta.source !== "none" && meta.context_k > 0) setCw(String(meta.context_k));
-      // 上限字段名自动推断（v0.4.93）：openai 格式 + reasoning 模型 → max_completion_tokens
-      if (!mtfTouched && format === "openai" && meta.reasoning) setMaxTokensField("max_completion_tokens");
+      const meta = await api.llmModelMeta(id, fmt);
+      if (!cwTouched && meta.context_k > 0) setCw(String(meta.context_k));
+      if (!maxTokensTouched && (meta.max_tokens ?? 0) > 0) {
+        setMaxTokens((prev) => (Number(prev) > 0 ? prev : String(meta.max_tokens)));
+      }
+      if (!mtfTouched && fmt === "openai" && meta.max_tokens_field) {
+        setMaxTokensField(fromStore(meta.max_tokens_field));
+      }
       // 视觉：自动档的真实结论（预设/模型名/默认），配置页立即显示，不用等保存
       setModelVision({ vision: !!meta.vision, source: meta.vision_source ?? "default" });
-      // 模型级参数覆盖（v0.4.96，对照内部版 v0.9.64）：选中的列表模型自带预设级参数时应用
-      const me = activePreset?.models.find((mm) => mm.id.toLowerCase() === m.toLowerCase());
-      if (me) {
-        if (!cwTouched && me.context_k > 0) setCw(String(me.context_k));
-        if (me.max_tokens) setMaxTokens(String(me.max_tokens));
-        if (me.max_tokens_field) setMaxTokensField(fromStore(me.max_tokens_field));
-        if (me.thinking_type) setThinkingType(fromStore(me.thinking_type));
-        if (me.reasoning_effort) setEffort(fromStore(me.reasoning_effort));
-        if (me.user_agent) setUserAgent(me.user_agent);
-      }
     } catch {
       /* 推断失败静默：不影响手填 */
     }
   }
 
+  async function pickModel(m: string) {
+    setModel(m);
+    setModelsOpen(false);
+    void inferModelMeta(m);
+    // 模型级参数覆盖（预设条目自带的推荐参数）：只在用户没手改时应用。
+    const me = activePreset?.models.find((mm) => mm.id.toLowerCase() === m.toLowerCase());
+    if (me) {
+      if (!cwTouched && me.context_k > 0) setCw(String(me.context_k));
+      if (!maxTokensTouched && me.max_tokens) setMaxTokens(String(me.max_tokens));
+      if (!mtfTouched && me.max_tokens_field) setMaxTokensField(fromStore(me.max_tokens_field));
+      if (me.thinking_type) setThinkingType(fromStore(me.thinking_type));
+      if (me.reasoning_effort) setEffort(fromStore(me.reasoning_effort));
+      if (me.user_agent) setUserAgent(me.user_agent);
+    }
+  }
+
+  // Base URL 失焦：归一 + 协议建议；确定性修正直接写回输入框（无歧义）。
+  async function handleBaseUrlBlur() {
+    const raw = baseUrl.trim();
+    if (!raw) {
+      setUrlHint(null);
+      return;
+    }
+    try {
+      const h = await api.llmURLHint(format, raw, model.trim());
+      setUrlHint(h);
+      if (h.changed && h.confident && h.normalized && h.normalized !== raw) {
+        setBaseUrl(h.normalized);
+        toast.info(`已自动补全 Base URL：${h.normalized}`);
+      }
+    } catch {
+      /* 提示失败不影响手填 */
+    }
+  }
+
+  // 协议建议需用户确认：不自动切换（会连带改变请求头与请求体形状）。
+  function applyProtocolSuggestion() {
+    if (!urlHint?.suggested_format) return;
+    setFormat(urlHint.suggested_format);
+    if (urlHint.suggested_base_url) setBaseUrl(urlHint.suggested_base_url);
+    setUrlHint(null);
+    toast.success("已切换协议与地址（尚未保存，请点保存）");
+  }
+
+  // 测试连接改为「探测」：先拉模型列表筛候选，再用最可能的两组做真实推理；
+  // 探测到可用组合（协议/地址不同）时直接写回表单——用户不用自己猜地址。
   async function testConnection() {
     if (testing) return;
     if (!model.trim()) {
@@ -335,16 +378,35 @@ export function ProfileSheet({
     }
     setTesting(true);
     try {
-      const r = await api.testLLM(
+      const r = await api.llmProbe(
         format, model, baseUrl, apiKey, proxy,
         toStore(thinkingType), toStore(effort), profileId,
         streaming, sessionHeaderKey.trim(), userAgent.trim(),
       );
-      if (r.ok)
-        toast.success(`连接成功 · ${r.latency_ms ?? "?"}ms · ${r.model ?? model}`, {
-          description: r.reply ? `回复：${r.reply}` : undefined,
+      if (r.ok && r.best?.base_url) {
+        const corrected =
+          baseUrl.trim().length > 0 &&
+          (r.best.base_url !== baseUrl.trim() || r.best.provider !== format);
+        if (corrected) {
+          setFormat(r.best.provider as typeof format);
+          setBaseUrl(r.best.base_url);
+          setUrlHint(null);
+        }
+        toast.success(
+          `连接成功 · ${r.best.latency_ms || "?"}ms${corrected ? " · 已按探测结果补全地址" : ""}`,
+          { description: r.best.reply ? `回复：${r.best.reply}` : undefined },
+        );
+      } else {
+        const first = r.attempts.find((a) => !a.ok);
+        const detail = r.attempts
+          .slice(0, 4)
+          .map((a) => `${a.provider} ${a.base_url} · ${a.stage}: ${a.ok ? "ok" : a.error || a.error_class || "失败"}`)
+          .join("\n");
+        toast.error(`连接失败：${first?.error || first?.error_class || "未找到可用组合"}`, {
+          description: detail || undefined,
+          duration: 12000,
         });
-      else toast.error(`连接失败：${humanizeTestError(r.error ?? "")}`, { duration: 10000 });
+      }
     } catch (e) {
       toast.error(`测试出错：${humanizeTestError((e as Error).message)}`, { duration: 10000 });
     } finally {
@@ -399,7 +461,7 @@ export function ProfileSheet({
     if (saving) return;
     setSaving(true);
     try {
-      const { id } = await api.saveLLMProfile({
+      const saved = await api.saveLLMProfile({
         ...(profile ? { id: Number(profile.id) } : {}),
         name: name.trim(),
         format,
@@ -428,6 +490,13 @@ export function ProfileSheet({
         prompt_apply_inherited: prompt.trim() ? promptApplyInherited : false,
         vision_mode: toStore(visionMode) as "" | "on" | "off",
       });
+      const id = saved.id;
+      // 保存时后端可能已把地址归一（完整端点去后缀、补 /v1、去多余 /v1）：
+      // 用回传值刷新输入框，避免用户以为没生效。
+      if (saved.base_url) {
+        setBaseUrl(saved.base_url);
+        if (saved.note) toast.info(`保存时已修正 Base URL：${saved.note}`);
+      }
       if (andActivate && isNew) {
         try {
           await api.activateLLMProfile(String(id));
@@ -444,28 +513,61 @@ export function ProfileSheet({
             ? "已保存，激活配置即时生效，无需重启"
             : "已保存",
       );
-      // 保存成功 ≠ 跑得通。两层自动验证（失败不阻止——配置已生效）：
-      // 1) /llm/check 拉模型列表 → key 无效 / 协议路径错 / 网络不通分诊
-      // 2) /llm/test 真实推理 → 最终验收
+      // 保存成功 ≠ 跑得通：用探测接口做最终验收（失败不阻止——配置已生效）。
+      // 探测到可用的协议/地址组合时再保存一次修正值，避免「保存成功、跑起来失败」。
+      // 用保存后回传的归一地址，避免闭包里还是旧值。
+      const effectiveBase = saved.base_url || baseUrl.trim();
       const pid = profile ? profileId : Number(id);
       try {
-        const c: LLMCheckResult = await api.llmCheck(format, baseUrl.trim(), apiKey, proxy.trim(), pid, userAgent.trim());
-        if (!c.ok && (c.status_class === "key_invalid" || c.status_class === "network" || c.status_class === "missing_key")) {
-          // 模型列表不可用≠不可用（网关可不开放列表），但 key/网络类问题立刻讲清楚
-          toast.warning(`已保存，但连通检查未通过：${c.error_human ?? CHECK_CLASS_LABELS[c.status_class]}`, {
-            duration: 12000,
-          });
-          onSaved(String(id));
-          onOpenChange(false);
-          return;
-        }
-        const t = await api.testLLM(
-          format, model.trim(), baseUrl.trim(), apiKey, proxy.trim(),
+        const probe = await api.llmProbe(
+          format, model.trim(), effectiveBase, apiKey, proxy.trim(),
           toStore(thinkingType), toStore(effort), pid,
           streaming, sessionHeaderKey.trim(), userAgent.trim(),
         );
-        if (!t.ok) {
-          toast.error(`已保存，但实测失败：${humanizeTestError(t.error ?? "")}`, { duration: 12000 });
+        if (!probe.ok) {
+          const first = probe.attempts.find((a) => !a.ok);
+          toast.warning(`已保存，但连通探测未通过：${first?.error || first?.error_class || "未找到可用组合"}`, {
+            duration: 12000,
+          });
+        } else if (
+          probe.suggestion &&
+          effectiveBase.length > 0 &&
+          (probe.suggestion.provider !== format || probe.suggestion.base_url !== effectiveBase)
+        ) {
+          try {
+            await api.saveLLMProfile({
+              id,
+              name: name.trim(),
+              format: probe.suggestion.provider,
+              model: model.trim(),
+              base_url: probe.suggestion.base_url,
+              proxy: proxy.trim(),
+              api_key: "",
+              rate_per_second: Number(rps) || 0,
+              rate_per_minute: Number(rpm) || 0,
+              context_window_k: Number(cw) || 0,
+              thinking_type: toStore(thinkingType),
+              reasoning_effort: toStore(effort),
+              priority: Number(priority) || 0,
+              pool_exclude: poolExclude,
+              streaming,
+              max_tokens: Math.max(0, Number(maxTokens) || 0),
+              max_tokens_field: probe.suggestion.provider === "openai" ? toStore(maxTokensField) : "",
+              session_header_key: sessionHeaderKey.trim(),
+              user_agent: userAgent.trim(),
+              retry,
+              preset_id: presetIdStore,
+              prompt,
+              prompt_mode: prompt.trim() ? promptMode : "",
+              prompt_apply_inherited: prompt.trim() ? promptApplyInherited : false,
+              vision_mode: toStore(visionMode) as "" | "on" | "off",
+            });
+            setFormat(probe.suggestion.provider as typeof format);
+            setBaseUrl(probe.suggestion.base_url);
+            toast.success(`已自动修正为可用地址：${probe.suggestion.base_url}`);
+          } catch {
+            toast.warning("探测到可用地址，但自动修正保存失败；请重开配置手动修改");
+          }
         }
       } catch {
         // 验证请求本身失败不该掩盖「保存成功」——配置已生效。
@@ -545,6 +647,8 @@ export function ProfileSheet({
           placeholder="从列表选择或手填模型 ID"
           value={model}
           onChange={(e) => setModel(e.target.value)}
+          // 手填也要补全参数（context / 输出上限 / 字段名），只填空值。
+          onBlur={() => void inferModelMeta(model)}
         />
         {/* modal: Popover 内容被 portal 到 <body>，在 Sheet 滚动锁之外，
             不加 modal 列表能渲染却滚不动。modal 让它自己持有最上层滚动锁。 */}
@@ -593,8 +697,28 @@ export function ProfileSheet({
         className="font-mono"
         placeholder="https://api.openai.com/v1（以厂商文档为准）"
         value={baseUrl}
-        onChange={(e) => setBaseUrl(e.target.value)}
+        onChange={(e) => {
+          setBaseUrl(e.target.value);
+          setUrlHint(null);
+        }}
+        // 失焦即做本地归一：完整端点去后缀 / 补版本段等确定性修正直接写回。
+        onBlur={() => void handleBaseUrlBlur()}
       />
+      {urlHint?.note && (
+        <p className="text-muted-foreground text-xs">
+          {urlHint.note}
+          {urlHint.changed && !urlHint.confident && "（未自动改写，请自行确认）"}
+        </p>
+      )}
+      {urlHint?.suggested_format && urlHint.suggested_format !== format && (
+        <p className="flex flex-wrap items-center gap-1 text-amber-600 text-xs dark:text-amber-400">
+          建议改用 {FORMAT_LABELS[urlHint.suggested_format] ?? urlHint.suggested_format}
+          {urlHint.protocol_reason ? `（${urlHint.protocol_reason}）` : ""}
+          <Button type="button" variant="link" size="sm" className="h-auto p-0" onClick={applyProtocolSuggestion}>
+            应用建议
+          </Button>
+        </p>
+      )}
       {activePreset?.format === "anthropic" && (
         <p className="text-muted-foreground text-xs">该厂商走 Anthropic 协议（x-api-key 头），地址已按官方端点带出。</p>
       )}

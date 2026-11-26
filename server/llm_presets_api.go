@@ -1,11 +1,17 @@
 package server
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/chu0119/pojun/agent"
 	"github.com/chu0119/pojun/llmpresets"
 )
 
@@ -17,25 +23,384 @@ func (s *Server) llmPresets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"presets": llmpresets.All()})
 }
 
-// GET /api/llm/model-meta?model=xxx — 按模型名推断元数据（context window /
-// 是否支持推理）。来源 meta（元数据表）> preset（厂商预设条目）> none（前端
-// 让用户手填）。配置保存时用推断值预填 context_window_k，用户可覆盖。
+// GET /api/llm/model-meta?model=xxx&format=openai — 按模型名推断元数据（context
+// window / 输出上限 / 是否支持推理 / 该用哪个输出上限字段）。
+// 来源 meta（元数据表）> preset（厂商预设条目）> none（前端让用户手填）。
+// 配置保存时只把推断值填进**空值**，用户手改过的字段不会被覆盖。
 func (s *Server) llmModelMeta(w http.ResponseWriter, r *http.Request) {
 	model := strings.TrimSpace(r.URL.Query().Get("model"))
-	e, source := llmpresets.LookupMeta(model)
-	vision, visionSource := llmpresets.ResolveVision(model, "")
+	format := strings.TrimSpace(r.URL.Query().Get("format"))
+	d := llmpresets.LookupModelDefaults(model, format)
 	resp := map[string]any{
 		"model":         model,
-		"context_k":     e.ContextK,
-		"reasoning":     e.Reasoning,
-		"source":        source,
-		"vision":        vision,
-		"vision_source": visionSource,
+		"context_k":     d.ContextK,
+		"reasoning":     d.Reasoning,
+		"source":        d.Source,
+		"vision":        d.Vision,
+		"vision_source": d.VisionSource,
 	}
-	if e.MaxOutput > 0 {
-		resp["max_output_k"] = e.MaxOutput
+	if d.MaxOutputK > 0 {
+		resp["max_output_k"] = d.MaxOutputK
+	}
+	if d.MaxTokens > 0 {
+		resp["max_tokens"] = d.MaxTokens
+	}
+	if d.MaxTokensField != "" {
+		resp["max_tokens_field"] = d.MaxTokensField
+	}
+	if d.ThinkingType != "" {
+		resp["thinking_type"] = d.ThinkingType
+	}
+	if d.ReasoningEffort != "" {
+		resp["reasoning_effort"] = d.ReasoningEffort
 	}
 	writeJSON(w, 200, resp)
+}
+
+// llmURLHint 是 Base URL 输入框的即时提示：纯本地计算，不发网络请求。
+// 返回归一结果、是否需要修改、能否确定（confident），以及协议建议（需用户确认）。
+func (s *Server) llmURLHint(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Format  string `json:"format"`
+		BaseURL string `json:"base_url"`
+		Model   string `json:"model"`
+	}
+	if err := decode(r, &req); err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	norm := llmpresets.NormalizeBaseURL(req.Format, req.BaseURL)
+	suggested, reason := llmpresets.ProtocolHint(req.Format, req.BaseURL, req.Model)
+	resp := map[string]any{
+		"normalized":       norm.Normalized,
+		"changed":          norm.Changed,
+		"confident":        norm.Confident,
+		"note":             norm.Note,
+		"suggested_format": suggested,
+		"protocol_reason":  reason,
+	}
+	if suggested != "" && suggested != req.Format {
+		alt := llmpresets.NormalizeBaseURL(suggested, req.BaseURL)
+		resp["suggested_base_url"] = alt.Normalized
+	}
+	writeJSON(w, 200, resp)
+}
+
+// llmProbeReq 是 /api/llm/probe 的请求体（与 /llm/models、/llm/test 同形）。
+type llmProbeReq struct {
+	Provider         string `json:"provider"`
+	Model            string `json:"model"`
+	BaseURL          string `json:"base_url"`
+	Proxy            string `json:"proxy"`
+	APIKey           string `json:"api_key"`
+	ThinkingType     string `json:"thinking_type"`
+	ReasoningEffort  string `json:"reasoning_effort"`
+	ProfileID        *int64 `json:"profile_id"`
+	Streaming        *bool  `json:"streaming"`
+	SessionHeaderKey string `json:"session_header_key"`
+	UserAgent        string `json:"user_agent"`
+}
+
+type probeCombo struct {
+	Provider string
+	BaseURL  string
+}
+
+// llmProbeChat 是「真实推理」这一步的取数函数；单测替换它即可在本地验证
+// 预算/顺序/建议写回，不打外网。
+var llmProbeChat = agent.TestConnection
+
+// llmProbe 自动探测可用组合：当前协议×地址候选 + 备选协议，先拉模型列表，
+// 再对最可能的两组跑真实推理。全程只读、有总预算，不写库。
+//
+// 预算：总 25s；模型列表每组 8s；真实推理最多 2 组、每组 12s（受总预算约束）。
+// 组合最多 4 组，避免「探测」本身变成一个慢请求。
+func (s *Server) llmProbe(w http.ResponseWriter, r *http.Request) {
+	var req llmProbeReq
+	if err := decode(r, &req); err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	apiKey := strings.TrimSpace(req.APIKey)
+	if req.ProfileID != nil {
+		if p, err := s.m.pg.ProfileByID(*req.ProfileID); err == nil && p != nil {
+			if apiKey == "" {
+				apiKey = p.APIKey
+			}
+			if strings.TrimSpace(req.SessionHeaderKey) == "" {
+				req.SessionHeaderKey = p.SessionHeaderKey
+			}
+			if strings.TrimSpace(req.UserAgent) == "" {
+				req.UserAgent = p.UserAgent
+			}
+		}
+	}
+	if apiKey == "" {
+		s.cfgMu.Lock()
+		apiKey = s.llmCfg.APIKey
+		s.cfgMu.Unlock()
+	}
+	primary := probeFormat(req.Provider)
+	base := defaultModelBase(primary, req.BaseURL)
+	norm := llmpresets.NormalizeBaseURL(primary, base)
+
+	var combos []probeCombo
+	seen := map[string]bool{}
+	add := func(provider, b string) {
+		b = strings.TrimRight(strings.TrimSpace(b), "/")
+		key := provider + "|" + b
+		if b == "" || seen[key] || len(combos) >= 4 {
+			return
+		}
+		seen[key] = true
+		combos = append(combos, probeCombo{Provider: provider, BaseURL: b})
+	}
+	for i, b := range llmpresets.BaseCandidates(primary, base) {
+		if i >= 2 {
+			break
+		}
+		add(primary, b)
+	}
+	if suggested, _ := llmpresets.ProtocolHint(primary, base, req.Model); suggested != "" && suggested != primary {
+		for _, b := range llmpresets.BaseCandidates(suggested, base) {
+			add(suggested, b)
+			break
+		}
+	}
+
+	parent, cancel := context.WithTimeout(r.Context(), 25*time.Second)
+	defer cancel()
+
+	type attempt struct {
+		Provider    string `json:"provider"`
+		BaseURL     string `json:"base_url"`
+		Stage       string `json:"stage"` // models | chat
+		OK          bool   `json:"ok"`
+		Reachable   bool   `json:"reachable,omitempty"`
+		StatusCode  int    `json:"status_code,omitempty"`
+		ErrorClass  string `json:"error_class,omitempty"`
+		Error       string `json:"error,omitempty"`
+		ModelsCount int    `json:"models_count,omitempty"`
+	}
+	var attempts []attempt
+	var modelsOK []probeCombo
+	for _, c := range combos {
+		if parent.Err() != nil {
+			break
+		}
+		ctx, cancel := context.WithTimeout(parent, 8*time.Second)
+		models, code, errMsg, reachable := fetchModelsAt(ctx, c.Provider, c.BaseURL, apiKey, req.Proxy, req.UserAgent)
+		cancel()
+		a := attempt{Provider: c.Provider, BaseURL: c.BaseURL, Stage: "models", OK: len(models) > 0,
+			Reachable: reachable, StatusCode: code, ModelsCount: len(models)}
+		if len(models) == 0 {
+			class, human := classifyModelListFailure(code, errMsg)
+			a.ErrorClass, a.Error = class, human
+			if human == "" {
+				a.Error = sanitizeProbeError(errMsg, apiKey)
+			}
+		} else {
+			modelsOK = append(modelsOK, c)
+		}
+		attempts = append(attempts, a)
+	}
+
+	best := struct {
+		Provider  string `json:"provider"`
+		BaseURL   string `json:"base_url"`
+		LatencyMS int64  `json:"latency_ms"`
+		Reply     string `json:"reply,omitempty"`
+	}{}
+	// 模型列表可达的组合优先；其余作为兜底（有些网关不开放 /models，但聊天可用）。
+	testOrder := combos
+	if len(modelsOK) > 0 {
+		testOrder = append(append([]probeCombo{}, modelsOK...), combos...)
+	}
+	tested := 0
+	model := strings.TrimSpace(req.Model)
+	if model != "" && apiKey != "" {
+		for _, c := range testOrder {
+			if tested >= 2 || parent.Err() != nil {
+				break
+			}
+			dup := false
+			for _, a := range attempts {
+				if a.Stage == "chat" && a.Provider == c.Provider && a.BaseURL == c.BaseURL {
+					dup = true
+				}
+			}
+			if dup {
+				continue
+			}
+			tested++
+			cfg := agent.ConfigFrom(c.Provider, model, c.BaseURL, apiKey, req.Proxy)
+			cfg.ThinkingType = req.ThinkingType
+			cfg.ReasoningEffort = req.ReasoningEffort
+			if req.Streaming != nil {
+				cfg.Stream = *req.Streaming
+			}
+			cfg.SessionHeaderKey = req.SessionHeaderKey
+			cfg.UserAgent = req.UserAgent
+			ctx, cancel := context.WithTimeout(parent, 12*time.Second)
+			lat, reply, err := llmProbeChat(ctx, cfg)
+			cancel()
+			a := attempt{Provider: c.Provider, BaseURL: c.BaseURL, Stage: "chat", OK: err == nil}
+			if err != nil {
+				a.ErrorClass = "chat_failed"
+				a.Error = sanitizeProbeError(err.Error(), apiKey)
+			} else {
+				best.Provider, best.BaseURL = c.Provider, c.BaseURL
+				best.LatencyMS, best.Reply = lat.Milliseconds(), truncateReply(reply)
+			}
+			attempts = append(attempts, a)
+			if err == nil {
+				break
+			}
+		}
+	}
+	// 只拉模型、没填模型名：以模型列表可达作为成功（stage=models）。
+	if model == "" && len(modelsOK) > 0 {
+		best.Provider, best.BaseURL = modelsOK[0].Provider, modelsOK[0].BaseURL
+	}
+	ok := best.BaseURL != ""
+	resp := map[string]any{
+		"ok": ok, "best": best, "attempts": attempts,
+		"normalized": norm.Normalized,
+	}
+	if ok && (best.Provider != primary || best.BaseURL != norm.Normalized) {
+		resp["suggestion"] = map[string]any{
+			"provider": best.Provider, "base_url": best.BaseURL, "reason": "探测到可用组合",
+		}
+	}
+	writeJSON(w, 200, resp)
+}
+
+// sanitizeProbeError 保证探测错误里绝不带出 API Key（响应体若回显了凭据）。
+func sanitizeProbeError(s, apiKey string) string {
+	s = strings.TrimSpace(s)
+	if key := strings.TrimSpace(apiKey); key != "" {
+		s = strings.ReplaceAll(s, key, "***")
+	}
+	const max = 300
+	if len(s) > max {
+		return s[:max] + "…"
+	}
+	return s
+}
+
+func probeFormat(format string) string {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "openai", "openai-responses":
+		return strings.ToLower(strings.TrimSpace(format))
+	}
+	return "anthropic"
+}
+
+// defaultModelBase 给空地址补厂商默认（与 fetchProviderModels 的历史行为一致）。
+func defaultModelBase(provider, base string) string {
+	base = strings.TrimSpace(base)
+	if base != "" {
+		return base
+	}
+	if provider == "openai" || provider == "openai-responses" {
+		return "https://api.openai.com/v1"
+	}
+	return "https://api.anthropic.com"
+}
+
+// fetchModelsAt 在**指定的** Base URL 上拉一次模型列表（探测专用）。
+//
+// 与 fetchProviderModels 的区别：后者会自行拼候选并“第一个非空即止”，探测
+// 需要每一组组合各自的真实结果（含失败原因），所以这里只探一组。reachable 表示
+// 拿到了任意 HTTP 响应——网络不通与 404 是两种完全不同的修复动作。
+func fetchModelsAt(ctx context.Context, provider, baseURL, apiKey, proxy, userAgent string) (models []string, lastCode int, lastErr string, reachable bool) {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	bearerHdr := func() http.Header {
+		h := http.Header{}
+		h.Set("Authorization", "Bearer "+apiKey)
+		return h
+	}
+	anthropicHdr := func() http.Header {
+		h := http.Header{}
+		h.Set("x-api-key", apiKey)
+		h.Set("anthropic-version", "2023-06-01")
+		return h
+	}
+	type candidate struct {
+		url string
+		hdr http.Header
+	}
+	var candidates []candidate
+	switch provider {
+	case "openai", "openai-responses":
+		candidates = append(candidates, candidate{baseURL + "/models", bearerHdr()})
+	default:
+		candidates = append(candidates, candidate{baseURL + "/v1/models", anthropicHdr()})
+		// Anthropic 兼容网关常把模型列表放在 OpenAI 路径（与 fetchProviderModels 同理）。
+		if root := strings.TrimRight(strings.TrimSuffix(baseURL, "/anthropic"), "/"); root != baseURL {
+			candidates = append(candidates,
+				candidate{root + "/models", bearerHdr()},
+				candidate{root + "/v1/models", bearerHdr()},
+			)
+		}
+	}
+
+	transport := &http.Transport{}
+	if p := strings.TrimSpace(proxy); p != "" {
+		if pu, err := url.Parse(p); err == nil {
+			transport.Proxy = http.ProxyURL(pu)
+		}
+	}
+	client := &http.Client{Transport: transport, Timeout: 30 * time.Second}
+
+	emptyOK := false
+	for _, c := range candidates {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.url, nil)
+		if err != nil {
+			lastErr = "构建请求失败: " + err.Error()
+			continue
+		}
+		httpReq.Header = c.hdr
+		if userAgent != "" {
+			httpReq.Header.Set("User-Agent", userAgent)
+		}
+		resp, err := client.Do(httpReq)
+		if err != nil {
+			lastErr = "请求失败: " + err.Error()
+			continue
+		}
+		reachable = true
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+		resp.Body.Close()
+		lastCode = resp.StatusCode
+		if resp.StatusCode != http.StatusOK {
+			lastErr = fmt.Sprintf("API 返回 %d: %s", resp.StatusCode, string(body[:min(len(body), 512)]))
+			continue
+		}
+		var parsed struct {
+			Data []struct {
+				ID string `json:"id"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(body, &parsed); err != nil {
+			lastErr = "解析响应失败: " + err.Error()
+			continue
+		}
+		models = models[:0]
+		for _, m := range parsed.Data {
+			if m.ID != "" {
+				models = append(models, m.ID)
+			}
+		}
+		if len(models) > 0 {
+			return models, lastCode, "", reachable
+		}
+		emptyOK = true
+	}
+	if emptyOK {
+		return nil, lastCode, errAllEmpty, reachable
+	}
+	return nil, lastCode, lastErr, reachable
 }
 
 // POST /api/llm/check — 连通测试第一步（快速分诊）：按协议格式拉模型列表，

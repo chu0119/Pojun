@@ -1231,6 +1231,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/llm/presets", s.llmPresets)
 	mux.HandleFunc("GET /api/llm/model-meta", s.llmModelMeta)
 	mux.HandleFunc("POST /api/llm/check", s.llmCheck)
+	// Base URL 归一提示与自动探测（保存前即时提示 / 保存后实测并写回）。
+	mux.HandleFunc("POST /api/llm/url-hint", s.llmURLHint)
+	mux.HandleFunc("POST /api/llm/probe", s.llmProbe)
 
 	// 拦截规则管理
 	mux.HandleFunc("GET /api/intercept/rules", s.interceptListRules)
