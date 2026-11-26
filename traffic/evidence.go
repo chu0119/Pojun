@@ -11,7 +11,45 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
+
+// PinEvidence marks exchanges referenced by a finding so evidence-only cleanup
+// never removes them. Best-effort and idempotent: a later transaction rollback
+// merely keeps a little extra traffic.
+func (t *Traffic) PinEvidence(ids []string) error {
+	if t == nil || len(ids) == 0 {
+		return nil
+	}
+	t.wmu.Lock()
+	defer t.wmu.Unlock()
+	tx, err := t.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	now := time.Now().Unix()
+	for i, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO evidence_pins(exchange_id, pinned_at) VALUES(?,?)`, id, now); err != nil {
+			return err
+		}
+		if i%500 == 499 {
+			if err := tx.Commit(); err != nil {
+				return err
+			}
+			tx, err = t.db.Begin()
+			if err != nil {
+				return err
+			}
+			defer tx.Rollback()
+		}
+	}
+	return tx.Commit()
+}
 
 // EvidenceExchange exposes complete captured bodies only during the callback.
 // Readers are closed before releasing the writer lock, so host deletion cannot
