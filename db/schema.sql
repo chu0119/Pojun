@@ -1957,3 +1957,15 @@ ALTER TABLE agent_profile_prompts
 ALTER TABLE agent_profile_prompts
     ADD CONSTRAINT agent_profile_prompts_mode_check
     CHECK (prompt_mode IN ('','prepend','append','replace'));
+-- 与 llm_profiles.prompt 同一组不变式：空正文 ⇔ 空模式（空正文=本 Agent 不注入），
+-- 以及 65535 码点上限。保存路径已归一化，这里兜住直接改库的写入。
+ALTER TABLE agent_profile_prompts
+    DROP CONSTRAINT IF EXISTS agent_profile_prompts_shape_check;
+ALTER TABLE agent_profile_prompts
+    ADD CONSTRAINT agent_profile_prompts_shape_check
+    CHECK ((prompt = '') = (prompt_mode = ''));
+ALTER TABLE agent_profile_prompts
+    DROP CONSTRAINT IF EXISTS agent_profile_prompts_len_check;
+ALTER TABLE agent_profile_prompts
+    ADD CONSTRAINT agent_profile_prompts_len_check
+    CHECK (char_length(prompt) <= 65535);

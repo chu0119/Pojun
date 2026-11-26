@@ -166,6 +166,8 @@ export function ProfileSheet({
   const [promptApplyInherited, setPromptApplyInherited] = React.useState(false);
   const [promptOpen, setPromptOpen] = React.useState(false);
   const [boundAgents, setBoundAgents] = React.useState<string[]>([]);
+  // 「影响面」是否已知：loading / error 时一律不能把它当成 0。
+  const [agentsLoad, setAgentsLoad] = React.useState<"loading" | "ready" | "error">("loading");
   // 未显式绑定本配置的 Agent：若本配置是全局激活且「继承时也生效」开着，
   // 它们的运行时选路会落到本配置，改默认提示词也会影响它们（P15/P24）。
   const [unboundAgents, setUnboundAgents] = React.useState<string[]>([]);
@@ -257,6 +259,9 @@ export function ProfileSheet({
     setPromptOpen(!!p?.prompt?.trim());
     setBoundAgents([]);
     setUnboundAgents([]);
+    // Agent 列表是「影响面」的唯一来源：没取到时不能当作 0，否则确认框会被跳过，
+    // 而实际写入会影响全部继承者。
+    setAgentsLoad("loading");
     if (p) {
       const pid = Number(p.id);
       api
@@ -264,8 +269,9 @@ export function ProfileSheet({
         .then((as) => {
           setBoundAgents(as.filter((a) => a.llm_profile_id === pid).map((a) => a.key));
           setUnboundAgents(as.filter((a) => a.llm_profile_id !== pid).map((a) => a.key));
+          setAgentsLoad("ready");
         })
-        .catch(() => {});
+        .catch(() => setAgentsLoad("error"));
     }
     setModels([]);
     setModelsSource("");
@@ -431,6 +437,11 @@ export function ProfileSheet({
     }
     // 默认层不是「本 Agent 的提示词」：保存会同时改变所有继承本配置的 Agent。
     // 在写入前把影响面点名，避免链页/配置页各自以为只改了自己那一份。
+    // 影响面未知（Agent 列表未取到）时拒绝保存：静默按 0 处理会让这次写入不受任何提示。
+    if (promptChanged && agentsLoad !== "ready") {
+      toast.error("无法确认这条默认提示词会影响哪些 Agent（Agent 列表未取到），请稍后重试");
+      return;
+    }
     if (promptChanged && defaultAffected.length > 0) {
       const ok = window.confirm(
         `这会改写配置「${name.trim()}」的默认独立提示词，作用于 ${defaultAffected.length} 个 Agent：${agentListText(defaultAffected)}。\n\n` +
@@ -811,8 +822,14 @@ export function ProfileSheet({
           任务链/全局选路要开启下方「继承时也生效」才会注入。留空 = 不追加。
         </p>
         <p className="rounded-md border bg-muted/20 px-2 py-1.5 text-muted-foreground text-xs leading-relaxed">
-          本默认作用于 <b>{defaultAffected.length}</b> 个 Agent：
-          {defaultAffected.length > 0 ? agentListText(defaultAffected, 10) : "（无）"}
+          {agentsLoad === "ready" ? (
+            <>
+              本默认作用于 <b>{defaultAffected.length}</b> 个 Agent：
+              {defaultAffected.length > 0 ? agentListText(defaultAffected, 10) : "（无）"}
+            </>
+          ) : (
+            <>本默认的作用面未知：Agent 列表未取到。<b>此时保存会被拒绝</b>，请稍后重试。</>
+          )}
           {overriddenAgents.size > 0 && (
             <>
               ；另有 {overriddenAgents.size} 个 Agent 已用 (Agent × 本配置) 覆盖或关闭，不受默认改动影响：
@@ -820,7 +837,8 @@ export function ProfileSheet({
             </>
           )}
           。
-          {!profile?.is_default && "本配置当前不是全局激活；未绑定 Agent 的运行时选路不会落到它。"}
+          {!profile?.is_default &&
+            "本配置当前不是全局激活；未绑定 Agent 的静态选路不落到它（运行时任务链 / 会话 pin 仍可能选中本配置）。"}
         </p>
         <div className="grid gap-1.5">
           <Label htmlFor="p-prompt-mode" className="text-xs">装配位置</Label>

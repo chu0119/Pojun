@@ -1895,14 +1895,19 @@ func (s *Server) pgSaveProfile(w http.ResponseWriter, r *http.Request) {
 	p.APIKey = body.APIKey
 	p.Streaming = body.Streaming == nil || *body.Streaming
 	// 视觉三态：显式携带则采用（含 ""=自动）；缺省则读旧值保留。读取失败拒绝
-	// 保存，避免把用户的 on/off 静默覆盖成自动。
+	// 保存，避免把用户的 on/off 静默覆盖成自动。配置已不存在则按 404 结束——
+	// 这是「保存一个不存在的 id」的同一个契约，不能退化成 500。
 	switch {
 	case body.VisionMode != nil:
 		p.VisionMode = *body.VisionMode
 	case p.ID != 0:
 		old, err := pg.ProfileByID(p.ID)
-		if err != nil || old == nil {
+		if err != nil {
 			writeErr(w, 500, "读取原有视觉设置失败，已拒绝保存以免覆盖")
+			return
+		}
+		if old == nil {
+			writeErr(w, 404, "LLM 配置不存在")
 			return
 		}
 		p.VisionMode = old.VisionMode

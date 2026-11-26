@@ -127,10 +127,8 @@ func (s *Server) pgDeleteAgentPromptOverride(w http.ResponseWriter, r *http.Requ
 		writeErr(w, 400, "profile_id 必须为正整数")
 		return
 	}
-	if p, err := pg.ProfileByID(id); err != nil || p == nil {
-		writeErr(w, 404, "LLM 配置不存在")
-		return
-	}
+	// 不做「配置是否存在」的前置校验：删除配置会级联清掉覆盖行，重试 DELETE 时
+	// 配置已不存在，但终态正是调用方要的——按幂等处理（204），而不是报 404。
 	if _, err := pg.DeleteAgentProfilePrompt(a.Key, id); err != nil {
 		if errors.Is(err, db.ErrAgentNotFound) {
 			writeErr(w, 404, "agent not found")
