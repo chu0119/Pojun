@@ -60,13 +60,15 @@ export function AgentPromptChain({
       if (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) return;
       // 弹层（窄容器检视器、下拉、菜单）自己处理 Esc：只关弹层，不清选中。
       if (t?.closest('[role="dialog"],[role="menu"],[role="listbox"],[data-radix-popper-content-wrapper]')) return;
-      if (!pc.confirmDiscard()) return;
       e.preventDefault();
       const id = pc.sel;
-      pc.select(null);
-      requestAnimationFrame(() => {
-        pc.stageRef.current?.querySelector<HTMLElement>(`[data-id="${CSS.escape(id)}"]`)?.focus();
-      });
+      void (async () => {
+        if (!(await pc.confirmDiscard())) return;
+        void pc.select(null);
+        requestAnimationFrame(() => {
+          pc.stageRef.current?.querySelector<HTMLElement>(`[data-id="${CSS.escape(id)}"]`)?.focus();
+        });
+      })();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -76,8 +78,10 @@ export function AgentPromptChain({
     if (!pc.sel) return;
     const t = e.target as HTMLElement;
     if (t.closest("[data-chain-item]")) return;
-    if (!pc.confirmDiscard()) return;
-    pc.select(null);
+    void (async () => {
+      if (!(await pc.confirmDiscard())) return;
+      void pc.select(null);
+    })();
   };
 
   const body =

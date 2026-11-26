@@ -18,6 +18,11 @@ const buttonVariants = cva(
           "hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:hover:bg-muted/50",
         destructive:
           "bg-destructive/10 text-destructive hover:bg-destructive/20 focus-visible:border-destructive/40 focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:hover:bg-destructive/30 dark:focus-visible:ring-destructive/40",
+        // 实心危险操作（确认删除/回滚这类"主按钮就是危险动作"）。必须是独立变体：
+        // 用 className 覆盖 bg-primary 不生效——asChild(Slot) 只拼接类名、不做
+        // twMerge，同权重下 bg-primary 会赢（曾让"全部吊销"看起来是普通黑按钮）。
+        "destructive-solid":
+          "bg-destructive text-white hover:bg-destructive/90 focus-visible:border-destructive/40 focus-visible:ring-destructive/30 dark:bg-destructive/90 dark:hover:bg-destructive/80",
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {

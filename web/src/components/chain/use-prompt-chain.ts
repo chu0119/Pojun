@@ -8,6 +8,7 @@ import { api } from "@/lib/api";
 import { buildChainModel, type ChainItem, type ChainModel } from "@/lib/chain-model";
 import { setAppDirty } from "@/lib/dirty-state";
 import type { AgentPromptChain as AgentPromptChainData } from "@/lib/types";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 
 // Go 的 nil slice 序列化成 null；mock 模式未知路由返回 {}。取数后统一补形，
 // 下游的 .map/.length/filter 才不用各自判空。
@@ -74,7 +75,7 @@ export interface PromptChainController {
   /** 已有数据时刷新失败：旧数据还在，但可能过期。 */
   stale: boolean;
   sel: string | null;
-  select: (id: string | null) => void;
+  select: (id: string | null) => Promise<void>;
   expanded: ReadonlySet<string>;
   toggle: (id: string) => void;
   focusId: string | null;
@@ -85,14 +86,14 @@ export interface PromptChainController {
   topId: (id: string) => string;
   related: (id: string) => ChainItem[];
   /** 选中并展开分组，必要时把舞台滚到它。 */
-  reveal: (id: string) => void;
+  reveal: (id: string) => Promise<void>;
   reload: () => void;
   copyText: (text: string, what: string) => Promise<void>;
   copyStatic: () => Promise<void>;
   stageRef: React.RefObject<HTMLDivElement | null>;
   setDirty: (v: boolean) => void;
   /** 有未保存草稿时先确认；返回是否继续。 */
-  confirmDiscard: () => boolean;
+  confirmDiscard: () => Promise<boolean>;
 }
 
 export function usePromptChain({
@@ -112,6 +113,7 @@ export function usePromptChain({
 }): PromptChainController {
   const [chain, setChain] = React.useState<AgentPromptChainData | null>(null);
   const [loading, setLoading] = React.useState(false);
+  const confirm = useConfirm();
   const [error, setError] = React.useState("");
   const [stale, setStale] = React.useState(false);
   const [expanded, setExpanded] = React.useState<ReadonlySet<string>>(() => new Set());
@@ -211,25 +213,29 @@ export function usePromptChain({
     [model, item],
   );
 
-  const confirmDiscard = React.useCallback((): boolean => {
+  const confirmDiscard = React.useCallback(async (): Promise<boolean> => {
     if (!dirtyRef.current) return true;
-    const go = window.confirm("独立提示词有未保存的修改，离开会丢失。继续？");
+    // 应用内 AlertDialog，而不是 window.confirm：原生弹窗与产品样式脱节，且会被
+    // 浏览器压制（Chrome「阻止此页面创建更多对话框」）——那正是"点了没反应"的来源。
+    const go = await confirm({
+      title: "放弃未保存的修改？",
+      description: "独立提示词有未保存的修改，离开会丢失。",
+      confirmText: "放弃修改",
+      cancelText: "继续编辑",
+      destructive: true,
+    });
     if (go) {
       dirtyRef.current = false;
       setAppDirty(false);
       return true;
     }
-    // confirm 返回 false 有两种来源：用户点了取消，或浏览器已压制弹窗（Chrome
-    // 的"阻止此页面创建更多对话框"）。两者都必须给出可见反馈，否则就是"点了
-    // 没反应"。
-    toast.warning("未切换：独立提示词有未保存的修改");
     return false;
-  }, []);
+  }, [confirm]);
 
   const select = React.useCallback(
-    (id: string | null) => {
+    async (id: string | null): Promise<void> => {
       // 换一个对象（含回到总览）先拦未保存草稿；再点已选中的对象不拦也不变。
-      if (dirtyRef.current && id !== sel && !confirmDiscard()) return;
+      if (dirtyRef.current && id !== sel && !(await confirmDiscard())) return;
       if (id) {
         const parent = parentOf(id);
         if (parent) {
@@ -271,8 +277,8 @@ export function usePromptChain({
   }, []);
 
   const reveal = React.useCallback(
-    (id: string) => {
-      select(id);
+    async (id: string) => {
+      await select(id);
       requestAnimationFrame(() => {
         stageRef.current
           ?.querySelector<HTMLElement>(`[data-id="${CSS.escape(id)}"]`)

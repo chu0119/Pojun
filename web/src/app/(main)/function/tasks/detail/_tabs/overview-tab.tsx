@@ -29,6 +29,7 @@ import {
 
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   AlertDialog,
@@ -1929,6 +1930,7 @@ function TaskEgressCard({ taskId, status }: { taskId: string; status?: string })
 // TaskAuthCard 显示任务级登录凭据摘要，并提供一次真实登录自检（后端发真实请求，
 // 回显只含状态码/命中说明，不含密码）。未配置凭据时整卡不渲染。
 function TaskAuthCard({ taskId }: { taskId: string }) {
+  const confirm = useConfirm();
   const [cfg, setCfg] = React.useState<TaskAuthConfigView | null>(null);
   const [creds, setCreds] = React.useState<TaskCredential[]>([]);
   const [result, setResult] = React.useState<AuthCheckResult | null>(null);
@@ -1976,7 +1978,13 @@ function TaskAuthCard({ taskId }: { taskId: string }) {
   };
 
   const removeCredential = async (c: TaskCredential) => {
-    if (!window.confirm(`删除凭据「${c.role}」？`)) return;
+    const ok = await confirm({
+      title: "删除凭据？",
+      description: `删除凭据「${c.role}」后，相关登录态需要重新配置。`,
+      confirmText: "删除",
+      destructive: true,
+    });
+    if (!ok) return;
     try {
       await api.deleteTaskCredential(taskId, c.id);
       setCreds((prev) => prev.filter((x) => x.id !== c.id));

@@ -57,7 +57,7 @@ export function RevokeSessionsDialog({
           <AlertDialogCancel disabled={busy}>取消</AlertDialogCancel>
           <AlertDialogAction
             disabled={busy}
-            className="bg-destructive text-white hover:bg-destructive/90"
+            variant="destructive-solid"
             onClick={(e) => {
               e.preventDefault();
               confirm();

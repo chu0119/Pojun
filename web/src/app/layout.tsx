@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 
 import { AssetFailureGuard } from "@/components/runtime/asset-failure-guard";
 import { BuildGuard } from "@/components/runtime/build-guard";
+import { ConfirmProvider } from "@/components/ui/confirm-dialog";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { APP_CONFIG } from "@/config/app-config";
@@ -50,9 +51,11 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
             navbarStyle={navbar_style}
             font={font}
           >
-            {children}
-            <BuildGuard />
-            <AssetFailureGuard />
+            <ConfirmProvider>
+              {children}
+              <BuildGuard />
+              <AssetFailureGuard />
+            </ConfirmProvider>
             <Toaster />
           </PreferencesStoreProvider>
         </TooltipProvider>
