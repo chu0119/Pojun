@@ -1855,6 +1855,12 @@ func (s *Server) pgListProfiles(w http.ResponseWriter, r *http.Request) {
 			p.EffortOverrides = ovs[p.ID]
 		}
 	}
+	// 反向引用：哪些 Agent 覆盖/关闭了本配置的默认提示词。同样只是辅助信息。
+	if ovs, err := pg.AllAgentProfilePrompts(); err == nil {
+		for _, p := range ps {
+			p.PromptOverrides = ovs[p.ID]
+		}
+	}
 	writeJSON(w, 200, map[string]any{"profiles": llmProfileDTOs(ps), "prompt_max_runes": maxProfilePromptRunes})
 }
 
@@ -1939,6 +1945,15 @@ func (s *Server) pgSaveProfile(w http.ResponseWriter, r *http.Request) {
 	// 拒绝保存，否则会以零值回填并静默清空用户长文。
 	oldPrompt := db.PromptInfo{}
 	if p.ID != 0 {
+		// A save targeting a nonexistent profile used to return 200 after
+		// updating zero rows. Resolve it as 404 before touching anything.
+		if existing, err := pg.ProfileByID(p.ID); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		} else if existing == nil {
+			writeErr(w, 404, "LLM 配置不存在")
+			return
+		}
 		var err error
 		oldPrompt, err = pg.ProfilePrompt(p.ID)
 		if err != nil {
@@ -1951,12 +1966,14 @@ func (s *Server) pgSaveProfile(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, promptErr)
 		return
 	}
-	id, err := pg.SaveProfile(&p)
+	// Profile row + default prompt in one transaction: a half-saved profile is
+	// the exact silent state this endpoint must not produce.
+	id, err := pg.SaveProfileWithPrompt(&p, prompt)
 	if err != nil {
-		writeErr(w, 500, err.Error())
-		return
-	}
-	if err := pg.SetProfilePrompt(id, prompt.Text, prompt.Mode, prompt.ApplyInherited); err != nil {
+		if errors.Is(err, db.ErrLLMProfileNotFound) {
+			writeErr(w, 404, "LLM 配置不存在")
+			return
+		}
 		writeErr(w, 500, err.Error())
 		return
 	}

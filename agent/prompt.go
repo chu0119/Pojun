@@ -53,7 +53,7 @@ type ProfilePrompt struct {
 	Mode      string
 	ProfileID int64
 	// Source reports why this overlay is active: agent_binding | conversation_pin |
-	// task_chain | global_profile | preview_override. Empty = no overlay.
+	// task_chain | global_profile | preview_override | agent_override. Empty = no overlay.
 	Source string
 }
 

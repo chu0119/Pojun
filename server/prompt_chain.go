@@ -43,16 +43,36 @@ type promptChainSegment struct {
 type promptChainLLM struct {
 	// ProfileID is the resolved profile (preview/binding/global), even when its
 	// prompt is inactive; PromptActive reports the overlay separately.
-	ProfileID            *int64 `json:"profile_id"`
-	Name                 string `json:"name"`
-	Model                string `json:"model"`
-	Format               string `json:"format"`
-	Source               string `json:"source"`
-	SourceLabel          string `json:"source_label"`
-	PromptMode           string `json:"prompt_mode"`
-	PromptChars          int    `json:"prompt_chars"`
-	PromptApplyInherited bool   `json:"prompt_apply_inherited"`
-	PromptActive         bool   `json:"prompt_active"`
+	ProfileID   *int64 `json:"profile_id"`
+	Name        string `json:"name"`
+	Model       string `json:"model"`
+	Format      string `json:"format"`
+	Source      string `json:"source"`
+	SourceLabel string `json:"source_label"`
+	// PromptScope says where the effective prompt comes from. The effective
+	// fields below (PromptMode/PromptChars) describe the override when one is
+	// present, otherwise the profile default.
+	//   agent_override           — 本 Agent 覆盖（覆盖永远生效，不受继承开关限制）
+	//   agent_disabled           — 本 Agent 显式关闭（覆盖行存在且正文为空）
+	//   profile_default          — 无覆盖，配置默认生效
+	//   profile_default_inactive — 无覆盖，配置默认存在但未生效（继承开关/无 Key/模式非法）
+	//   none                     — 无覆盖且配置未设置默认
+	PromptScope string `json:"prompt_scope"`
+	// PromptMode/PromptChars describe the effective prompt (override or default).
+	PromptMode  string `json:"prompt_mode"`
+	PromptChars int    `json:"prompt_chars"`
+	// PromptText is the effective prompt body (override or default), raw and
+	// without assembly separators. The chain page's override editor edits this;
+	// the segment projection below carries the assembled form instead.
+	PromptText string `json:"prompt_text"`
+	// PromptApplyInherited is the default layer's flag. An override is never
+	// gated by it, so this is context, not an "is it active" answer.
+	PromptApplyInherited bool `json:"prompt_apply_inherited"`
+	PromptActive         bool `json:"prompt_active"`
+	// Default layer, for the override editor's context: what this agent would
+	// inherit when no override row exists.
+	DefaultPromptMode  string `json:"default_prompt_mode"`
+	DefaultPromptChars int    `json:"default_prompt_chars"`
 	// Effort is the reasoning effort this agent would send on this profile
 	// (override → profile → unset), from the same resolver the runtime uses. The
 	// chain view must not invent a second rule.
@@ -173,10 +193,8 @@ func (s *Server) buildAgentPromptChain(pg *db.DB, a *db.Agent, profileParam stri
 	// chain selection only exists at run time and is reported as such.
 	var (
 		profile   *db.LLMProfile
-		stored    db.PromptInfo
-		active    *int64
-		profileID *int64
 		source    = "none"
+		profileID *int64
 	)
 	switch {
 	case previewID != nil:
@@ -187,10 +205,6 @@ func (s *Server) buildAgentPromptChain(pg *db.DB, a *db.Agent, profileParam stri
 			break
 		}
 		profile, source, profileID = p, "preview_override", previewID
-		stored = readPrompt(p.ID)
-		if stored.Text != "" && validProfilePromptMode(stored.Mode) {
-			active = previewID
-		}
 	case a.LLMProfileID != nil:
 		p, err := pg.ProfileByID(*a.LLMProfileID)
 		if err != nil || p == nil {
@@ -199,38 +213,98 @@ func (s *Server) buildAgentPromptChain(pg *db.DB, a *db.Agent, profileParam stri
 			break
 		}
 		profile, source, profileID = p, "agent_binding", a.LLMProfileID
-		stored = readPrompt(p.ID)
-		if stored.Text != "" && validProfilePromptMode(stored.Mode) {
-			active = a.LLMProfileID
-		}
 	default:
 		if p, err := pg.ActiveProfile(); err == nil && p != nil {
-			profile, profileID = p, &p.ID
-			stored = readPrompt(p.ID)
-			// A global profile without an API key cannot serve a run, so
-			// inheritedProfileID() will not load its prompt either. Report it as
-			// inactive instead of claiming an overlay the runtime never applies.
-			if p.APIKey != "" && stored.ApplyInherited && stored.Text != "" && validProfilePromptMode(stored.Mode) {
-				active = &p.ID
-				source = "global_profile"
-			} else {
-				source = "global_profile_inactive"
-			}
+			profile, profileID, source = p, &p.ID, "global_profile"
+		}
+	}
+
+	// Two layers: the profile default (llm_profiles.prompt, gated by
+	// prompt_apply_inherited on inherited paths) and this agent's override row
+	// (agent_profile_prompts; empty body = explicitly disabled, always winning).
+	var (
+		defaultStored db.PromptInfo
+		override      db.AgentPromptInfo
+		overrideOK    bool
+	)
+	if profileID != nil {
+		defaultStored = readPrompt(*profileID)
+		ov, ok, err := pg.AgentProfilePrompt(a.Key, *profileID)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("读取 Agent × 配置 #%d 的提示词覆盖失败，相关状态不可信", *profileID))
+		} else if ok {
+			override, overrideOK = ov, true
 		}
 	}
 
 	pp := agent.ProfilePrompt{}
-	if active != nil {
-		pp = profileOverlayFromInfo(*active, stored, source)
+	effective := db.PromptInfo{}
+	scope := "none"
+	if overrideOK {
+		effective = db.PromptInfo{Text: override.Text, Mode: override.Mode}
+		if strings.TrimSpace(override.Text) == "" {
+			scope = "agent_disabled"
+		} else {
+			scope = "agent_override"
+			pp = profileOverlayFromInfo(*profileID, effective, "agent_override")
+		}
+	} else if profileID != nil {
+		effective = defaultStored
+		defaultApplies := false
+		switch source {
+		case "preview_override", "agent_binding":
+			defaultApplies = true
+		case "global_profile":
+			// A global profile without an API key cannot serve a run, so
+			// inheritedProfileID() will not load its prompt either.
+			defaultApplies = profile != nil && profile.APIKey != "" && defaultStored.ApplyInherited
+		}
+		if defaultApplies {
+			pp = profileOverlayFromInfo(*profileID, defaultStored, source)
+		}
+		switch {
+		case pp.Active():
+			scope = "profile_default"
+		case strings.TrimSpace(defaultStored.Text) != "":
+			scope = "profile_default_inactive"
+		}
+		// Preserve the historical "global_profile_inactive" source whenever the
+		// global default layer is not what would be injected. Override/disabled
+		// states keep source=global_profile: the profile IS resolved, and the
+		// prompt scope explains who wins.
+		if source == "global_profile" && scope != "profile_default" &&
+			scope != "agent_override" && scope != "agent_disabled" {
+			source = "global_profile_inactive"
+		}
+	}
+
+	// Direct DB edits can leave a non-empty body with an empty mode; the runtime
+	// normalizes that to prepend, so the projection must not claim "no mode".
+	if pp.Active() && effective.Mode == "" {
+		effective.Mode = "prepend"
+	}
+
+	sourceLabel := promptChainSourceLabel(source)
+	// The historical label says "继承生效", which describes the default layer —
+	// not an (agent × profile) override or an explicit disable.
+	switch {
+	case source == "global_profile" && scope == "agent_override":
+		sourceLabel = "全局激活配置 · 本 Agent 覆盖"
+	case source == "global_profile" && scope == "agent_disabled":
+		sourceLabel = "全局激活配置 · 本 Agent 关闭"
 	}
 
 	llm := promptChainLLM{
 		ProfileID:            profileID,
 		Source:               source,
-		SourceLabel:          promptChainSourceLabel(source),
-		PromptMode:           stored.Mode,
-		PromptChars:          utf8.RuneCountInString(stored.Text),
-		PromptApplyInherited: stored.ApplyInherited,
+		SourceLabel:          sourceLabel,
+		PromptScope:          scope,
+		PromptMode:           effective.Mode,
+		PromptChars:          utf8.RuneCountInString(effective.Text),
+		PromptText:           effective.Text,
+		PromptApplyInherited: defaultStored.ApplyInherited,
+		DefaultPromptMode:    defaultStored.Mode,
+		DefaultPromptChars:   utf8.RuneCountInString(defaultStored.Text),
 		PromptActive:         pp.Active(),
 	}
 	if profile != nil {
@@ -246,12 +320,12 @@ func (s *Server) buildAgentPromptChain(pg *db.DB, a *db.Agent, profileParam stri
 	if !pp.Active() {
 		synthetic := agent.PromptSegment{
 			Key: "profile_prompt", Title: "独立提示词（LLM 配置）", Source: "profile_prompt",
-			Available: true, Present: false, Reason: promptInactiveReason(profile, stored, source, previewID),
+			Available: true, Present: false, Reason: promptInactiveReason(profile, effective, defaultStored, source, scope, previewID),
 		}
 		// Keep the configured text in the read-only projection so the detail can
 		// show what the user wrote. It stays out of totals: Present is false.
-		if stored.Text != "" {
-			synthetic.Text = stored.Text
+		if effective.Text != "" {
+			synthetic.Text = effective.Text
 		}
 		segments = append([]agent.PromptSegment{synthetic}, segments...)
 	}
@@ -313,7 +387,7 @@ func (s *Server) buildAgentPromptChain(pg *db.DB, a *db.Agent, profileParam stri
 	out := make([]promptChainSegment, 0, len(segments))
 	totalChars := 0
 	for i, seg := range segments {
-		label := promptChainSegmentLabel(seg, pp, bodyLabel)
+		label := promptChainSegmentLabel(seg, pp, scope, bodyLabel)
 		chars := utf8.RuneCountInString(seg.Text)
 		if seg.OriginalChars > 0 {
 			chars = seg.OriginalChars
@@ -342,7 +416,7 @@ func (s *Server) buildAgentPromptChain(pg *db.DB, a *db.Agent, profileParam stri
 	skills := s.promptChainSkills(pg, a)
 
 	if a.LLMProfileID == nil {
-		warnings = append(warnings, "该 Agent 未绑定 LLM 配置：运行时按任务链/全局解析；只有开启「继承时也生效」的配置会注入独立提示词")
+		warnings = append(warnings, "该 Agent 未绑定 LLM 配置：运行时按任务链/全局解析；配置默认提示词只有开启「继承时也生效」才注入，本 Agent 的覆盖不受该开关限制")
 	}
 	if profile != nil && profile.APIKey == "" {
 		warnings = append(warnings, "该 LLM 配置未设置 API Key，运行时可能回落到其他配置")
@@ -386,40 +460,48 @@ func promptChainSourceLabel(source string) string {
 	}
 }
 
-func promptInactiveReason(profile *db.LLMProfile, stored db.PromptInfo, source string, previewID *int64) string {
+func promptInactiveReason(profile *db.LLMProfile, eff, def db.PromptInfo, source, scope string, previewID *int64) string {
 	switch {
 	case previewID != nil && profile == nil:
 		return "预览指定的 LLM 配置不存在"
 	case source == "agent_binding" && profile == nil:
 		return "Agent 绑定的 LLM 配置不存在"
-	case source == "global_profile_inactive":
-		if profile != nil && profile.APIKey == "" {
+	case profile == nil:
+		return "当前没有解析到 LLM 配置"
+	case scope == "agent_disabled":
+		return "本 Agent 已关闭该配置的独立提示词（不注入）；可在本页恢复"
+	case scope == "agent_override":
+		return "本 Agent 的覆盖模式无效，未注入"
+	case scope == "profile_default_inactive":
+		if source == "global_profile_inactive" && profile.APIKey == "" {
 			return "全局激活配置没有 API Key，运行时不会装载其独立提示词"
 		}
-		if stored.Text == "" {
-			return "全局激活配置未设置独立提示词"
+		if def.Text == "" {
+			return "该 LLM 配置未设置独立提示词"
 		}
-		if !stored.ApplyInherited {
+		if !def.ApplyInherited {
 			return "全局激活配置设置了独立提示词，但未开启「继承时也生效」"
 		}
-		if !validProfilePromptMode(stored.Mode) {
+		if !validProfilePromptMode(def.Mode) {
 			return "独立提示词模式无效，未注入"
 		}
-		return "全局激活配置的独立提示词未生效"
-	case source == "none" && profile == nil:
-		return "当前没有解析到 LLM 配置"
-	case stored.Text == "":
+		return "独立提示词未生效"
+	case strings.TrimSpace(eff.Text) == "":
 		return "该 LLM 配置未设置独立提示词"
-	case !validProfilePromptMode(stored.Mode):
-		return "独立提示词模式无效，未注入"
 	default:
 		return "该 Agent 当前没有生效的独立提示词"
 	}
 }
 
-func promptChainSegmentLabel(seg agent.PromptSegment, pp agent.ProfilePrompt, bodyLabel string) string {
+func promptChainSegmentLabel(seg agent.PromptSegment, pp agent.ProfilePrompt, scope, bodyLabel string) string {
 	switch seg.Key {
 	case "profile_prompt":
+		switch scope {
+		case "agent_override":
+			return "本 Agent 覆盖"
+		case "agent_disabled":
+			return "本 Agent 已关闭"
+		}
 		switch pp.Source {
 		case "agent_binding":
 			return "LLM 配置 · 显式绑定"
