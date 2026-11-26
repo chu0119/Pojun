@@ -1824,3 +1824,95 @@ CREATE INDEX IF NOT EXISTS idx_cleanup_jobs_task ON cleanup_jobs(task_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_cleanup_jobs_active
   ON cleanup_jobs(task_id, kind)
   WHERE state IN ('pending','running') AND task_id IS NOT NULL;
+
+-- ============================================================================
+-- 知识库（KB v2）：条目 + 检索日志。
+--
+-- 与 skills/（随包分发的静态方法论）和 vuln_cves（外部 CVE 情报）互补：
+-- 这里存可检索、可复用的实战方法与组件经验。条目默认 draft，人工在知识页
+-- 采纳（approved）后才进入默认检索——单条错误经验会被后续所有任务检索到，
+-- 等于让知识库自我污染。
+--
+-- search_text 由 Go 侧生成（标题/描述/标签/命令/正文的中文二元组 + 英文词），
+-- 用内置 simple 词典建表达式 GIN 索引；不依赖 pg_trgm / 向量扩展。
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS kb_entries (
+    id            BIGSERIAL PRIMARY KEY,
+    -- nkey = 归一化标题（小写、空白折叠），唯一索引即去重键
+    nkey          TEXT NOT NULL UNIQUE,
+    title         TEXT NOT NULL,
+    description   TEXT NOT NULL DEFAULT '',
+    detail        TEXT NOT NULL DEFAULT '',
+    commands      JSONB NOT NULL DEFAULT '[]'::jsonb,
+    tags          JSONB NOT NULL DEFAULT '[]'::jsonb,
+    layer         TEXT NOT NULL DEFAULT 'general',   -- general/object/infra/weakness/evidence
+    origin        TEXT NOT NULL DEFAULT 'manual',    -- seed/learned/manual
+    status        TEXT NOT NULL DEFAULT 'draft',     -- draft/approved/deprecated
+    confidence    TEXT NOT NULL DEFAULT 'observed',  -- observed/inferred
+    source        TEXT NOT NULL DEFAULT '',
+    task_id       BIGINT REFERENCES tasks(id) ON DELETE SET NULL,
+    finding_id    BIGINT REFERENCES findings(id) ON DELETE SET NULL,
+    uses          INTEGER NOT NULL DEFAULT 0,
+    last_used_at  TIMESTAMPTZ,
+    created_by    TEXT NOT NULL DEFAULT '',
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- v2 派生/结构化字段：检索与 facets 用；老条目由 BackfillDerived 回填。
+    search_text   TEXT NOT NULL DEFAULT '',
+    quality_score REAL NOT NULL DEFAULT 0,
+    products      JSONB NOT NULL DEFAULT '[]'::jsonb,
+    vuln_classes  JSONB NOT NULL DEFAULT '[]'::jsonb,
+    platforms     JSONB NOT NULL DEFAULT '[]'::jsonb,
+    cve_ids       JSONB NOT NULL DEFAULT '[]'::jsonb,
+    license       TEXT NOT NULL DEFAULT '',
+    verified_at   TIMESTAMPTZ
+);
+-- 旧库/半升级库的幂等补齐：CREATE 已含全部列，这里只兜底。
+ALTER TABLE kb_entries ADD COLUMN IF NOT EXISTS search_text TEXT NOT NULL DEFAULT '';
+ALTER TABLE kb_entries ADD COLUMN IF NOT EXISTS quality_score REAL NOT NULL DEFAULT 0;
+ALTER TABLE kb_entries ADD COLUMN IF NOT EXISTS products JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE kb_entries ADD COLUMN IF NOT EXISTS vuln_classes JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE kb_entries ADD COLUMN IF NOT EXISTS platforms JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE kb_entries ADD COLUMN IF NOT EXISTS cve_ids JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE kb_entries ADD COLUMN IF NOT EXISTS license TEXT NOT NULL DEFAULT '';
+ALTER TABLE kb_entries ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_kb_entries_status ON kb_entries(status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_kb_entries_layer  ON kb_entries(layer);
+CREATE INDEX IF NOT EXISTS idx_kb_entries_tags   ON kb_entries USING GIN(tags);
+CREATE INDEX IF NOT EXISTS idx_kb_entries_fts ON kb_entries
+    USING GIN (to_tsvector('simple', search_text));
+CREATE INDEX IF NOT EXISTS idx_kb_entries_quality ON kb_entries(quality_score DESC, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_kb_entries_products ON kb_entries USING GIN(products);
+CREATE INDEX IF NOT EXISTS idx_kb_entries_vulnclasses ON kb_entries USING GIN(vuln_classes);
+CREATE INDEX IF NOT EXISTS idx_kb_entries_cveids ON kb_entries USING GIN(cve_ids);
+
+-- 检索日志：只记查询词/过滤器/命中 id 与延迟，不记条目正文或任何密钥。
+-- actor/task_id 是归因必填项：任务内工具调用写 worker/planner/main + tasks.id，
+-- 非任务会话写角色名 + 0（0 表示「不属于某个任务」，不是「未归因」）。
+CREATE TABLE IF NOT EXISTS kb_retrieval_logs (
+    id         BIGSERIAL PRIMARY KEY,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    actor      TEXT NOT NULL DEFAULT 'unknown',
+    task_id    BIGINT NOT NULL DEFAULT 0,
+    mode       TEXT NOT NULL DEFAULT 'v2',
+    query      TEXT NOT NULL DEFAULT '',
+    tokens     TEXT[] NOT NULL DEFAULT '{}',
+    filters    JSONB,
+    candidates INT NOT NULL DEFAULT 0,
+    returned   INT NOT NULL DEFAULT 0,
+    top_ids    BIGINT[] NOT NULL DEFAULT '{}',
+    top_scores REAL[] NOT NULL DEFAULT '{}',
+    latency_ms INT NOT NULL DEFAULT 0,
+    clicked_id BIGINT,
+    helpful    BOOLEAN
+);
+ALTER TABLE kb_retrieval_logs ADD COLUMN IF NOT EXISTS actor TEXT NOT NULL DEFAULT 'unknown';
+ALTER TABLE kb_retrieval_logs ADD COLUMN IF NOT EXISTS task_id BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE kb_retrieval_logs ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'v2';
+CREATE INDEX IF NOT EXISTS idx_kb_retrieval_logs_time ON kb_retrieval_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_kb_retrieval_logs_task ON kb_retrieval_logs(task_id) WHERE task_id > 0;
+CREATE INDEX IF NOT EXISTS idx_kb_retrieval_logs_actor ON kb_retrieval_logs(actor, created_at DESC);
+
+DROP TRIGGER IF EXISTS trg_kb_entries_upd ON kb_entries;
+CREATE TRIGGER trg_kb_entries_upd BEFORE UPDATE ON kb_entries
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
