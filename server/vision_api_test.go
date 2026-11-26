@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Autumn-27/norma/llm"
 	"github.com/chu0119/pojun/agent"
@@ -185,7 +186,65 @@ func TestProbeVisionConfigDoesNotUseStopReasonAsReply(t *testing.T) {
 	}
 }
 
-// 探测端点：无 key/不存在 → 404；成功 → 200 ok + 结果落库（含指纹）。
+// 保存配置的向后兼容：旧客户端不发送 vision_mode 时不得把 on/off 重置成自动；
+// 显式发送 "" 才表示回到自动档。
+func TestPGSaveProfilePreservesVisionMode(t *testing.T) {
+	dsn, _, err := db.DSN()
+	if err != nil {
+		t.Skipf("postgres unavailable (%v) — skipping", err)
+	}
+	d, err := db.Open(dsn)
+	if err != nil {
+		t.Skipf("postgres unavailable (%v) — skipping", err)
+	}
+	defer d.Close()
+	// reapplyActiveProfile 需要完整的 engine；共享库若残留激活配置就跳过这个
+	// 最小 Server 用例（CI 新库不会有）。
+	if act, _ := d.ActiveProfile(); act != nil {
+		t.Skip("shared DB has an active profile — skipping minimal-server save test")
+	}
+	s := &Server{m: &Manager{pg: d}}
+	save := func(body map[string]any) *httptest.ResponseRecorder {
+		raw, _ := json.Marshal(body)
+		rr := httptest.NewRecorder()
+		s.pgSaveProfile(rr, httptest.NewRequest(http.MethodPost, "/api/llm/profiles", strings.NewReader(string(raw))))
+		return rr
+	}
+	name := "t-vision-save-" + time.Now().Format("150405.000000000")
+	rr := save(map[string]any{
+		"name": name, "format": "openai", "model": "m", "api_key": "sk-test", "vision_mode": "on",
+	})
+	if rr.Code != 200 {
+		t.Fatalf("create status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var created struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &created); err != nil || created.ID == 0 {
+		t.Fatalf("decode id: %v body=%s", err, rr.Body.String())
+	}
+	defer func() { _ = d.DeleteProfile(created.ID) }()
+
+	// 缺省 vision_mode 的更新（旧客户端）→ 保留 on。
+	rr = save(map[string]any{"id": created.ID, "name": name, "format": "openai", "model": "m2"})
+	if rr.Code != 200 {
+		t.Fatalf("update status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	p, err := d.ProfileByID(created.ID)
+	if err != nil || p == nil || p.VisionMode != "on" {
+		t.Fatalf("omitted vision_mode cleared it: %+v err=%v", p, err)
+	}
+	// 显式 "" → 回到自动。
+	rr = save(map[string]any{"id": created.ID, "name": name, "format": "openai", "model": "m2", "vision_mode": ""})
+	if rr.Code != 200 {
+		t.Fatalf("clear status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	p, _ = d.ProfileByID(created.ID)
+	if p == nil || p.VisionMode != "" {
+		t.Fatalf("explicit auto failed: %+v", p)
+	}
+}
+
 func TestLLMVisionProbeEndpointPersistsResult(t *testing.T) {
 	dsn, _, err := db.DSN()
 	if err != nil {
