@@ -793,8 +793,8 @@ export default function SystemSettingsPage() {
           </CardContent>
         </Card>
 
-        {/* HTTPS 与证书：与「网络与流量」同区，跨两列。 */}
-        <div className="order-16 lg:col-span-2">
+        {/* HTTPS 与证书：与「网络与流量」同区，跨两列；order-17 紧跟 order-16 的留存卡片。 */}
+        <div className="order-17 lg:col-span-2">
           <TLSCard />
         </div>
 
