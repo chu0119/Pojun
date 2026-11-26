@@ -1353,6 +1353,9 @@ services:
       POJUN_LLM_MODEL: \${POJUN_LLM_MODEL:-}
       POJUN_LLM_BASE_URL: \${POJUN_LLM_BASE_URL:-}
       POJUN_LLM_PROXY: \${POJUN_LLM_PROXY:-}
+      # 更新专用代理：只作用于版本检查/整包下载/hostd 跟随升级。留空则按
+      # 「装机代理 → 全局代理 → 直连」回退；目标流量出口不受影响。
+      POJUN_UPDATE_PROXY: \${POJUN_UPDATE_PROXY:-}
       # 装机代理：宿主环境页的「一键安装」和后台情报同步用。Docker 形态没有
       # config.json，只能走环境变量；服务端读它作为数据库 setting 的兜底。
       POJUN_INSTALL_PROXY: \${POJUN_INSTALL_PROXY:-}

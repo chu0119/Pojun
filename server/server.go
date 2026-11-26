@@ -891,6 +891,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/update/check", s.updateCheck)
 	mux.HandleFunc("POST /api/update/apply", s.updateApply)
 	mux.HandleFunc("POST /api/update/rollback", s.updateRollback)
+	mux.HandleFunc("POST /api/update/proxy-test", s.updateProxyTest)
 	mux.HandleFunc("GET /api/update/stream", s.updateStream)
 
 	mux.HandleFunc("GET /api/tasks", s.listTasks)
@@ -3805,6 +3806,7 @@ func (s *Server) settingsPayload() map[string]any {
 	apc := autopilotConfigFromPG(s.m.pg)
 	ib := intentBudgetFromPG(s.m.pg)
 	tb := taskBudgetFromPG(s.m.pg)
+	updateProxySaved, updateProxyEffective, updateProxySource := s.updateProxyInfo()
 	return map[string]any{
 		"traffic_capture":               s.m.TrafficEnabled(),
 		"traffic_mode":                  s.m.TrafficMode(),
@@ -3825,6 +3827,9 @@ func (s *Server) settingsPayload() map[string]any {
 		"artifact_max_count":            func() int { c, _ := s.m.pg.ArtifactQuota(); return c }(), // #45/#50 证据附件限额（生效值）
 		"artifact_max_bytes":            func() int64 { _, b := s.m.pg.ArtifactQuota(); return b }(),
 		"install_proxy":                 s.installProxy(),            // 装机代理：用于宿主工具安装和程序更新等维护请求
+		"update_proxy":                  updateProxySaved,            // 更新专用代理（空=跟随环境变量/装机/全局）
+		"update_proxy_effective":        updateProxyEffective,        // 更新链路当前实际使用的代理（空=直连）
+		"update_proxy_source":           updateProxySource,           // update/env/install/global/direct
 		"python_interpreter":            strings.TrimSpace(pyStored), // 用户/自动设的值(空=用运行时检测)
 		"workers":                       s.m.Workers(),               // 并发工作 agent 数(默认3)；对之后启动的任务生效
 		// 冷节点压缩的输出预算与墙钟上限。0 = 用默认值(32768 token / 20 分钟)。
@@ -3945,6 +3950,7 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		WebSearchProxy   *string `json:"web_search_proxy"`   // 独立出口代理(http/https/socks5)；null=不改，""=清空
 		GlobalProxy      *string `json:"global_proxy"`       // 全局出口代理(http/https/socks5)；null=不改，""=清空(直连)
 		InstallProxy     *string `json:"install_proxy"`      // 装机代理：null=不改，""=清空设置。不触发 agent 重建
+		UpdateProxy      *string `json:"update_proxy"`       // 更新专用代理；null=不改，""=清除并继承环境变量/装机/全局代理
 		PythonInterp     *string `json:"python_interpreter"` // 自定义脚本工具的 python 解释器路径
 		Workers          *int    `json:"workers"`            // 并发工作 agent 数(>0)；对之后启动的任务生效
 		// 冷节点压缩的输出预算与墙钟上限。null=不改，<=0=恢复默认。
@@ -4503,6 +4509,17 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// 只影响后续安装动作，不改变 agent 行为，无需 applyLLM 重建。
+	}
+	if req.UpdateProxy != nil {
+		if err := s.saveUpdateProxy(*req.UpdateProxy); err != nil {
+			if errors.Is(err, errUpdateProxyInvalid) {
+				writeErr(w, 400, err.Error())
+				return
+			}
+			writeErr(w, 500, err.Error())
+			return
+		}
+		// 更新链路缓存已在 saveUpdateProxy 里失效；不动 agent（与目标流量无关）。
 	}
 	if req.WebSearchEnabled != nil || req.WebSearchBackend != nil || req.BraveKey != nil || req.TavilyKey != nil || req.WebSearchProxy != nil {
 		// Fill unspecified fields from current state so a partial PUT doesn't reset them.

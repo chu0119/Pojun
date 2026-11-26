@@ -96,6 +96,51 @@ func (s *Server) maintenanceProxy() string {
 	return s.m.GlobalProxy()
 }
 
+// pickUpdateProxy 决定更新链路（查版本 / 下载整包 / hostd 跟随升级）走哪个代理。
+// 优先级：更新专用设置 → 环境变量 → 装机代理 → 全局代理 → 直连。
+// 纯函数，便于单测；source 用于页面显示「当前生效值从哪来」。
+func pickUpdateProxy(saved, env, install, global string) (value, source string) {
+	if v := strings.TrimSpace(saved); v != "" {
+		return v, "update"
+	}
+	if v := strings.TrimSpace(env); v != "" {
+		return v, "env"
+	}
+	if v := strings.TrimSpace(install); v != "" {
+		return v, "install"
+	}
+	if v := strings.TrimSpace(global); v != "" {
+		return v, "global"
+	}
+	return "", "direct"
+}
+
+// updateProxyInfo 返回（已保存原值、生效值、来源）。原值只用于页面回填。
+//
+// 更新代理只作用于「查版本 / 下载整包 / hostd 跟随升级」——目标流量出口由
+// 各任务自己的 egress 决定，两者刻意不共用：拿更新代理去扫目标会暴露节点。
+func (s *Server) updateProxyInfo() (saved, effective, source string) {
+	if s != nil && s.m != nil && s.m.pg != nil {
+		if v, _, err := s.m.pg.GetSetting(settingUpdateProxy); err == nil {
+			saved = strings.TrimSpace(v)
+		}
+	}
+	env := strings.TrimSpace(os.Getenv("POJUN_UPDATE_PROXY"))
+	install := s.installProxy()
+	global := ""
+	if s != nil && s.m != nil {
+		global = s.m.GlobalProxy()
+	}
+	effective, source = pickUpdateProxy(saved, env, install, global)
+	return saved, effective, source
+}
+
+// updateProxy 是更新链路实际使用的代理（空=直连）。
+func (s *Server) updateProxy() string {
+	_, effective, _ := s.updateProxyInfo()
+	return effective
+}
+
 const settingHostInstallSources = "host_install_sources"
 
 func (s *Server) hostInstallSources() (hostd.InstallSources, error) {
@@ -483,8 +528,10 @@ func (s *Server) reconcileHostdOnce() bool {
 	log.Printf("[hostd] 版本不一致（助手 %s / 主程序 %s），请求助手自我换装", got, want)
 
 	payload, _ := json.Marshal(map[string]string{
-		"tag":   want,
-		"proxy": s.maintenanceProxy(),
+		"tag": want,
+		// hostd 跟随升级下载的是同一个 GitHub Release：与主程序更新共用更新
+		// 链路代理（含 update_proxy/POJUN_UPDATE_PROXY），而不是装机代理。
+		"proxy": s.updateProxy(),
 	})
 	body, code, err := s.hostdCall(ctx, http.MethodPost, "/self-upgrade", payload)
 	if err != nil {

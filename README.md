@@ -1133,6 +1133,14 @@ CGO_ENABLED=0 go build -o pojun-hostd ./cmd/pojun-hostd   # 可选：特权安�
 **页面一键更新**（系统配置 → 版本与更新）：下载 → SHA256 校验 → 冒烟测试 →
 原子换装 → 失败自动回滚到上一版。升级只换程序不动数据，schema 幂等迁移。
 
+- **进度跨刷新**：下载进度在进程内，但「进行中/阶段/百分比/版本」与「上次结果
+  （running/staged/failed）」都会随 `/api/update/check` 返回；刷新页面后会自动
+  接回 SSE，重复点更新遇到 409 也会接入现有进度，而不是只弹一句错误。
+- **更新专用代理**：`更新专用代理` 设置（或 `POJUN_UPDATE_PROXY`）只作用于
+  版本检查 / 整包下载 / hostd 跟随升级。解析顺序：页面设置 → `POJUN_UPDATE_PROXY`
+  → 装机代理（`POJUN_INSTALL_PROXY`）→ 全局代理 → 直连。**不改变任务的目标流量
+  出口**；页面「测试」会真实请求一次 GitHub Release（20s 超时，固定地址）。
+
 ---
 
 ## 配置速查

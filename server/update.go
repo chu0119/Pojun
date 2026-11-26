@@ -8,9 +8,11 @@ import (
 	"log"
 	"net/http"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/chu0119/pojun/hostd"
 	"github.com/chu0119/pojun/selfupdate"
 )
 
@@ -75,6 +77,64 @@ const (
 )
 
 var relCache = &releaseCache{}
+
+// invalidate 清空缓存：切换更新代理后下一次检查/下载必须立即回源，
+// 否则旧代理留下的错误要等 2 分钟、成功结果要等 30 分钟才失效。
+func (c *releaseCache) invalidate() {
+	c.mu.Lock()
+	c.rel, c.err, c.at = nil, nil, time.Time{}
+	c.mu.Unlock()
+}
+
+// 更新链路设置键。
+const (
+	// settingUpdateProxy 是更新专用代理（空=跟随环境变量/装机/全局）。
+	settingUpdateProxy = "update_proxy"
+	// settingUpdateLastRun 是最近一次更新的结果（跨重启保留）。
+	settingUpdateLastRun = "update_last_run"
+)
+
+// updateLastRun 是最近一次更新的结果，跨进程重启保留。
+//
+// 下载进度本身只存在于进程内；进程重启后前端靠这条记录区分「已更新成功」
+// 「更新失败」「上次更新未完成」，而不是只能看到一个变化的版本号。
+type updateLastRun struct {
+	From   string    `json:"from"`
+	To     string    `json:"to"`
+	Status string    `json:"status"` // running | staged | failed
+	Error  string    `json:"error,omitempty"`
+	At     time.Time `json:"at"`
+}
+
+// saveUpdateLast 记录最近一次更新状态。写失败不影响升级本身。
+func (s *Server) saveUpdateLast(run updateLastRun) {
+	if s == nil || s.m == nil || s.m.pg == nil {
+		return
+	}
+	b, err := json.Marshal(run)
+	if err != nil {
+		return
+	}
+	if err := s.m.pg.SetSetting(settingUpdateLastRun, string(b)); err != nil {
+		log.Printf("[update] 记录更新结果失败：%v", err)
+	}
+}
+
+// loadUpdateLast 读取最近一次更新状态；没有记录时 ok=false。
+func (s *Server) loadUpdateLast() (updateLastRun, bool) {
+	var run updateLastRun
+	if s == nil || s.m == nil || s.m.pg == nil {
+		return run, false
+	}
+	raw, ok, err := s.m.pg.GetSetting(settingUpdateLastRun)
+	if err != nil || !ok || strings.TrimSpace(raw) == "" {
+		return run, false
+	}
+	if err := json.Unmarshal([]byte(raw), &run); err != nil {
+		return run, false
+	}
+	return run, true
+}
 
 // get 返回最新 Release，命中缓存则不访问网络。
 //
@@ -224,10 +284,29 @@ func (s *Server) updateCheck(w http.ResponseWriter, r *http.Request) {
 		"boot_notice": boot.Detail,
 		"rolled_back": boot.RolledBack,
 	}
+	// 运行态：页面刷新后据此自动接回 SSE，而不是把进行中的更新当成“没在更新”。
+	cur, running := updHub.snapshot()
+	out["update"] = map[string]any{
+		"running": running,
+		"phase":   cur.Phase,
+		"percent": cur.Percent,
+		"message": cur.Message,
+		"version": cur.Version,
+		"error":   cur.Error,
+	}
+	// 更新代理：原值用于页面回填，生效值+来源用于解释「到底走哪条路」。
+	savedProxy, effectiveProxy, proxySource := s.updateProxyInfo()
+	out["update_proxy"] = savedProxy
+	out["update_proxy_effective"] = effectiveProxy
+	out["update_proxy_source"] = proxySource
+	// 上次更新结果（跨重启）：页面刷新后仍能看到成功/失败/未完成。
+	if last, ok := s.loadUpdateLast(); ok {
+		out["last_update"] = last
+	}
 
 	// 顶栏提示走缓存（默认）；用户点"检查更新"时带 force=1 强制回源。
 	force := r.URL.Query().Get("force") != ""
-	client := selfupdate.NewClient(s.maintenanceProxy())
+	client := selfupdate.NewClient(effectiveProxy)
 	rel, err := relCache.get(r.Context(), client, force)
 	if err != nil {
 		out["error"] = err.Error()
@@ -271,7 +350,7 @@ func (s *Server) updateApply(w http.ResponseWriter, r *http.Request) {
 	current := BuildVersion
 
 	// 走缓存：确保装上的就是用户在界面上看到并确认的那个版本。
-	client := selfupdate.NewClient(s.maintenanceProxy())
+	client := selfupdate.NewClient(s.updateProxy())
 	rel, err := relCache.get(r.Context(), client, false)
 	if err != nil {
 		writeErr(w, 502, err.Error())
@@ -290,6 +369,7 @@ func (s *Server) updateApply(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 409, "已有一个更新正在进行中")
 		return
 	}
+	s.saveUpdateLast(updateLastRun{From: current, To: rel.TagName, Status: "running", At: time.Now()})
 
 	go func() {
 		// 刻意用 s.ctx 而不是请求的 ctx：HTTP 响应一返回请求就结束了，
@@ -297,6 +377,11 @@ func (s *Server) updateApply(w http.ResponseWriter, r *http.Request) {
 		err := selfupdate.Stage(s.ctx, client, rel, current, func(ph selfupdate.Phase, pct int, msg string) {
 			updHub.publish(ph, pct, msg)
 		})
+		if err != nil {
+			s.saveUpdateLast(updateLastRun{From: current, To: rel.TagName, Status: "failed", Error: err.Error(), At: time.Now()})
+		} else {
+			s.saveUpdateLast(updateLastRun{From: current, To: rel.TagName, Status: "staged", At: time.Now()})
+		}
 		updHub.finish(err)
 		if err != nil {
 			log.Printf("[update] 更新失败：%v", err)
@@ -327,6 +412,64 @@ func (s *Server) updateRollback(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(500 * time.Millisecond)
 		requestRestart()
 	}()
+}
+
+// errUpdateProxyInvalid 区分“代理格式不对”（400）与“设置写不进去”（500）。
+var errUpdateProxyInvalid = errors.New("更新代理无效")
+
+// saveUpdateProxy 校验并保存更新代理；空串=清除，回到环境变量/装机/全局回退链。
+func (s *Server) saveUpdateProxy(raw string) error {
+	clean, err := hostd.ValidateProxy(strings.TrimSpace(raw))
+	if err != nil {
+		return fmt.Errorf("%w：%v", errUpdateProxyInvalid, err)
+	}
+	if s == nil || s.m == nil || s.m.pg == nil {
+		return errors.New("设置存储不可用")
+	}
+	if err := s.m.pg.SetSetting(settingUpdateProxy, clean); err != nil {
+		return err
+	}
+	// 代理变了，版本查询/下载必须立刻走新链路，不能等缓存过期。
+	relCache.invalidate()
+	return nil
+}
+
+// updateProxyProbe 是代理连通性测试的取数函数，单测可替换，避免打外网。
+var updateProxyProbe = selfupdate.FetchLatest
+
+// updateProxyTest 用给定（或当前生效的）代理真正查一次 GitHub Release。
+//
+// 只访问固定的 Release API，不接受任意 URL——既验证了更新链路，又没有 SSRF 面。
+func (s *Server) updateProxyTest(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Proxy string `json:"proxy"`
+	}
+	if err := decode(r, &req); err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	clean, err := hostd.ValidateProxy(strings.TrimSpace(req.Proxy))
+	if err != nil {
+		writeErr(w, 400, "更新代理无效："+err.Error())
+		return
+	}
+	if clean == "" {
+		clean = s.updateProxy() // 空=测当前生效代理（可能仍是空=直连）
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), releaseTimeout)
+	defer cancel()
+	start := time.Now()
+	rel, err := updateProxyProbe(ctx, selfupdate.NewClient(clean))
+	latency := time.Since(start).Milliseconds()
+	if err != nil {
+		writeJSON(w, 200, map[string]any{
+			"ok": false, "proxy": clean, "latency_ms": latency, "error": err.Error(),
+		})
+		return
+	}
+	writeJSON(w, 200, map[string]any{
+		"ok": true, "proxy": clean, "latest": rel.TagName, "latency_ms": latency,
+	})
 }
 
 // updateStream 以 SSE 推送更新进度。

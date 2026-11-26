@@ -58,7 +58,7 @@ func (s *Server) diagSettings() map[string]any {
 		out[k] = v
 	}
 	// 代理 URL 可能带 user:pass；诊断包会被用户转发给开发，平台自身凭据必须掩码。
-	for _, k := range []string{"global_proxy", "web_search_proxy", "install_proxy"} {
+	for _, k := range []string{"global_proxy", "web_search_proxy", "install_proxy", "update_proxy", "update_proxy_effective"} {
 		if v, ok := out[k].(string); ok && v != "" {
 			out[k] = maskProxyURL(v)
 		}

@@ -35,6 +35,9 @@ services:
       POJUN_LLM_MODEL: ${POJUN_LLM_MODEL:-}
       POJUN_LLM_BASE_URL: ${POJUN_LLM_BASE_URL:-}
       POJUN_LLM_PROXY: ${POJUN_LLM_PROXY:-}
+      # 更新专用代理：只作用于版本检查/整包下载/hostd 跟随升级；不改变目标流量出口。
+      # 留空则按「装机代理 → 全局代理 → 直连」回退。
+      POJUN_UPDATE_PROXY: ${POJUN_UPDATE_PROXY:-}
     ports:
       # 默认仅本机：控制台能在宿主机执行命令，暴露必须是显式选择。
       # 局域网直连：POJUN_BIND_IP=0.0.0.0 docker compose up -d（不推荐，优先 HTTPS 反代）。

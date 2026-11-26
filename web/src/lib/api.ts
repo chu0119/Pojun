@@ -148,6 +148,7 @@ import type {
   ListenerStartResp,
   ListenerView,
   UpdateCheck,
+  UpdateProxyTestResult,
   TLSACMEConfig,
   TLSCertInfo,
   TLSSettings,
@@ -1806,6 +1807,8 @@ export const api = {
   // 202 即返回，实际下载在后台跑，进度走 /api/update/stream。
   applyUpdate: () => post<{ ok: boolean; target: string }>(`/update/apply`),
   rollbackUpdate: () => post<{ ok: boolean }>(`/update/rollback`),
+  // 更新代理连通性：用给定（或当前生效）代理真实查一次 GitHub Release，20s 超时。
+  testUpdateProxy: (proxy: string) => post<UpdateProxyTestResult>(`/update/proxy-test`, { proxy }),
 
   // ---- C2 出口 / 回连接收器（红队作战）----
   // C2 出口配置：password 传 "" 清空、undefined 保持不变；回显已脱敏（只回 has_pass）。
