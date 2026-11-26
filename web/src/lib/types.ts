@@ -2713,3 +2713,74 @@ export interface TLSStatusResp {
   urls: string[];
   firewall: TLSFirewallStatus;
 }
+
+// ---- 知识库（KB v2）----
+// 知识条目默认 draft；approved 才进入 agent 默认检索。quality_score 是启发式
+// 质量分（0..1），只用于排序小幅加权。products/vuln_classes/platforms/cve_ids
+// 是检索 facets，旧条目可能为空。
+export interface KnowledgeEntry {
+  id: number;
+  title: string;
+  description: string;
+  detail: string;
+  commands: string[];
+  tags: string[];
+  layer: string;
+  origin: string;
+  status: string;
+  confidence: string;
+  source: string;
+  task_id?: number;
+  finding_id?: number;
+  uses: number;
+  last_used_at?: string;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  quality_score?: number;
+  products?: string[];
+  vuln_classes?: string[];
+  platforms?: string[];
+  cve_ids?: string[];
+  license?: string;
+  verified_at?: string;
+}
+
+export interface KnowledgeEntryInput {
+  title?: string;
+  description?: string;
+  detail?: string;
+  commands?: string[];
+  tags?: string[];
+  layer?: string;
+  status?: string;
+  confidence?: string;
+  source?: string;
+  products?: string[];
+  vuln_classes?: string[];
+  platforms?: string[];
+  cve_ids?: string[];
+  license?: string;
+}
+
+export interface KnowledgeFacet {
+  value: string;
+  count: number;
+}
+
+export interface KnowledgeFacets {
+  products: KnowledgeFacet[];
+  vuln_classes: KnowledgeFacet[];
+  platforms: KnowledgeFacet[];
+  cve_ids: KnowledgeFacet[];
+}
+
+export interface KnowledgeRetrievalStats {
+  days: number;
+  total: number;
+  zero_result: number;
+  zero_result_rate: number;
+  p95_latency_ms: number;
+  actors: number;
+  attributed_rate: number;
+}

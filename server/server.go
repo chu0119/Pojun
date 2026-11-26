@@ -310,6 +310,22 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		}
 		wireAgentAugment(m.pg, s.skillDir, s.hostTools)        // 可见 skills/MCP + 流量/编排 host 工具装配进 agent 工具集
 		agent.SetCweSkillIndex(BuildCweSkillIndex(s.skillDir)) // CWE→方法论 skill 联动（漏洞情报工具输出 related_skills）
+		// 知识库：检索/采纳工具共享同一 store；内容包按 id+version 幂等播种。
+		// 单个包损坏只记日志、不阻断启动（skills 目录可由用户自行扩展）。
+		agent.SetKBStore(m.pg.KB())
+		if seeded, skipped, errs := m.pg.SeedKBPacks(s.skillDir); seeded > 0 || skipped > 0 || len(errs) > 0 {
+			log.Printf("[kb] 内容包播种：新增 %d、已存在跳过 %d、失败 %d", seeded, skipped, len(errs))
+			for _, err := range errs {
+				log.Printf("[kb] 内容包失败：%v", err)
+			}
+		}
+		// 存量行（v2 之前导入/同步）search_text 为空时在检索里不可见；异步回填。
+		go func() {
+			n, err := m.pg.KB().BackfillDerived(s.ctx)
+			if err != nil {
+				log.Printf("[kb] search_text 回填中断（已完成 %d 条）：%v", n, err)
+			}
+		}()
 		domainReg := buildDomainReg(m.Assets())
 		wireTools(m.pg, domainReg) // 内置工具表：按 agent 过滤 + 覆盖描述/schema + 注入默认值
 		seedPrompts(m.pg)          // 内置 agent 默认提示词正文播种进 agent_prompts(仅空时)
@@ -1029,6 +1045,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/vulnintel/sync", s.vulnintelSyncNow)
 	mux.HandleFunc("POST /api/vulnintel/sync/cancel", s.vulnintelSyncCancel)
 	mux.HandleFunc("POST /api/vulnintel/probe", s.vulnintelProbe)
+	// 知识库（KB v2）：管理页列表/统计/facets + 检索质量摘要。
+	mux.HandleFunc("GET /api/knowledge", s.kbList)
+	mux.HandleFunc("POST /api/knowledge", s.kbCreate)
+	mux.HandleFunc("GET /api/knowledge/stats", s.kbStats)
+	mux.HandleFunc("GET /api/knowledge/facets", s.kbFacets)
+	mux.HandleFunc("GET /api/knowledge/retrieval-stats", s.kbRetrievalStats)
+	mux.HandleFunc("PATCH /api/knowledge/{id}", s.kbUpdate)
+	mux.HandleFunc("DELETE /api/knowledge/{id}", s.kbDelete)
 	mux.HandleFunc("GET /api/proxypool", s.proxyPoolGet)
 	mux.HandleFunc("PUT /api/proxypool", s.proxyPoolPut)
 	mux.HandleFunc("POST /api/proxypool/bulk", s.proxyPoolBulk)

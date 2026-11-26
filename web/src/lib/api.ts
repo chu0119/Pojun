@@ -66,6 +66,10 @@ import type {
   InterceptRule,
   JudgeConfig,
   JudgeUsage,
+  KnowledgeEntry,
+  KnowledgeEntryInput,
+  KnowledgeFacets,
+  KnowledgeRetrievalStats,
   LLMPoolStatus,
   LLMProfile,
   LLMRecordDetail,
@@ -1758,4 +1762,48 @@ export const api = {
     post<{ stopped: string; sessions: ListenerSession[] }>(`/listeners/${encodeURIComponent(name)}/stop`),
   listenerSessions: (name: string) =>
     get<{ name: string; sessions: ListenerSession[] }>(`/listeners/${encodeURIComponent(name)}`),
+
+  // ---- 知识库（KB v2）----
+  // 列表支持 q/status/layer/origin/tag/product/vuln_class/min_quality 过滤；
+  // 管理页只在需要时传参，避免 URL 里堆一长串空值。
+  knowledgeList: (params?: {
+    q?: string;
+    status?: string;
+    layer?: string;
+    origin?: string;
+    tag?: string;
+    product?: string;
+    vuln_class?: string;
+    min_quality?: number;
+    page?: number;
+    page_size?: number;
+  }) => {
+    const sp = new URLSearchParams();
+    if (params?.q) sp.set("q", params.q);
+    if (params?.status) sp.set("status", params.status);
+    if (params?.layer) sp.set("layer", params.layer);
+    if (params?.origin) sp.set("origin", params.origin);
+    if (params?.tag) sp.set("tag", params.tag);
+    if (params?.product) sp.set("product", params.product);
+    if (params?.vuln_class) sp.set("vuln_class", params.vuln_class);
+    if (params?.min_quality !== undefined) sp.set("min_quality", String(params.min_quality));
+    sp.set("page", String(params?.page ?? 1));
+    sp.set("page_size", String(params?.page_size ?? 20));
+    return get<{ entries: KnowledgeEntry[]; total: number; page: number; page_size: number }>(
+      `/knowledge?${sp}`,
+    );
+  },
+  knowledgeStats: () =>
+    get<{ counts: Record<string, number> }>(`/knowledge/stats`).then((r) => r.counts),
+  knowledgeFacets: (status?: string) =>
+    get<{ facets: KnowledgeFacets }>(
+      `/knowledge/facets${status ? `?status=${encodeURIComponent(status)}` : ""}`,
+    ).then((r) => r.facets),
+  // days 由后端以文本参数绑定到 interval，不会触发 pgx int→text 500。
+  knowledgeRetrievalStats: (days = 7) =>
+    get<KnowledgeRetrievalStats>(`/knowledge/retrieval-stats?days=${days}`),
+  createKnowledge: (input: KnowledgeEntryInput) => post<KnowledgeEntry>(`/knowledge`, input),
+  updateKnowledge: (id: number, input: KnowledgeEntryInput) =>
+    patch<KnowledgeEntry>(`/knowledge/${id}`, input),
+  deleteKnowledge: (id: number) => del<{ deleted?: boolean }>(`/knowledge/${id}`),
 };
