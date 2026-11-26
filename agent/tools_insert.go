@@ -748,6 +748,8 @@ func (t *ToolSet) WorkerTools() []actool.CoreTool {
 		// 白盒审计五件套（v0.9.86）：源码在任务目录内时先 map 再定规则，
 		// sast_scan 只跑 semgrep（无 shell），code_trace/patch_variants 做静态线索。
 		t.repoMap(), t.taintSpec(), t.sastScan(), t.codeTrace(), t.patchVariants(),
+		// view_image：视觉模型下把截图/验证码真正交给模型看；非视觉配置给可操作错误。
+		t.viewImage(),
 		// auth_request：用资产上已登记的凭据组装带认证的请求（横向/越权验证的前提）。
 		t.authRequest(),
 		// evidence_check（v0.4.71）：复核高/危漏洞证据是否足以支撑危害结论（13 项检查 + src_ready）。
@@ -814,6 +816,8 @@ func (t *ToolSet) MainAgentTools() []actool.CoreTool {
 		// 白盒审计五件套（v0.9.86）：源码在任务目录内时先 map 再定规则，
 		// sast_scan 只跑 semgrep（无 shell），code_trace/patch_variants 做静态线索。
 		t.repoMap(), t.taintSpec(), t.sastScan(), t.codeTrace(), t.patchVariants(),
+		// view_image：主 Agent 也可直接看任务内的截图与验证码（非视觉配置给可操作错误）。
+		t.viewImage(),
 		// listener_*：回连接收器（红队 C2 前置）——start/stop 走 ask 审批，sessions 只读。
 		t.listenerStart(), t.listenerStop(), t.listenerSessions(),
 		// auth_request：用资产上已登记的凭据组装带认证的请求（横向/越权验证的前提）。

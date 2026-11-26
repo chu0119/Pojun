@@ -96,6 +96,10 @@ type Config struct {
 	// Retry 是该配置解析后的重试参数(profile 覆盖 → 全局策略 → 内置默认,由
 	// server 侧解析)。三层的含义见 RetryConfig;零值 = 完全沿用内置默认。
 	Retry RetryConfig
+	// Vision 是该 profile 解析后的图片输入能力:true=请求保留 image 块,false=
+	// 请求前把图片换成文本占位。由 llmpresets 按「用户三态 > 探测缓存 > 预设 >
+	// 模型名启发 > 默认关」计算;零值 false = 旧行为(纯文本,逐字节不变)。
+	Vision bool
 }
 
 // RetryConfig 是随一个 LLM 配置走的重试参数。每层的「次数」统一语义:
@@ -317,6 +321,9 @@ func (c Config) NewProvider() (llm.Provider, error) {
 	}
 	// 误拒答自愈：包装后只改「重试请求的授权说明」，不改意图与工具权限。
 	prov = GuardRefusal(prov)
+	// 视觉守卫放在最外层：不支持的模型永远收不到图片；支持的模型单轮限量。
+	// server 会在 llmrec 之外再包一次（幂等），让审计记录看到剥离后的请求。
+	prov = VisionGuard(prov, c.Vision)
 	// 流空闲看门狗（v0.4.96，内部版 v0.9.50）：LLM 网关偶发断流——180s 无事件
 	// 主动断开，错误冒泡为可重试瞬时故障，由 task_llm 重试层承接重放。
 	prov = WithStreamIdleWatchdog(prov, defaultStreamIdleTimeout)

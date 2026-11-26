@@ -35,6 +35,7 @@ type ChatAgent struct {
 	nonStreamingFn func() bool  // resolver: use non-streaming (Complete) path? (nil = streaming)
 	noaEnabledFn   func() bool  // resolver: use experimental noa compaction? (nil = off)
 	maxTokensFn    func() int   // resolver: per-reply output cap (nil/0 = send no cap)
+	visionFn       func() bool  // resolver: model accepts images? (nil = no)
 }
 
 func NewChatAgent(prov llm.Provider, model, workDir string, tx *transcript.Store, window int) *ChatAgent {
@@ -62,6 +63,13 @@ func (c *ChatAgent) maxTokens() int {
 	}
 	return c.maxTokensFn()
 }
+
+// SetVision wires the image-input capability. When on, chat gains the view_image
+// tool so uploaded/screenshot images can be inspected; when off the request-side
+// guard strips images and no vision guidance is added.
+func (c *ChatAgent) SetVision(fn func() bool) { c.visionFn = fn }
+
+func (c *ChatAgent) vision() bool { return c.visionFn != nil && c.visionFn() }
 
 // SetProxy points the chat agent's WebFetch/Bash at the recording proxy plus the
 // CA cert it trusts (empty addr = direct). Kept for parity with the other agents.
@@ -128,11 +136,23 @@ func (c *ChatAgent) Chat(ctx context.Context, agentKey, sessionID, message strin
 	// visible skills/MCP and lets the DB tools table filter/override. DefaultTools
 	// have no tools-table rows, so they always pass through.
 	base := actool.DefaultTools()
+	if c.vision() {
+		// view_image needs only runDir+vision (no exploration store); its paths
+		// are locked to this conversation's session directory.
+		tsx := NewToolSet(nil, "human")
+		tsx.SetRunDir(sessionWorkDir)
+		tsx.SetVision(true)
+		base = append(base, tsx.viewImage())
+	}
 	ctx = WithRunInfo(ctx, RunInfo{SessionID: sessionID, Kind: KindChat})
 	tools, def, cleanup := AugmentTools(ctx, agentKey, base)
 	defer cleanup()
 
-	system, boundary := deferredSystem(chatSystemWith(agentKey, c.workDir, sessionWorkDir, ProfilePromptFrom(ctx)), def)
+	chatSys := chatSystemWith(agentKey, c.workDir, sessionWorkDir, ProfilePromptFrom(ctx))
+	if c.vision() {
+		chatSys += visionGuidance
+	}
+	system, boundary := deferredSystem(chatSys, def)
 	opts := agentcore.Options{
 		Provider:        c.prov,
 		SystemPrompt:    system,

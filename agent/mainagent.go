@@ -40,6 +40,7 @@ type MainAgent struct {
 	nonStreamingFn       func() bool                            // resolver: use non-streaming (Complete) path? (nil = streaming)
 	noaEnabledFn         func() bool                            // resolver: use experimental noa compaction? (nil = off)
 	maxTokensFn          func() int                             // resolver: per-reply output cap (nil/0 = send no cap)
+	visionFn             func() bool                            // resolver: model accepts images? (nil = no)
 	programProfile       *db.ProgramProfile                     // SRC/众测 profile（nil = 不渲染）
 	// profilePrompt resolves the LLM-profile-scoped overlay for this run (nil =
 	// none). Wired by the task bundle; read per Chat turn.
@@ -67,6 +68,12 @@ func (m *MainAgent) maxTokens() int {
 	}
 	return m.maxTokensFn()
 }
+
+// SetVision wires the per-turn image-input capability. Read per run; nil = no
+// vision (view_image refuses with an actionable error, no prompt guidance).
+func (m *MainAgent) SetVision(fn func() bool) { m.visionFn = fn }
+
+func (m *MainAgent) vision() bool { return m.visionFn != nil && m.visionFn() }
 
 func NewMainAgent(prov llm.Provider, model, workDir string, tx *transcript.Store, window, maxTurns int) *MainAgent {
 	return &MainAgent{prov: prov, model: model, workDir: workDir, tx: tx, window: window, maxTurns: maxTurns}
@@ -165,6 +172,7 @@ func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.
 	)
 	defer span.End()
 	tsx := NewToolSet(ts, "human")
+	tsx.SetVision(m.vision())                      // view_image 的闸门与视觉提示跟随当前生效 profile
 	tsx.SetEgressProxy(m.proxyAddr, m.proxyCACert) // 原生 http_request/session_login 与 Bash 同源出口
 	tsx.SetFindingRecorder(m.findingRecorder)
 	tsx.SetScopeFlags(m.scopeGuard, m.scopeInheritWrites, m.crossTaskNotifyDedup)
@@ -192,7 +200,11 @@ func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.
 	// 共享目录注入：主 Agent 同样要能用作业/脚本/PoC 脚手架工具（见 planner 同款注释）。
 	tsx.SetRunDir(mainDir)
 	ctx = intercept.WithReviewWorkingDirectory(ctx, mainDir)
-	system, boundary := deferredSystem(mainAgentSystemWith(goal, m.workDir, mainDir, m.promptOverlay())+ProgramProfileBlock(m.programProfile), def)
+	mainSys := mainAgentSystemWith(goal, m.workDir, mainDir, m.promptOverlay()) + ProgramProfileBlock(m.programProfile)
+	if m.vision() {
+		mainSys += visionGuidance
+	}
+	system, boundary := deferredSystem(mainSys, def)
 	opts := agentcore.Options{
 		Provider:        m.prov,
 		SystemPrompt:    system,

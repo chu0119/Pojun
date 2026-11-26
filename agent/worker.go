@@ -99,6 +99,10 @@ type Worker struct {
 	// maxTokensFn resolves the per-reply output cap in tokens, on the same
 	// per-run basis. nil or 0 = send no cap and let the endpoint decide.
 	maxTokensFn func() int
+	// visionFn resolves whether the run's active model accepts images. Read per
+	// run like nonStreamingFn so a profile/failover change takes effect without
+	// rebuilding the agent. nil = no vision.
+	visionFn func() bool
 	// programProfile 是任务级 SRC/众测 profile（v0.4.112）；nil=不渲染，零行为变化。
 	programProfile *db.ProgramProfile
 	// profilePrompt resolves the LLM-profile-scoped overlay for this run (nil =
@@ -152,6 +156,12 @@ func (w *Worker) maxTokens() int {
 	}
 	return w.maxTokensFn()
 }
+
+// SetVision wires a resolver for the run's image-input capability. Read per run;
+// nil = no vision (text-only prompt and view_image refuses).
+func (w *Worker) SetVision(fn func() bool) { w.visionFn = fn }
+
+func (w *Worker) vision() bool { return w.visionFn != nil && w.visionFn() }
 
 // SetConstraintInject wires a resolver deciding whether this task's operation
 // constraints get injected into the worker system prompt. nil = inject (default).
@@ -596,6 +606,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	tsx.SetScopeFlags(w.scopeGuard, w.scopeInheritWrites, w.crossTaskNotifyDedup)
 	tsx.SetFindingRecorder(w.findingRecorder)
 	tsx.SetTaskID(taskID)
+	tsx.SetVision(w.vision()) // view_image 的闸门与视觉提示跟随当前生效 profile
 	tsx.SetProgramProfile(w.programProfile)
 	coverageEnabled := as == nil || as.CoverageEnabled(taskID)
 	tsx.SetCoverageEnabled(coverageEnabled)
@@ -635,6 +646,9 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	// 启动的重建计算与注入前缀。worker 只需要「别人发现了什么」做去重与联想。
 	overview := renderWorkerGraphOverview(tsx.workerOverviewData())
 	sysBody := workerSystemWith(w.proxyAddr, w.proxyCACert, w.workDir, runDir, w.promptOverlay())
+	if w.vision() {
+		sysBody += visionGuidance // 模型能看图才谈截图/view_image，否则只会误导
+	}
 	if w.wantConstraints() {
 		sysBody += constraintBlock(ts) // 操作约束(若有)注入系统提示,worker 执行时严格遵守
 	}

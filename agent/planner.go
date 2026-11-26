@@ -45,6 +45,7 @@ type Planner struct {
 	workDir              string                                 // shared work dir (surfaced in prompt as artifact-output target)
 	injectConstraints    func() bool                            // resolver: inject task operation constraints into system prompt? (nil = yes)
 	nonStreamingFn       func() bool                            // resolver: use non-streaming (Complete) path? (nil = streaming)
+	visionFn             func() bool                            // resolver: model accepts images? (nil = no)
 	noaEnabledFn         func() bool                            // resolver: use experimental noa compaction? (nil = off)
 	maxTokensFn          func() int                             // resolver: per-reply output cap (nil/0 = send no cap)
 	programProfile       *db.ProgramProfile                     // SRC/众测 profile（nil = 不渲染）
@@ -103,6 +104,13 @@ func (p *Planner) SetCompactor(c *Compactor) { p.compactor = c }
 func (p *Planner) SetNonStreaming(fn func() bool) { p.nonStreamingFn = fn }
 
 func (p *Planner) nonStreaming() bool { return p.nonStreamingFn != nil && p.nonStreamingFn() }
+
+// SetVision wires the per-run image-input capability for consistency: the
+// planner does not call view_image itself, but its ToolSet carries the flag so
+// potential prompt/gating logic stays in one place.
+func (p *Planner) SetVision(fn func() bool) { p.visionFn = fn }
+
+func (p *Planner) vision() bool { return p.visionFn != nil && p.visionFn() }
 
 // SetNoaEnabled wires a resolver deciding whether runs use the experimental noa
 // context-compression mechanism. nil/unset = off (built-in compaction). Read per
@@ -496,6 +504,7 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	// runs in a detached goroutine so it never adds latency to this round.
 	p.compactor.OnPlannerRound(ctx, ts)
 	tsx := NewToolSet(ts, "planner")
+	tsx.SetVision(p.vision())
 	tsx.SetEgressProxy(p.proxyAddr, p.proxyCACert) // 原生 http_request/session_login 与 Bash 同源出口
 	tsx.SetFindingRecorder(p.findingRecorder)
 	tsx.SetScopeFlags(p.scopeGuard, p.scopeInheritWrites, p.crossTaskNotifyDedup)

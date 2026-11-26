@@ -109,6 +109,9 @@ type ToolSet struct {
 	// runDir 是本次运行的专属工作目录（worker 在这里产生截图/样本），
 	// save_evidence 的相对路径基准；由 Worker.Execute 注入。
 	runDir string
+	// vision 是本次 run 的模型是否支持图片输入：view_image 的闸门，也决定
+	// system prompt 是否追加视觉说明。每 run 由当前生效 profile 解析。
+	vision bool
 	as     *db.AssetStore   // asset store (optional; nil = asset tools not available)
 	cs     *db.CompanyStore // company store (optional)
 	ts     *db.ExplorationStore
