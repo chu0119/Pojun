@@ -1,0 +1,14 @@
+{
+  "id": "kb-cloud-k8s",
+  "name": "云与 K8s 实战条目",
+  "version": "1.0.0",
+  "schema": 2,
+  "license": "CC0-1.0（自写条目；参考来源仅链接）",
+  "review_status": "approved",
+  "sources": [
+    "https://cloud.google.com/security",
+    "https://kubernetes.io/docs/concepts/security/"
+  ],
+  "entry_count": 12,
+  "sha256": "8322caf113a4c6e88889f28af86ce4cd61430e70bf564973df786a2f891e20dc"
+}

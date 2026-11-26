@@ -1,0 +1,14 @@
+{
+  "id": "kb-web-api",
+  "name": "Web 与 API 实战条目",
+  "version": "1.0.0",
+  "schema": 2,
+  "license": "CC0-1.0（自写条目；参考来源仅链接）",
+  "review_status": "approved",
+  "sources": [
+    "https://owasp.org/www-project-web-security-testing-guide/",
+    "https://portswigger.net/web-security"
+  ],
+  "entry_count": 19,
+  "sha256": "d21154cb024ad9f79588601f9d7a9c186cbb5f5f460bb17ba26270de511c8d14"
+}

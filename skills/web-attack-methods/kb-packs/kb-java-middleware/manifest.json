@@ -1,0 +1,14 @@
+{
+  "id": "kb-java-middleware",
+  "name": "Java 与中间件实战条目",
+  "version": "1.0.0",
+  "schema": 2,
+  "license": "CC0-1.0（自写条目；参考来源仅链接）",
+  "review_status": "approved",
+  "sources": [
+    "https://owasp.org/www-community/vulnerabilities/Deserialization_of_untrusted_data",
+    "https://docs.spring.io/spring-boot/reference/actuator/endpoints.html"
+  ],
+  "entry_count": 15,
+  "sha256": "2cc2a6a3d479671ab24bb921746738fbfb71346ee37d74e77157ef63e61bf825"
+}
