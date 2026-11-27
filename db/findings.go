@@ -669,6 +669,46 @@ func (d *DB) GetFinding(id int64) (*DBFinding, error) {
 	return f, nil
 }
 
+// FindingsMissingReport 返回某任务下「详细报告为空」的漏洞标签（"#ID 名称"）。
+//
+// 判定必须走这个专用查询：列表查询 findingSelectCols 为了性能不 SELECT report，
+// 所以列表结果里的 DBFinding.Report 恒为 ""（见该字段注释）。拿列表结果判空，
+// 会把已写好报告的漏洞也当成缺失，收尾时每次都误报一条「缺少详细报告」。
+// 报告只有空白字符时同样算缺失（与 strings.TrimSpace 一致：空格/制表/换行等），
+// 误报/重复/忽略等状态仍按原样参与检查，只有重复上报（duplicate）与已合并行除外。
+func (d *DB) FindingsMissingReport(taskID string, limit int) ([]string, error) {
+	tid, err := strconv.ParseInt(taskID, 10, 64)
+	if err != nil || tid <= 0 {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 5
+	}
+	rows, err := d.Query(`SELECT id,
+		COALESCE(NULLIF(btrim(name), ''), NULLIF(btrim(vulnclass), ''), '未分类')
+	FROM findings
+	WHERE task_id = $1
+	  AND COALESCE(status, 'pending') <> 'duplicate'
+	  AND merged_into_id IS NULL
+	  AND btrim(COALESCE(report, ''), E' \t\r\n\v\f') = ''
+	ORDER BY id
+	LIMIT $2`, tid, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id int64
+		var title string
+		if err := rows.Scan(&id, &title); err != nil {
+			return nil, err
+		}
+		out = append(out, fmt.Sprintf("#%d %s", id, title))
+	}
+	return out, rows.Err()
+}
+
 // DeleteFinding removes a finding entirely: the standalone findings row and its
 // originating exploration node (kind='finding'), so it disappears from the findings
 // list, the per-task 发现 Tab, and the exploration graph alike. Deleting the node

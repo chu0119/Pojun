@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -515,5 +516,90 @@ func TestAddFindingFollowUpIntent(t *testing.T) {
 	}
 	if _, _, err := store.AddFindingFollowUpIntent(findingID, findingNodeID, "should fail", auditInput); !errors.Is(err, ErrFindingOriginUnavailable) {
 		t.Fatalf("missing source node: want ErrFindingOriginUnavailable, got %v", err)
+	}
+}
+
+// TestFindingsMissingReport 验证「详细报告缺失」用的是 report 列本身。
+//
+// 回归背景：findingSelectCols 为列表性能不 SELECT f.report，列表结果里的
+// DBFinding.Report 恒为 ""；warnFindingsWithoutReport 曾用列表结果判空，
+// 于是报告齐全的漏洞也被逐条点名，任务收尾时总是误报「缺少详细报告」。
+func TestFindingsMissingReport(t *testing.T) {
+	d, err := Open(testDSN(t))
+	if err != nil {
+		t.Skipf("postgres unavailable (%v) — skipping", err)
+	}
+	defer d.Close()
+
+	tk, err := d.CreateTask("报告缺失判定测试", "目标", nil, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.DeleteTask(tk.ID)
+	taskID := strconv.FormatInt(tk.ID, 10)
+
+	empty, err := d.AddFinding(tk.ID, 0, "XSS", "空报告漏洞", "medium", "s", "e", "worker", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	filled, err := d.AddFinding(tk.ID, 0, "SQLi", "已有报告漏洞", "high", "s", "e", "worker", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	setReport := func(id int64, report string) {
+		t.Helper()
+		if _, err := d.Exec(`UPDATE findings SET report=$1 WHERE id=$2`, report, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setReport(filled, "# 报告\n正文")
+
+	// 列表查询不带 report —— 这正是旧实现误判的根源，先钉住这个前提。
+	page, _, err := d.ListFindingsPage(FindingFilter{TaskID: taskID}, 1, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page) != 2 {
+		t.Fatalf("list page: want 2 findings, got %d", len(page))
+	}
+	for _, f := range page {
+		if f.Report != "" {
+			t.Fatalf("列表查询不应携带 report，finding #%d 却拿到了 %q", f.ID, f.Report)
+		}
+	}
+
+	missing, err := d.FindingsMissingReport(taskID, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(missing) != 1 {
+		t.Fatalf("want exactly 1 missing report, got %d: %v", len(missing), missing)
+	}
+	if want := fmt.Sprintf("#%d 空报告漏洞", empty); missing[0] != want {
+		t.Fatalf("missing[0] = %q, want %q", missing[0], want)
+	}
+
+	// 只有空白字符仍算缺失（btrim 的字符集要与 strings.TrimSpace 对齐）。
+	setReport(empty, "  \n\t ")
+	if got, _ := d.FindingsMissingReport(taskID, 5); len(got) != 1 {
+		t.Fatalf("空白报告的漏洞仍应算缺失，got %v", got)
+	}
+
+	// 补上正文后不再点名。
+	setReport(empty, "## 概述\n已补齐")
+	if got, _ := d.FindingsMissingReport(taskID, 5); len(got) != 0 {
+		t.Fatalf("报告已补齐，want 0 missing, got %v", got)
+	}
+
+	// 重复上报（duplicate）与已合并行不该被点名。
+	dup, err := d.AddFinding(tk.ID, 0, "XSS", "重复漏洞", "medium", "s", "e", "worker", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.SetFindingStatus(dup, FindingDuplicate); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := d.FindingsMissingReport(taskID, 5); len(got) != 0 {
+		t.Fatalf("duplicate 行不该被点名，got %v", got)
 	}
 }

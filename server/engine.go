@@ -1139,25 +1139,13 @@ func (e *Engine) warnFindingsWithoutReport(t *Task) {
 	if e.m == nil || e.m.pg == nil {
 		return
 	}
-	fs, _, err := e.m.pg.ListFindingsPage(db.FindingFilter{TaskID: t.ID}, 1, 500)
+	// 注意：列表查询（findingSelectCols）为了性能不 SELECT report，
+	// 所以列表结果里的 f.Report 恒为 ""。这里若继续用 ListFindingsPage 判空，
+	// 已写好报告的漏洞也会被判成缺失 → 每个任务收尾都误报一条「缺少详细报告」
+	//（实测 v0.4.123：8 条漏洞报告齐全仍报 5 条缺失）。改用专用查询判定。
+	missing, err := e.m.pg.FindingsMissingReport(t.ID, 5)
 	if err != nil {
 		return
-	}
-	var missing []string
-	for _, f := range fs {
-		if strings.TrimSpace(f.Report) == "" {
-			title := strings.TrimSpace(f.Name)
-			if title == "" {
-				title = strings.TrimSpace(f.VulnClass)
-			}
-			if title == "" {
-				title = "未分类"
-			}
-			missing = append(missing, fmt.Sprintf("#%d %s", f.ID, title))
-			if len(missing) >= 5 {
-				break
-			}
-		}
 	}
 	if len(missing) == 0 {
 		return
