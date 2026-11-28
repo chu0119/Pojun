@@ -649,6 +649,9 @@ type LLMProfileDTO struct {
 	VisionMode   string `json:"vision_mode"`
 	Vision       bool   `json:"vision"`
 	VisionSource string `json:"vision_source"`
+	// 反向引用：哪些 Agent 用 (Agent × 本配置) 覆盖/关闭了本配置的默认提示词
+	// （只读，来自 agent_profile_prompts）。
+	PromptOverrides []db.AgentPromptRef `json:"prompt_overrides,omitempty"`
 }
 
 func llmProfileDTO(p *db.LLMProfile) LLMProfileDTO {
@@ -680,6 +683,7 @@ func llmProfileDTO(p *db.LLMProfile) LLMProfileDTO {
 		PromptApplyInherited: p.PromptApplyInherited,
 		EffortOverrides:      p.EffortOverrides,
 		VisionMode:           p.VisionMode,
+		PromptOverrides:      p.PromptOverrides,
 	}
 	out.Vision, out.VisionSource = profileVisionSource(p)
 	return out

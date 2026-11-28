@@ -82,6 +82,9 @@ type LLMProfile struct {
 	// EffortOverrides 是只读的反向引用（哪些 Agent 覆盖了本配置的强度），由列表
 	// 处理器一次查询后附加；不在 profileCols 中，也不参与保存。
 	EffortOverrides []AgentEffortRef `json:"-"`
+	// PromptOverrides 是只读的反向引用（哪些 Agent 覆盖/关闭了本配置的默认
+	// 提示词），同样由列表处理器附加，不参与保存。
+	PromptOverrides []AgentPromptRef `json:"-"`
 	// Retry overrides this profile's share of the retry ladder. Zero value =
 	// inherit the global policy (LLMRetryPolicy), so an untouched profile behaves
 	// exactly as before. See RetryOverride.
@@ -242,6 +245,45 @@ ORDER BY is_default DESC, priority DESC, id ASC`)
 
 // SaveProfile inserts (id==0) or updates a profile. Empty apiKey on update keeps existing.
 func (d *DB) SaveProfile(p *LLMProfile) (int64, error) {
+	return saveProfileRow(d, p)
+}
+
+// SaveProfileWithPrompt updates a profile and its default independent prompt in
+// one transaction. The prompt used to be written by a second UPDATE after the
+// profile row, so a failure in between left a half-saved configuration (new
+// model, old prompt) — exactly the silent state the two-layer prompt model must
+// not produce. Returns ErrLLMProfileNotFound when the target row disappeared.
+func (d *DB) SaveProfileWithPrompt(p *LLMProfile, pi PromptInfo) (int64, error) {
+	tx, err := d.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	id, err := saveProfileRow(tx, p)
+	if err != nil {
+		return 0, err
+	}
+	res, err := tx.Exec(`UPDATE llm_profiles SET prompt=$1, prompt_mode=$2, prompt_apply_inherited=$3 WHERE id=$4`,
+		pi.Text, pi.Mode, pi.ApplyInherited, id)
+	if err != nil {
+		return 0, err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return 0, err
+	} else if n == 0 {
+		return 0, ErrLLMProfileNotFound
+	}
+	return id, tx.Commit()
+}
+
+// rowExecer is the subset of *sql.DB / *sql.Tx the profile writers need, so the
+// single-statement and transactional variants share one implementation.
+type rowExecer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+func saveProfileRow(q rowExecer, p *LLMProfile) (int64, error) {
 	hint := p.APIKeyHint
 	if len(p.APIKey) >= 4 {
 		hint = "…" + p.APIKey[len(p.APIKey)-4:]
@@ -249,19 +291,19 @@ func (d *DB) SaveProfile(p *LLMProfile) (int64, error) {
 	r := p.Retry.Clamped()
 	if p.ID == 0 {
 		var id int64
-		err := d.QueryRow(`INSERT INTO llm_profiles(name,format,base_url,proxy,model,api_key,api_key_hint,rate_per_second,rate_per_minute,context_window_k,reasoning_effort,priority,pool_exclude,thinking_type,streaming,max_tokens,max_tokens_field,session_header_key,user_agent,retry_connect_attempts,retry_connect_interval_ms,retry_empty_attempts,retry_empty_interval_ms,retry_stream_attempts,retry_stream_interval_ms,preset_id,vision_mode)
+		err := q.QueryRow(`INSERT INTO llm_profiles(name,format,base_url,proxy,model,api_key,api_key_hint,rate_per_second,rate_per_minute,context_window_k,reasoning_effort,priority,pool_exclude,thinking_type,streaming,max_tokens,max_tokens_field,session_header_key,user_agent,retry_connect_attempts,retry_connect_interval_ms,retry_empty_attempts,retry_empty_interval_ms,retry_stream_attempts,retry_stream_interval_ms,preset_id,vision_mode)
 VALUES ($1,$2,NULLIF($3,''),NULLIF($4,''),$5,NULLIF($6,''),NULLIF($7,''),$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27) RETURNING id`,
 			p.Name, p.Format, p.BaseURL, p.Proxy, p.Model, p.APIKey, hint, p.RatePerSecond, p.RatePerMinute, p.ContextWindowK, p.ReasoningEffort, p.Priority, p.PoolExclude, p.ThinkingType, p.Streaming, p.MaxTokens, p.MaxTokensField, p.SessionHeaderKey, p.UserAgent,
 			r.Connect.Attempts, r.Connect.IntervalMS, r.Empty.Attempts, r.Empty.IntervalMS, r.Stream.Attempts, r.Stream.IntervalMS, p.PresetID, p.VisionMode).Scan(&id)
 		return id, err
 	}
 	if p.APIKey == "" {
-		_, err := d.Exec(`UPDATE llm_profiles SET name=$1,format=$2,base_url=NULLIF($3,''),proxy=NULLIF($4,''),model=$5,rate_per_second=$6,rate_per_minute=$7,context_window_k=$8,reasoning_effort=$9,priority=$10,pool_exclude=$11,thinking_type=$12,streaming=$13,max_tokens=$14,max_tokens_field=$15,session_header_key=$16,user_agent=$17,retry_connect_attempts=$18,retry_connect_interval_ms=$19,retry_empty_attempts=$20,retry_empty_interval_ms=$21,retry_stream_attempts=$22,retry_stream_interval_ms=$23,preset_id=$24,vision_mode=$25 WHERE id=$26`,
+		_, err := q.Exec(`UPDATE llm_profiles SET name=$1,format=$2,base_url=NULLIF($3,''),proxy=NULLIF($4,''),model=$5,rate_per_second=$6,rate_per_minute=$7,context_window_k=$8,reasoning_effort=$9,priority=$10,pool_exclude=$11,thinking_type=$12,streaming=$13,max_tokens=$14,max_tokens_field=$15,session_header_key=$16,user_agent=$17,retry_connect_attempts=$18,retry_connect_interval_ms=$19,retry_empty_attempts=$20,retry_empty_interval_ms=$21,retry_stream_attempts=$22,retry_stream_interval_ms=$23,preset_id=$24,vision_mode=$25 WHERE id=$26`,
 			p.Name, p.Format, p.BaseURL, p.Proxy, p.Model, p.RatePerSecond, p.RatePerMinute, p.ContextWindowK, p.ReasoningEffort, p.Priority, p.PoolExclude, p.ThinkingType, p.Streaming, p.MaxTokens, p.MaxTokensField, p.SessionHeaderKey, p.UserAgent,
 			r.Connect.Attempts, r.Connect.IntervalMS, r.Empty.Attempts, r.Empty.IntervalMS, r.Stream.Attempts, r.Stream.IntervalMS, p.PresetID, p.VisionMode, p.ID)
 		return p.ID, err
 	}
-	_, err := d.Exec(`UPDATE llm_profiles SET name=$1,format=$2,base_url=NULLIF($3,''),proxy=NULLIF($4,''),model=$5,api_key=$6,api_key_hint=$7,rate_per_second=$8,rate_per_minute=$9,context_window_k=$10,reasoning_effort=$11,priority=$12,pool_exclude=$13,thinking_type=$14,streaming=$15,max_tokens=$16,max_tokens_field=$17,session_header_key=$18,user_agent=$19,retry_connect_attempts=$20,retry_connect_interval_ms=$21,retry_empty_attempts=$22,retry_empty_interval_ms=$23,retry_stream_attempts=$24,retry_stream_interval_ms=$25,preset_id=$26,vision_mode=$27 WHERE id=$28`,
+	_, err := q.Exec(`UPDATE llm_profiles SET name=$1,format=$2,base_url=NULLIF($3,''),proxy=NULLIF($4,''),model=$5,api_key=$6,api_key_hint=$7,rate_per_second=$8,rate_per_minute=$9,context_window_k=$10,reasoning_effort=$11,priority=$12,pool_exclude=$13,thinking_type=$14,streaming=$15,max_tokens=$16,max_tokens_field=$17,session_header_key=$18,user_agent=$19,retry_connect_attempts=$20,retry_connect_interval_ms=$21,retry_empty_attempts=$22,retry_empty_interval_ms=$23,retry_stream_attempts=$24,retry_stream_interval_ms=$25,preset_id=$26,vision_mode=$27 WHERE id=$28`,
 		p.Name, p.Format, p.BaseURL, p.Proxy, p.Model, p.APIKey, hint, p.RatePerSecond, p.RatePerMinute, p.ContextWindowK, p.ReasoningEffort, p.Priority, p.PoolExclude, p.ThinkingType, p.Streaming, p.MaxTokens, p.MaxTokensField, p.SessionHeaderKey, p.UserAgent,
 		r.Connect.Attempts, r.Connect.IntervalMS, r.Empty.Attempts, r.Empty.IntervalMS, r.Stream.Attempts, r.Stream.IntervalMS, p.PresetID, p.VisionMode, p.ID)
 	return p.ID, err
@@ -346,6 +388,10 @@ WHERE a.llm_profile_id=$1
        SELECT 1 FROM agent_profile_effort_overrides o
        WHERE o.profile_id=$1 AND o.agent_key=a.key
    )
+   OR EXISTS (
+       SELECT 1 FROM agent_profile_prompts p
+       WHERE p.profile_id=$1 AND p.agent_key=a.key
+   )
 ORDER BY a.id
 FOR UPDATE OF a`, id)
 	if err != nil {
@@ -395,6 +441,10 @@ WHERE a.llm_profile_id=$1
    OR EXISTS (
        SELECT 1 FROM agent_profile_effort_overrides o
        WHERE o.profile_id=$1 AND o.agent_key=a.key
+   )
+   OR EXISTS (
+       SELECT 1 FROM agent_profile_prompts p
+       WHERE p.profile_id=$1 AND p.agent_key=a.key
    )
 	UNION ALL
 	SELECT 'conversation', c.id FROM conversations c WHERE c.llm_profile_id=$1

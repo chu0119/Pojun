@@ -124,6 +124,58 @@
 - **任务 Playbook v4**：新增 API/Java/云 K8s/代码审计/支付逻辑/前端供应链/网络设备/
   AI LLM/数据取证/SRC 验收等模板，独立 flag `task_playbooks_v4`，不复活用户改过的同名模板。
 
+### 修复：换装后旧标签页点击无反应（静态产物语义与前端代次）
+
+- **服务端静态产物**（`server/webui_handler.go`）：按命名空间提供，改"先解析后写头"。
+  缺失的 `_next/static/*` 不再被回成 200 `text/html` 并贴一年 `immutable`，而是
+  404 + `text/plain` + `no-store`；`immutable` 只发给确实存在且内容寻址的文件；
+  未知深链由"回首页"改为 404 页（状态码 404）；`*_next/*`、`__next.*.txt` 等资产
+  必须精确命中。补齐 `nosniff` / `X-Frame-Options` / `Referrer-Policy`，非
+  GET/HEAD 回 405。
+- **构建身份**：对内嵌产物全量算 sha256 取前 16 位，注入每个 HTML 的
+  `<meta name="pojun-build">`，并暴露 `/_pojun_build.txt`（无产品名、未鉴权）与
+  `/api/version.web_build`（鉴权）。同一二进制恒定，改一个字节即变。
+- **前端韧性**：新增 BuildGuard（mount / bfcache / focus / 可见时每 60s 比对
+  代次，不一致出常驻横幅；仅"链页 + 无草稿 + 刚打开"自动重载一次，30s 冷却 +
+  抖动）与 AssetFailureGuard（脚本/样式失败与 chunk 族 unhandledrejection），
+  并在 `<head>` 内联不依赖任何 chunk 的兜底（入口 chunk 失败时 React 不挂载）。
+- **点击反馈**：关系图在舞台 <520px 时不再 `disabled` 静默吞点击，改
+  `aria-disabled` + toast；URL 直达被切回清单同样提示；链页 Suspense
+  fallback 换骨架；`@antv/g6` 动态 import 补可见错误态。
+- **确认框**：全部 10 处 `window.confirm` 换成应用内 AlertDialog
+  （`useConfirm()`，危险操作实心红、默认焦点在"取消"）。原生弹窗既与界面
+  脱节，又会被浏览器「阻止此页面创建更多对话框」压制而静默返回 false——那
+  正是"点了没反应"的来源。顺带修 `AlertDialogAction` 用 className 覆盖
+  `bg-primary` 不生效的既有缺陷（新增 `destructive-solid` 变体）。
+- **口径**：页头分别展示服务器版本与前端代次；删除手写的 `APP_CONFIG.version`
+  （2.2.0，与二进制和前端构建都无关）；更新卡等待重启时同时比较 `version` 与
+  `web_build`，同版本重构建不再超时。
+- 契约见 `docs/webui-serving-contract.md`。升级后旧标签页在 60s 内或重新聚焦时
+  出现"立即重新加载"横幅；被旧 `immutable` 污染过的浏览器仍需一次硬刷新。
+
+### 修复：独立提示词跨 Agent 静默污染（配置默认 + (Agent × 配置) 覆盖）
+
+- **数据模型**：`llm_profiles.prompt` 原地变为「配置默认层」；新增
+  `agent_profile_prompts(agent_key, profile_id, prompt, prompt_mode, updated_at)` 覆盖表。
+  无行 = 继承默认；行 + 空正文 = 本 Agent 显式不注入；行 + 非空 = 覆盖。
+  **覆盖永远生效，不受 `prompt_apply_inherited` 限制**——该开关只约束默认层。零数据迁移。
+- **运行时**：`profilePromptForTaskRole` / `profilePromptForChat` 统一走
+  `effectiveProfilePrompt`，先查 (Agent × 配置) 覆盖再回退默认层；读库失败按不注入处理。
+- **API**：新增 `GET/PUT/DELETE /api/agents/{key}/llm-prompt-overrides[/{profile_id}]`；
+  PUT 缺 `prompt` 返回 400、配置不存在返回 404、成功 204，DELETE 幂等 204。
+- **保存路径**：配置主体与默认提示词改为同一事务（`db.SaveProfileWithPrompt`）；
+  保存不存在的配置 id 由「200 且 0 行更新」改为 404。提示词保存的尾随空白判定与
+  JS `trim()` 对齐（NBSP / U+2028）。
+- **前端**：LLM 配置抽屉只编辑默认层，常驻「本默认作用于 N 个 Agent」标签并在保存时
+  点名受影响 Agent（含全局继承者，扣除已覆盖者）；全链路页只编辑覆盖层（继承 /
+  覆盖 / 不注入三选），并在预览态明确「保存会写入 (本 Agent × 预览配置) 的覆盖」。
+  「提示词正文」对象不再挂独立提示词编辑器。
+- **并发**：修保存/改强度回调在切换 Agent 后用旧 key 重载并抢占新请求的问题
+  （响应既校验请求序号，也校验当前 URL key 与响应 `agent_key`）；修配置列表快照
+  回填旧正文的问题（链页不再按挂载时快照写回整份配置）。
+- **mock**：按真实规则解析（Agent 绑定 / 全局继承 / 三种覆盖态），不再把任意 Agent
+  恒解析为 profile #1。
+
 ## [0.4.122] - 2026-11-26
 ### 修复：终态经验落库 UTF-8 截断（#75）
 
@@ -463,6 +515,20 @@
   schema 不兼容降级、`taskCols` 不含回执列、UA 常量一致性。
 
 ## [Unreleased]
+### 变更：全链路页重构为清单与关系图两种读法
+
+- 装配链页重写：一个模型（`web/src/lib/chain-model.ts`）两种读法（清单 / 关系图）加常驻
+  检视器；对象之间只有 `feeds` 一种关系，选中、相关高亮与连线同源，顺序由模型决定。
+- 关系图几何抽成纯函数（`web/src/lib/chain-schematic.ts`）：三列 / 两列两档，低于 520px
+  不提供；来源与它喂给的段同一行，随请求下发整组只有一条连线进入模型请求；新增
+  node:test 几何自检（重叠、越界、交叉、穿节点）。
+- 页头重排：Agent 与预览配置选择、清单 | 关系图 | LLM 路由切换、判决徽标、刷新、更多菜单；
+  `view` 新增 `list` / `map`（原 `chain` 视同 `list`），新增 `sel=<对象 id>`，刷新可复现。
+- 整页字号收敛到四档（`text-xl` / `text-base` / `text-sm` / `text-xs`），不出现任意字号；
+  状态改用图标与状态词表达，不再用线型编码。
+- 修复外壳高度：主区下内边距是 24 而旧算法按 16 计算，整页多出 8px 滚动。
+- 删除 `web/src/lib/chain-layout.ts` 及其测试；缩放、平移、小地图与路径栈不再使用。
+
 ### 变更：技能描述不再按字符截断，速查块三态如实标出
 
 - 装配链投影返回完整 Skill 描述；模型侧索引行只取首个语义单元，不再按 80/120 字硬切

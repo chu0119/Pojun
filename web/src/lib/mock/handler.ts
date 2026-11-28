@@ -38,11 +38,15 @@ import type {
 import * as D from "./data";
 import { hostenvStatus } from "./hostenv";
 import {
+  allMockPromptOverrides,
+  deleteMockPromptOverride,
   getMockEffortOverride,
   getMockProfilePrompt,
+  listMockPromptOverrides,
   mockPromptChain,
   setMockEffortOverride,
   setMockProfilePrompt,
+  setMockPromptOverride,
 } from "./prompt-chain";
 
 const delay = (ms = 120) => new Promise((r) => setTimeout(r, ms));
@@ -2421,13 +2425,24 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
   if (path === "/llm/test")
     return { ok: true, latency_ms: 128, model: String(b.model ?? "claude-opus-4-8"), reply: "OK" };
   if (path === "/llm/profiles" && m === "GET") {
-    // 演示模式下把配置面板保存过的独立提示词回填，否则再打开抽屉会看到旧文本。
+    // 演示模式下把配置面板保存过的独立提示词（默认层）与 Agent 覆盖回填，
+    // 否则再打开抽屉会看到旧文本。
+    const allOverrides = allMockPromptOverrides();
     return {
       profiles: D.llmProfiles.map((p) => {
         const edit = getMockProfilePrompt(Number(p.id));
-        return edit
-          ? { ...p, prompt: edit.prompt, prompt_mode: edit.mode, prompt_apply_inherited: edit.inherit }
-          : p;
+        const refs = allOverrides
+          .filter((o) => o.profile_id === Number(p.id))
+          .map((o) => ({
+            agent_key: o.agent_key,
+            prompt_mode: o.prompt_mode,
+            prompt_chars: Array.from(o.prompt).length,
+          }));
+        return {
+          ...p,
+          ...(edit ? { prompt: edit.prompt, prompt_mode: edit.mode, prompt_apply_inherited: edit.inherit } : {}),
+          ...(refs.length > 0 ? { prompt_overrides: refs } : {}),
+        };
       }),
       prompt_max_runes: 65535,
     };
@@ -2500,6 +2515,23 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
     return {};
   }
   if (seg[0] === "agents" && seg[2] === "llm-effort-overrides") return {}; // 其余方法：演示模式不落库
+
+  // (Agent × LLM 配置) 的独立提示词覆盖：无行=继承；空正文=本 Agent 不注入。
+  if (seg[0] === "agents" && seg[2] === "llm-prompt-overrides" && m === "GET" && seg.length === 3) {
+    return { agent_key: seg[1], overrides: listMockPromptOverrides(seg[1]) };
+  }
+  if (seg[0] === "agents" && seg[2] === "llm-prompt-overrides" && seg.length === 4) {
+    const pid = Number(seg[3]);
+    if (m === "PUT") {
+      const text = String(b.prompt ?? "");
+      const mode = String(b.prompt_mode ?? "");
+      // 与后端归一化一致：空正文清空模式；非空 + 空模式 = prepend。
+      setMockPromptOverride(seg[1], pid, text, text.trim() ? mode || "prepend" : "");
+    }
+    if (m === "DELETE") deleteMockPromptOverride(seg[1], pid);
+    return {};
+  }
+  if (seg[0] === "agents" && seg[2] === "llm-prompt-overrides") return {};
 
   // ── conversations ──
   if (path === "/conversations" && m === "GET") {

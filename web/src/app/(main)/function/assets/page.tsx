@@ -751,7 +751,7 @@ export default function AssetsPage() {
                 void confirmDelete();
               }}
               disabled={deleting}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              variant="destructive-solid"
             >
               {deleting ? "删除中…" : "确认删除"}
             </AlertDialogAction>
@@ -799,7 +799,7 @@ export default function AssetsPage() {
                 void confirmDeleteCompany();
               }}
               disabled={companyDeleting}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              variant="destructive-solid"
             >
               {companyDeleting ? "删除中…" : "确认删除"}
             </AlertDialogAction>

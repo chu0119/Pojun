@@ -825,7 +825,7 @@ export default function TrafficPage() {
                 confirmDelete();
               }}
               disabled={deleting}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              variant="destructive-solid"
             >
               {deleting ? `${deleteVerb}中…` : `确认${deleteVerb}`}
             </AlertDialogAction>

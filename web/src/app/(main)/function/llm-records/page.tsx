@@ -598,7 +598,7 @@ export default function LLMRecordsPage() {
                 confirmDelete();
               }}
               disabled={deleting}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              variant="destructive-solid"
             >
               {deleting ? "删除中…" : "确认删除"}
             </AlertDialogAction>

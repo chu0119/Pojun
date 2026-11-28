@@ -65,7 +65,7 @@ func TestNormalizeProfilePromptRequest(t *testing.T) {
 func strPtr(s string) *string { return &s }
 
 func TestPromptInactiveReasonNoProfile(t *testing.T) {
-	if got := promptInactiveReason(nil, db.PromptInfo{}, "none", nil); got != "当前没有解析到 LLM 配置" {
+	if got := promptInactiveReason(nil, db.PromptInfo{}, db.PromptInfo{}, "none", "none", nil); got != "当前没有解析到 LLM 配置" {
 		t.Fatalf("no-profile reason = %q", got)
 	}
 }
@@ -485,5 +485,12 @@ func TestSaveProfilePromptThreeState(t *testing.T) {
 	})
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("over-length should be 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Saving a profile id that no longer exists must be 404, not a 200 that
+	// updated zero rows and hid a typo.
+	rr = save(map[string]any{"id": 99999999, "name": name, "format": "openai", "model": "m2"})
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("missing profile should be 404, got %d: %s", rr.Code, rr.Body.String())
 	}
 }

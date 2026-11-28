@@ -22,6 +22,7 @@ import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
@@ -67,6 +68,7 @@ type CheckRow = {
 // 保存即热应用(upstream 钩子按请求选代理);连败 5 次自动熔断 10 分钟,
 // 另有主动健康检查定时验证、不通即熔断。
 export default function ProxyPoolPage() {
+  const confirm = useConfirm();
   const [entries, setEntries] = React.useState<ProxyPoolEntry[]>([]);
   const [strategy, setStrategy] = React.useState("round_robin");
   // 严格出口（默认关，公开版保持旧行为；UI 可开）：池已配置但全部不可用时，
@@ -304,9 +306,13 @@ export default function ProxyPoolPage() {
     // 空列表保存 = 清空整池：必须人工确认（页面状态过期时也不能静默清掉）。
     let confirmClear = false;
     if (entries.length === 0) {
-      if (typeof window !== "undefined" && !window.confirm("当前列表为空，保存会清空代理池里的全部条目。确定？")) {
-        return;
-      }
+      const ok = await confirm({
+        title: "清空代理池？",
+        description: "当前列表为空，保存会清空代理池里的全部条目。如果你只是没看到已有条目，先刷新页面再操作。",
+        confirmText: "清空并保存",
+        destructive: true,
+      });
+      if (!ok) return;
       confirmClear = true;
     }
     setSaving(true);
