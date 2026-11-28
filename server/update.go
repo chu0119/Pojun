@@ -306,6 +306,11 @@ func (s *Server) updateCheck(w http.ResponseWriter, r *http.Request) {
 
 	// 顶栏提示走缓存（默认）；用户点"检查更新"时带 force=1 强制回源。
 	force := r.URL.Query().Get("force") != ""
+	// 复用 vulnintel 的 GitHub token 给更新检查——同一套凭据，同一类 API 限流。
+	// 每次调用读（设置页保存 token 后立即生效），空值回退匿名 60/hour。
+	if s.m != nil && s.m.pg != nil {
+		selfupdate.SetGitHubToken(settingString(s.m.pg, settingVulnIntelGitHubToken))
+	}
 	client := selfupdate.NewClient(effectiveProxy)
 	rel, err := relCache.get(r.Context(), client, force)
 	if err != nil {

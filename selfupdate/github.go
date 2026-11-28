@@ -19,9 +19,22 @@ import (
 // 这样改的是产物本身，不是运行期可篡改的开关。
 var Repo = "chu0119/pojun"
 
+// githubToken is the optional GitHub API token for update checks. Set via
+// SetGitHubToken; it only affects the JSON API (api.github.com), not the binary
+// download path (release asset URLs are public).
+var githubToken string
+
+// SetGitHubToken sets the GitHub API token used for update checks. An empty
+// string clears it (falls back to anonymous 60 req/hour).
+func SetGitHubToken(token string) {
+	githubToken = strings.TrimSpace(token)
+}
+
 func latestURL() string { return "https://api.github.com/repos/" + Repo + "/releases/latest" }
 
-func tagURL(tag string) string { return "https://api.github.com/repos/" + Repo + "/releases/tags/" + tag }
+func tagURL(tag string) string {
+	return "https://api.github.com/repos/" + Repo + "/releases/tags/" + tag
+}
 
 // allowedHosts 限定升级链路能访问的域名。配合下面的 checkRedirect，
 // 任何一跳被重定向到名单外的主机都会直接失败——这是防止 DNS 污染 / 中间人
@@ -123,6 +136,17 @@ func alternateTag(tag string) string {
 	return "v" + tag
 }
 
+// setAPIHeaders sets the common headers for GitHub API requests. If a token is
+// configured (SetGitHubToken), it adds an Authorization header to raise the
+// rate limit from 60/hour to 5000/hour.
+func setAPIHeaders(req *http.Request) {
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "pojun-selfupdate")
+	if githubToken != "" {
+		req.Header.Set("Authorization", "Bearer "+githubToken)
+	}
+}
+
 func fetchRelease(ctx context.Context, c *http.Client, apiURL, what string) (*Release, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
@@ -131,9 +155,7 @@ func fetchRelease(ctx context.Context, c *http.Client, apiURL, what string) (*Re
 	if err := checkURL(req.URL); err != nil {
 		return nil, err
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "pojun-selfupdate")
-
+	setAPIHeaders(req)
 	resp, err := c.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("访问 GitHub 失败: %w", err)
