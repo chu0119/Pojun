@@ -13,6 +13,7 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
+import { toast } from "sonner";
 
 import { AgentLLMRoutePanel } from "@/components/agent-llm-route";
 import { AgentPromptChain } from "@/components/agent-prompt-chain";
@@ -154,8 +155,28 @@ function ChainPageInner() {
     router.replace(url({ view: next }));
   }
 
+  // 关系图放不下时不再用 disabled 静默挡掉点击：按钮仍可点，点了给出原因。
+  function requestView(next: View) {
+    if (next === "map" && mapUnavailable) {
+      toast.warning("窗口太窄：关系图至少需要 520px，请拉宽窗口或改用清单");
+      return;
+    }
+    setView(next);
+  }
+
+  // 旧链接直接带 ?view=map 时也要说明为什么被切回清单，而不是静默改写 URL。
+  const mapFallbackNotified = React.useRef(false);
   React.useEffect(() => {
-    if (view === "map" && mapUnavailable) router.replace(url({ view: "list" }));
+    if (view !== "map") {
+      mapFallbackNotified.current = false;
+      return;
+    }
+    if (!mapUnavailable) return;
+    if (!mapFallbackNotified.current) {
+      mapFallbackNotified.current = true;
+      toast.warning("窗口太窄，关系图无法显示，已切回清单（至少需要 520px）");
+    }
+    router.replace(url({ view: "list" }));
   }, [view, mapUnavailable, router, url]);
 
   const builtin = agents.filter((a) => a.builtin);
@@ -243,9 +264,9 @@ function ChainPageInner() {
               className={cn("h-6 px-2.5 text-xs", focusRing)}
               role="tab"
               aria-selected={view === v}
-              disabled={v === "map" && mapUnavailable}
+              aria-disabled={v === "map" && mapUnavailable ? true : undefined}
               title={v === "map" && mapUnavailable ? "舞台太窄（小于 520px），关系图不提供" : undefined}
-              onClick={() => setView(v)}
+              onClick={() => requestView(v)}
             >
               {label}
             </Button>
@@ -329,9 +350,21 @@ function ChainPageInner() {
 }
 
 // useSearchParams must sit under a Suspense boundary for static export.
+// 骨架而不是 null：换视图/首屏取数期间要看得见"正在发生什么"。
+function ChainPageSkeleton() {
+  return (
+    <div className="flex flex-col gap-3" role="status" aria-busy="true" aria-label="加载中">
+      <div className="h-8 w-40 animate-pulse rounded-md bg-muted" />
+      <div className="h-20 animate-pulse rounded-lg bg-muted" />
+      <div className="h-20 animate-pulse rounded-lg bg-muted" />
+      <div className="h-20 animate-pulse rounded-lg bg-muted" />
+    </div>
+  );
+}
+
 export default function AgentChainPage() {
   return (
-    <React.Suspense fallback={null}>
+    <React.Suspense fallback={<ChainPageSkeleton />}>
       <ChainPageInner />
     </React.Suspense>
   );

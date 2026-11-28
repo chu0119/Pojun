@@ -38,6 +38,14 @@ function humanSize(n?: number): string {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** /api/version（鉴权）：服务器版本 + 内嵌前端代次。 */
+type ServerVersion = { version?: string; web_build?: string };
+async function fetchServerVersion(): Promise<ServerVersion> {
+  const r = await fetch("/api/version", { cache: "no-store" });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return (await r.json()) as ServerVersion;
+}
+
 export function UpdateCard() {
   const [info, setInfo] = React.useState<UpdateCheck | null>(null);
   const [checking, setChecking] = React.useState(true);
@@ -74,8 +82,12 @@ export function UpdateCard() {
   //
   // 判据必须是"版本变了"而不是"能连上了"：换装过程中旧版本会短暂地重新起来一次
   // （那一次只负责把 pojun.new 换上去然后立刻退出），只看连通性会误判成功。
-  const waitForNewVersion = React.useCallback(async (fromVersion: string) => {
+  const waitForNewVersion = React.useCallback(async (baseline: { version: string; web_build: string }) => {
     setRestarting(true);
+    // 两个基线都必须取自服务端：拿本页 <meta> 的 web_build 当基线时，一个停在旧
+    // 构建的标签页会立刻判定"变了"，在换装真正发生前就误报成功并 reload。
+    const fromVersion = baseline.version;
+    const fromWebBuild = baseline.web_build;
     const deadline = Date.now() + RESTART_TIMEOUT_MS;
     while (Date.now() < deadline) {
       await sleep(2000);
@@ -83,9 +95,11 @@ export function UpdateCard() {
         // /api/health 已去身份（公网指纹治理）：版本查询走鉴权的 /api/version。
         const r = await fetch("/api/version", { cache: "no-store" });
         if (r.ok) {
-          const j = (await r.json()) as { version?: string };
-          if (j.version && j.version !== fromVersion) {
-            toast.success(`已更新到 ${j.version}，正在重新加载页面`);
+          const j = (await r.json()) as { version?: string; web_build?: string };
+          const versionChanged = !!j.version && j.version !== fromVersion;
+          const webChanged = !!fromWebBuild && !!j.web_build && j.web_build !== fromWebBuild;
+          if (versionChanged || webChanged) {
+            toast.success(`已更新到 ${j.version || "新构建"}，正在重新加载页面`);
             await sleep(800);
             window.location.reload();
             return;
@@ -101,7 +115,7 @@ export function UpdateCard() {
 
   // 订阅更新进度。SSE 不走 Next 的 /api 重写（那层会缓冲，事件推不出来）。
   const openStream = React.useCallback(
-    (fromVersion: string) => {
+    (baseline: { version: string; web_build: string }) => {
       const es = new EventSource(sseUrl("/api/update/stream"));
       es.onmessage = (ev) => {
         let p: UpdateProgress;
@@ -119,7 +133,7 @@ export function UpdateCard() {
         }
         if (p.phase === "staged") {
           es.close();
-          void waitForNewVersion(fromVersion);
+          void waitForNewVersion(baseline);
         }
       };
       es.onerror = () => {
@@ -132,7 +146,18 @@ export function UpdateCard() {
     [waitForNewVersion],
   );
 
-  const doUpdate = () => {
+  // 换装前先向仍然在线的服务端取一次基线：version 与 web_build 都取服务端的值。
+  // 取不到时只比 version（web_build 留空 = 不比较），宁可变慢也不误报成功。
+  const captureBaseline = React.useCallback(async (fallbackVersion: string) => {
+    try {
+      const j = await fetchServerVersion();
+      return { version: j.version || fallbackVersion, web_build: j.web_build || "" };
+    } catch {
+      return { version: fallbackVersion, web_build: "" };
+    }
+  }, []);
+
+  const doUpdate = async () => {
     if (!info) return;
     const from = info.current;
     const ok = window.confirm(
@@ -144,10 +169,11 @@ export function UpdateCard() {
           : ""),
     );
     if (!ok) return;
+    const baseline = await captureBaseline(from);
 
     setBusy(true);
     setProgress({ phase: "downloading", percent: 0, message: "准备中…" });
-    const es = openStream(from);
+    const es = openStream(baseline);
     api.applyUpdate().catch((e) => {
       es.close();
       setBusy(false);
@@ -156,7 +182,7 @@ export function UpdateCard() {
     });
   };
 
-  const doRollback = () => {
+  const doRollback = async () => {
     if (!info) return;
     if (
       !window.confirm(
@@ -164,13 +190,13 @@ export function UpdateCard() {
       )
     )
       return;
-    const from = info.current;
+    const baseline = await captureBaseline(info.current);
     setBusy(true);
     api
       .rollbackUpdate()
       .then(() => {
         toast.success("已切换到上一版本，正在重启…");
-        void waitForNewVersion(from);
+        void waitForNewVersion(baseline);
       })
       .catch((e) => {
         setBusy(false);

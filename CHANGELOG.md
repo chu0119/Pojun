@@ -124,6 +124,31 @@
 - **任务 Playbook v4**：新增 API/Java/云 K8s/代码审计/支付逻辑/前端供应链/网络设备/
   AI LLM/数据取证/SRC 验收等模板，独立 flag `task_playbooks_v4`，不复活用户改过的同名模板。
 
+### 修复：换装后旧标签页点击无反应（静态产物语义与前端代次）
+
+- **服务端静态产物**（`server/webui_handler.go`）：按命名空间提供，改"先解析后写头"。
+  缺失的 `_next/static/*` 不再被回成 200 `text/html` 并贴一年 `immutable`，而是
+  404 + `text/plain` + `no-store`；`immutable` 只发给确实存在且内容寻址的文件；
+  未知深链由"回首页"改为 404 页（状态码 404）；`*_next/*`、`__next.*.txt` 等资产
+  必须精确命中。补齐 `nosniff` / `X-Frame-Options` / `Referrer-Policy`，非
+  GET/HEAD 回 405。
+- **构建身份**：对内嵌产物全量算 sha256 取前 16 位，注入每个 HTML 的
+  `<meta name="pojun-build">`，并暴露 `/_pojun_build.txt`（无产品名、未鉴权）与
+  `/api/version.web_build`（鉴权）。同一二进制恒定，改一个字节即变。
+- **前端韧性**：新增 BuildGuard（mount / bfcache / focus / 可见时每 60s 比对
+  代次，不一致出常驻横幅；仅"链页 + 无草稿 + 刚打开"自动重载一次，30s 冷却 +
+  抖动）与 AssetFailureGuard（脚本/样式失败与 chunk 族 unhandledrejection），
+  并在 `<head>` 内联不依赖任何 chunk 的兜底（入口 chunk 失败时 React 不挂载）。
+- **点击反馈**：关系图在舞台 <520px 时不再 `disabled` 静默吞点击，改
+  `aria-disabled` + toast；URL 直达被切回清单同样提示；`window.confirm` 被取消
+  或被浏览器压制时提示"未切换：独立提示词有未保存的修改"；链页 Suspense
+  fallback 换骨架；`@antv/g6` 动态 import 补可见错误态。
+- **口径**：页头分别展示服务器版本与前端代次；删除手写的 `APP_CONFIG.version`
+  （2.2.0，与二进制和前端构建都无关）；更新卡等待重启时同时比较 `version` 与
+  `web_build`，同版本重构建不再超时。
+- 契约见 `docs/webui-serving-contract.md`。升级后旧标签页在 60s 内或重新聚焦时
+  出现"立即重新加载"横幅；被旧 `immutable` 污染过的浏览器仍需一次硬刷新。
+
 ### 修复：独立提示词跨 Agent 静默污染（配置默认 + (Agent × 配置) 覆盖）
 
 - **数据模型**：`llm_profiles.prompt` 原地变为「配置默认层」；新增
