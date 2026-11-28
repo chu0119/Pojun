@@ -15,6 +15,7 @@ import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { api, sseUrl } from "@/lib/api";
@@ -47,6 +48,7 @@ async function fetchServerVersion(): Promise<ServerVersion> {
 }
 
 export function UpdateCard() {
+  const confirm = useConfirm();
   const [info, setInfo] = React.useState<UpdateCheck | null>(null);
   const [checking, setChecking] = React.useState(true);
   const [progress, setProgress] = React.useState<UpdateProgress | null>(null);
@@ -156,18 +158,20 @@ export function UpdateCard() {
       return { version: fallbackVersion, web_build: "" };
     }
   }, []);
-
   const doUpdate = async () => {
     if (!info) return;
     const from = info.current;
-    const ok = window.confirm(
-      `确定更新到 ${info.latest}？\n\n` +
-        "更新会重启程序，正在运行的任务会被中断。\n" +
+    const ok = await confirm({
+      title: `更新到 ${info.latest}？`,
+      description:
+        "更新会重启程序，正在运行的任务会被中断。" +
         (info.mode === "docker"
-          ? "\n注意：容器内更新只替换程序本身，不会更新镜像里的 playwright / nmap 等工具链；" +
-            "若新版本依赖新工具，请改用 docker compose pull。"
+          ? "\n\n容器内更新只替换程序本身，不会更新镜像里的 playwright / nmap 等工具链；若新版本依赖新工具，请改用 docker compose pull。"
           : ""),
-    );
+      confirmText: "更新并重启",
+      destructive: true,
+      wide: true,
+    });
     if (!ok) return;
     const baseline = await captureBaseline(from);
 
@@ -184,12 +188,14 @@ export function UpdateCard() {
 
   const doRollback = async () => {
     if (!info) return;
-    if (
-      !window.confirm(
-        "回滚到上一版本？\n\n程序会重启，正在运行的任务会被中断。\n注意：数据库结构不会回退，旧版本可能无法识别新版写入的数据。",
-      )
-    )
-      return;
+    const ok = await confirm({
+      title: "回滚到上一版本？",
+      description:
+        "程序会重启，正在运行的任务会被中断。\n数据库结构不会回退，旧版本可能无法识别新版写入的数据。",
+      confirmText: "回滚并重启",
+      destructive: true,
+    });
+    if (!ok) return;
     const baseline = await captureBaseline(info.current);
     setBusy(true);
     api

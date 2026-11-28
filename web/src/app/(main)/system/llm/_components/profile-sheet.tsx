@@ -21,6 +21,7 @@ import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -122,6 +123,7 @@ export function ProfileSheet({
   promptMaxRunes?: number;
 }) {
   const isNew = !profile;
+  const confirm = useConfirm();
   // ── 向导状态（仅新建） ──
   const [step, setStep] = React.useState(1);
   const [presets, setPresets] = React.useState<LLMPreset[]>([]);
@@ -443,13 +445,17 @@ export function ProfileSheet({
       return;
     }
     if (promptChanged && defaultAffected.length > 0) {
-      const ok = window.confirm(
-        `这会改写配置「${name.trim()}」的默认独立提示词，作用于 ${defaultAffected.length} 个 Agent：${agentListText(defaultAffected)}。\n\n` +
+      const ok = await confirm({
+        title: "改写默认独立提示词？",
+        description:
+          `这会改写配置「${name.trim()}」的默认独立提示词，作用于 ${defaultAffected.length} 个 Agent：${agentListText(defaultAffected)}。` +
           (overriddenAgents.size > 0
-            ? `另有 ${overriddenAgents.size} 个 Agent 已用 (Agent × 本配置) 覆盖或关闭，不受本次改动影响：${agentListText([...overriddenAgents].sort(), 6)}。\n\n`
+            ? `\n\n另有 ${overriddenAgents.size} 个 Agent 已用 (Agent × 本配置) 覆盖或关闭，不受本次改动影响：${agentListText([...overriddenAgents].sort(), 6)}。`
             : "") +
-          "继续保存？",
-      );
+          "\n\n默认层对所有继承本配置的 Agent 生效；只想改某一个 Agent，请到全链路页编辑它的覆盖。",
+        confirmText: "继续保存",
+        wide: true,
+      });
       if (!ok) return;
     }
     if (saving) return;
@@ -1357,7 +1363,7 @@ export function ProfileSheet({
             <AlertDialogFooter>
               <AlertDialogCancel>继续编辑</AlertDialogCancel>
               <AlertDialogAction
-                className="bg-destructive text-white hover:bg-destructive/90"
+                variant="destructive-solid"
                 onClick={() => {
                   setConfirmClose(false);
                   onOpenChange(false);

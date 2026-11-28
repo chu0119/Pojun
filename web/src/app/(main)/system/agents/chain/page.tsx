@@ -136,32 +136,32 @@ function ChainPageInner() {
 
   const guard = () => pc.confirmDiscard();
 
-  function switchAgent(next: string) {
-    if (!guard()) return;
+  async function switchAgent(next: string) {
+    if (!(await guard())) return;
     setPanelOpen(false);
     router.replace(url({ key: next, profile: "", sel: null }));
   }
 
-  function setProfile(next: string) {
-    if (!guard()) return;
+  async function setProfile(next: string) {
+    if (!(await guard())) return;
     setPanelOpen(false);
     router.replace(url({ profile: next === "__none__" ? "" : next, sel: null }));
   }
 
-  function setView(next: View) {
+  async function setView(next: View) {
     // 清单与关系图之间切换不丢草稿（检视器不重新挂载），不需要确认；
     // 切到 LLM 路由会卸载装配链与未保存的编辑区，要先确认。
-    if (next === "route" && view !== "route" && !guard()) return;
+    if (next === "route" && view !== "route" && !(await guard())) return;
     router.replace(url({ view: next }));
   }
 
   // 关系图放不下时不再用 disabled 静默挡掉点击：按钮仍可点，点了给出原因。
-  function requestView(next: View) {
+  async function requestView(next: View) {
     if (next === "map" && mapUnavailable) {
       toast.warning("窗口太窄：关系图至少需要 520px，请拉宽窗口或改用清单");
       return;
     }
-    setView(next);
+    await setView(next);
   }
 
   // 旧链接直接带 ?view=map 时也要说明为什么被切回清单，而不是静默改写 URL。
@@ -286,9 +286,11 @@ function ChainPageInner() {
               )}
               title="回到总览"
               onClick={() => {
-                if (!guard()) return;
-                pc.select(null);
-                if (stageWidth > 0 && stageWidth < 900) setPanelOpen(true);
+                void (async () => {
+                  if (!(await guard())) return;
+                  void pc.select(null);
+                  if (stageWidth > 0 && stageWidth < 900) setPanelOpen(true);
+                })();
               }}
             >
               {attention > 0 ? (
@@ -308,8 +310,10 @@ function ChainPageInner() {
               disabled={pc.loading}
               className={focusRing}
               onClick={() => {
-                if (!guard()) return;
-                pc.reload();
+                void (async () => {
+                  if (!(await guard())) return;
+                  pc.reload();
+                })();
               }}
             >
               <RefreshCwIcon className={cn("size-4", pc.loading && "animate-spin")} />

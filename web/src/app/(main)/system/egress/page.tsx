@@ -7,6 +7,7 @@ import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
@@ -27,6 +28,7 @@ import type { SSHProvider } from "@/lib/types";
 // 执行 → SSH 跳板（v0.7.1）：用已授权主机做 SOCKS5 出口。
 // 密码/私钥只进凭据保险库；启动后把本地 socks5://127.0.0.1:port 加进代理池即可。
 export default function EgressPage() {
+  const confirm = useConfirm();
   const [rows, setRows] = React.useState<SSHProvider[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [addOpen, setAddOpen] = React.useState(false);
@@ -122,7 +124,13 @@ export default function EgressPage() {
     }
   };
   const del = async (row: SSHProvider) => {
-    if (!window.confirm(`删除跳板「${row.name}」？`)) return;
+    const ok = await confirm({
+      title: "删除跳板？",
+      description: `删除跳板「${row.name}」后，依赖它的出口与已加入代理池的条目需要重新配置。`,
+      confirmText: "删除",
+      destructive: true,
+    });
+    if (!ok) return;
     try {
       await api.deleteSSHProvider(row.id);
       toast.success("已删除");

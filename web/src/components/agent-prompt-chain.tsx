@@ -56,17 +56,28 @@ export function AgentPromptChain({
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || !pc.sel) return;
+      // 别的监听器（弹层、输入法）已经消费掉这次 Esc 就不要再插手。
+      if (e.defaultPrevented) return;
       const t = e.target as HTMLElement | null;
       if (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) return;
-      // 弹层（窄容器检视器、下拉、菜单）自己处理 Esc：只关弹层，不清选中。
-      if (t?.closest('[role="dialog"],[role="menu"],[role="listbox"],[data-radix-popper-content-wrapper]')) return;
-      if (!pc.confirmDiscard()) return;
+      // 弹层（窄容器检视器、确认框、下拉、菜单）自己处理 Esc：只关弹层，不清选中。
+      // alertdialog 必须单独列出来：确认框用的是 AlertDialog，role 是 alertdialog 而不是
+      // dialog，漏掉它会让 Esc 既关弹窗又清选中，甚至回来再弹一次。
+      if (
+        t?.closest(
+          '[role="dialog"],[role="alertdialog"],[role="menu"],[role="listbox"],[data-radix-popper-content-wrapper]',
+        )
+      )
+        return;
       e.preventDefault();
       const id = pc.sel;
-      pc.select(null);
-      requestAnimationFrame(() => {
-        pc.stageRef.current?.querySelector<HTMLElement>(`[data-id="${CSS.escape(id)}"]`)?.focus();
-      });
+      void (async () => {
+        if (!(await pc.confirmDiscard())) return;
+        void pc.select(null);
+        requestAnimationFrame(() => {
+          pc.stageRef.current?.querySelector<HTMLElement>(`[data-id="${CSS.escape(id)}"]`)?.focus();
+        });
+      })();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -76,8 +87,10 @@ export function AgentPromptChain({
     if (!pc.sel) return;
     const t = e.target as HTMLElement;
     if (t.closest("[data-chain-item]")) return;
-    if (!pc.confirmDiscard()) return;
-    pc.select(null);
+    void (async () => {
+      if (!(await pc.confirmDiscard())) return;
+      void pc.select(null);
+    })();
   };
 
   const body =
