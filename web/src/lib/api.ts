@@ -322,7 +322,7 @@ function triggerBlobDownload(blob: Blob, filename: string) {
 export const api = {
   // 后端应用版本号（release 时由 ldflags 注入，默认 "dev"）。
   health: () => get<{ ok: boolean; status: string }>("/health"),
-  version: () => get<{ service: string; version: string }>("/version"),
+  version: () => get<{ service: string; version: string; web_build?: string }>("/version"),
 
   // ---- auth ----
   authStatus: () => get<{ initialized: boolean }>("/auth/status"),

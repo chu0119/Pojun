@@ -465,6 +465,9 @@ function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; covera
   const [selectedAsset, setSelectedAsset] = React.useState<CoverageGraphNode | null>(null);
   const [selectedFoldId, setSelectedFoldId] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
+  // 图引擎是动态 import 的独立 chunk：换装后旧标签页取它可能 404。失败必须可见，
+  // 否则用户只看到一片空白、控制台在生产构建里也被剥离。
+  const [engineError, setEngineError] = React.useState<string | null>(null);
 
   const containerRef = React.useRef<HTMLDivElement>(null);
   const graphRef = React.useRef<G6Graph | null>(null);
@@ -536,7 +539,13 @@ function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; covera
     let destroyed = false;
     let graph: G6Graph | null = null;
     void (async () => {
-      const { Graph } = await import("@antv/g6");
+      let Graph: typeof import("@antv/g6").Graph;
+      try {
+        ({ Graph } = await import("@antv/g6"));
+      } catch (err) {
+        if (!destroyed) setEngineError((err as Error)?.message || "图引擎加载失败");
+        return;
+      }
       if (destroyed || !containerRef.current) return;
       graph = new Graph({
         container: containerRef.current,
@@ -638,6 +647,17 @@ function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; covera
   return (
     <div className="relative h-full w-full">
       <div ref={containerRef} className="h-full w-full" />
+
+      {engineError && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center">
+          <p className="text-muted-foreground text-sm">
+            关系图引擎加载失败（可能是页面已过期）：{engineError}
+          </p>
+          <Button variant="outline" size="sm" onClick={() => window.location.reload()}>
+            重新加载页面
+          </Button>
+        </div>
+      )}
 
       {/* 图例 + 统计 + 刷新（叠加层） */}
       <div className="pointer-events-auto absolute top-3 left-3 flex max-w-[340px] flex-col gap-2.5 rounded-lg border bg-card/95 p-3 text-xs shadow-sm backdrop-blur">

@@ -1272,6 +1272,10 @@ func (s *Server) Handler() http.Handler {
 	api := securityHeaders(limitRequestBody(s.requireAuth(mux)))
 	root := http.NewServeMux()
 	root.Handle("/api/", api)
+	// Register the exact /api path too: otherwise ServeMux answers it with a
+	// 301 to /api/ (a cacheable redirect that also turns POST into GET), or the
+	// frontend shell swallows it.
+	root.Handle("/api", api)
 	root.Handle("/", s.webuiHandler())
 	return root
 }
@@ -1285,9 +1289,10 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true, "status": "ok"})
 }
 
-// version 是鉴权的版本查询（更新卡轮询换装完成用）。
+// version 是鉴权的版本查询（更新卡轮询换装完成用）。web_build 是内嵌前端的
+// 内容摘要：同一后端版本重新构建前端时它也会变，更新卡与页面自检都以它为准。
 func (s *Server) version(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]any{"service": "pojun", "version": BuildVersion})
+	writeJSON(w, 200, map[string]any{"service": "pojun", "version": BuildVersion, "web_build": BuildWeb})
 }
 
 func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
@@ -4920,7 +4925,7 @@ func securityHeaders(next http.Handler) http.Handler {
 		if tlsHSTS.Load() && (r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")) {
 			h.Set("Strict-Transport-Security", "max-age=15552000; includeSubDomains")
 		}
-		if strings.HasPrefix(r.URL.Path, "/api/") {
+		if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") {
 			// 认证响应与业务数据一律不落缓存/代理日志快照。
 			h.Set("Cache-Control", "no-store")
 		}

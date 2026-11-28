@@ -2,11 +2,14 @@ import type { ReactNode } from "react";
 
 import type { Metadata } from "next";
 
+import { AssetFailureGuard } from "@/components/runtime/asset-failure-guard";
+import { BuildGuard } from "@/components/runtime/build-guard";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { APP_CONFIG } from "@/config/app-config";
 import { fontVars } from "@/lib/fonts/registry";
 import { PREFERENCE_DEFAULTS } from "@/lib/preferences/preferences-config";
+import { AssetBootScript } from "@/scripts/asset-boot";
 import { ThemeBootScript } from "@/scripts/theme-boot";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
 
@@ -35,6 +38,8 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
       <head>
         {/* Applies theme and layout preferences on load to avoid flicker and unnecessary server rerenders. */}
         <ThemeBootScript />
+        {/* 不依赖任何 chunk：入口脚本失败时 React 不会挂载，只有这段能给出反馈。 */}
+        <AssetBootScript />
       </head>
       <body className={`${fontVars} min-h-screen antialiased`}>
         <TooltipProvider>
@@ -46,6 +51,8 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
             font={font}
           >
             {children}
+            <BuildGuard />
+            <AssetFailureGuard />
             <Toaster />
           </PreferencesStoreProvider>
         </TooltipProvider>

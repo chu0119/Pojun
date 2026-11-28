@@ -8,6 +8,7 @@ import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import { api } from "@/lib/api";
+import { normalizeBuildId, readEmbeddedBuildId } from "@/lib/build-policy";
 import { cn } from "@/lib/utils";
 
 import { LayoutControls } from "./sidebar/layout-controls";
@@ -34,13 +35,28 @@ export function MainContent({ children }: { children: ReactNode }) {
   const currentUser = useCurrentUser();
   const pathname = usePathname();
   const [version, setVersion] = useState("");
+  const [serverBuild, setServerBuild] = useState("");
+  // 本页实际加载的那一代前端。它与服务器代次不一致时，说明标签页已过期。
+  const [shellBuild, setShellBuild] = useState("");
 
   useEffect(() => {
     api
       .version()
-      .then((v) => setVersion((v.version ?? "").replace(/^v(?=\d)/, "")))
-      .catch(() => setVersion(""));
+      .then((v) => {
+        setVersion((v.version ?? "").replace(/^v(?=\d)/, ""));
+        setServerBuild(normalizeBuildId(v.web_build) ?? "");
+      })
+      .catch(() => {
+        setVersion("");
+        setServerBuild("");
+      });
   }, []);
+
+  useEffect(() => {
+    setShellBuild(readEmbeddedBuildId() ?? "");
+  }, []);
+
+  const buildStale = serverBuild !== "" && shellBuild !== "" && serverBuild !== shellBuild;
 
   if (isFullBleed(pathname)) {
     return <>{children}</>;
@@ -65,7 +81,27 @@ export function MainContent({ children }: { children: ReactNode }) {
           </div>
           <div className="flex items-center gap-2">
             {version && (
-              <span className="hidden font-medium text-muted-foreground text-xs tabular-nums sm:inline">版本 · {version}</span>
+              <span
+                className="hidden font-medium text-muted-foreground text-xs tabular-nums sm:inline"
+                title="服务器版本（/api/version）"
+              >
+                版本 · {version}
+              </span>
+            )}
+            {shellBuild && (
+              <span
+                className={cn(
+                  "hidden font-medium text-xs tabular-nums sm:inline",
+                  buildStale ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground",
+                )}
+                title={
+                  buildStale
+                    ? "本页前端代次落后于服务器，刷新后更新"
+                    : "本页加载的前端构建代次"
+                }
+              >
+                前端 · {shellBuild.slice(0, 8)}
+              </span>
             )}
             <UpdateBadge />
             <LayoutControls />
