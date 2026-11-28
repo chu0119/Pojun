@@ -167,6 +167,11 @@ export function ProfileSheet({
   const [promptApplyInherited, setPromptApplyInherited] = React.useState(false);
   const [promptOpen, setPromptOpen] = React.useState(false);
   const [boundAgents, setBoundAgents] = React.useState<string[]>([]);
+  // 「影响面」是否已知：loading / error 时一律不能把它当成 0。
+  const [agentsLoad, setAgentsLoad] = React.useState<"loading" | "ready" | "error">("loading");
+  // 未显式绑定本配置的 Agent：若本配置是全局激活且「继承时也生效」开着，
+  // 它们的运行时选路会落到本配置，改默认提示词也会影响它们（P15/P24）。
+  const [unboundAgents, setUnboundAgents] = React.useState<string[]>([]);
   // ── 模型列表 ──
   const [models, setModels] = React.useState<string[]>([]);
   const [modelsSource, setModelsSource] = React.useState<"" | "fetched" | "preset">("");
@@ -197,6 +202,25 @@ export function ProfileSheet({
   const promptNormalized = prompt.replace(/\r\n/g, "\n").replace(/[ \t\r\n]+$/, "");
   const promptChars = Array.from(promptNormalized).length;
   const promptTooLong = promptMaxRunes > 0 && promptChars > promptMaxRunes;
+
+  // ── 默认提示词的影响面（保存确认与常驻标签共用）──
+  // 显式绑定的 Agent 总受影响；本配置是全局激活且继承开关打开时，未绑定的
+  // Agent 也会在运行时落到本配置。已经用 (Agent × 本配置) 覆盖/关闭的 Agent
+  // 不受默认层改动影响，单独列出，避免「影响了谁」被高估。
+  const promptOverrideRefs = profile?.prompt_overrides ?? [];
+  const overriddenAgents = new Set(promptOverrideRefs.map((r) => r.agent_key));
+  const inheritors = profile?.is_default && promptApplyInherited ? unboundAgents : [];
+  const defaultAffected = Array.from(new Set([...boundAgents, ...inheritors]))
+    .filter((k) => !overriddenAgents.has(k))
+    .sort();
+  const agentListText = (list: string[], max = 8) =>
+    list.length > max ? `${list.slice(0, max).join("、")} 等 ${list.length} 个` : list.join("、");
+  const promptChanged =
+    !isNew &&
+    !!profile &&
+    ((profile.prompt ?? "") !== prompt ||
+      (profile.prompt_mode ?? "") !== (prompt.trim() ? promptMode : "") ||
+      !!profile.prompt_apply_inherited !== (prompt.trim() ? promptApplyInherited : false));
 
   // 每次打开重灌表单；新建重置向导到第 1 步并拉预设。
   React.useEffect(() => {
@@ -236,12 +260,20 @@ export function ProfileSheet({
     setPromptApplyInherited(!!p?.prompt_apply_inherited);
     setPromptOpen(!!p?.prompt?.trim());
     setBoundAgents([]);
+    setUnboundAgents([]);
+    // Agent 列表是「影响面」的唯一来源：没取到时不能当作 0，否则确认框会被跳过，
+    // 而实际写入会影响全部继承者。
+    setAgentsLoad("loading");
     if (p) {
       const pid = Number(p.id);
       api
         .agents()
-        .then((as) => setBoundAgents(as.filter((a) => a.llm_profile_id === pid).map((a) => a.key)))
-        .catch(() => {});
+        .then((as) => {
+          setBoundAgents(as.filter((a) => a.llm_profile_id === pid).map((a) => a.key));
+          setUnboundAgents(as.filter((a) => a.llm_profile_id !== pid).map((a) => a.key));
+          setAgentsLoad("ready");
+        })
+        .catch(() => setAgentsLoad("error"));
     }
     setModels([]);
     setModelsSource("");
@@ -464,6 +496,23 @@ export function ProfileSheet({
     if (promptTooLong) {
       toast.error(`独立提示词过长（上限 ${promptMaxRunes} 字符）`);
       return;
+    }
+    // 默认层不是「本 Agent 的提示词」：保存会同时改变所有继承本配置的 Agent。
+    // 在写入前把影响面点名，避免链页/配置页各自以为只改了自己那一份。
+    // 影响面未知（Agent 列表未取到）时拒绝保存：静默按 0 处理会让这次写入不受任何提示。
+    if (promptChanged && agentsLoad !== "ready") {
+      toast.error("无法确认这条默认提示词会影响哪些 Agent（Agent 列表未取到），请稍后重试");
+      return;
+    }
+    if (promptChanged && defaultAffected.length > 0) {
+      const ok = window.confirm(
+        `这会改写配置「${name.trim()}」的默认独立提示词，作用于 ${defaultAffected.length} 个 Agent：${agentListText(defaultAffected)}。\n\n` +
+          (overriddenAgents.size > 0
+            ? `另有 ${overriddenAgents.size} 个 Agent 已用 (Agent × 本配置) 覆盖或关闭，不受本次改动影响：${agentListText([...overriddenAgents].sort(), 6)}。\n\n`
+            : "") +
+          "继续保存？",
+      );
+      if (!ok) return;
     }
     if (saving) return;
     setSaving(true);
@@ -892,7 +941,28 @@ export function ProfileSheet({
       </CollapsibleTrigger>
       <CollapsibleContent className="grid gap-3 border-t px-3 py-3">
         <p className="text-muted-foreground text-xs leading-relaxed">
-          只在本配置被<b>显式绑定</b>到 Agent 时注入；未绑定 Agent 的运行时选路（任务链/全局）只有在下方开启「继承时也生效」后才会注入。留空 = 不追加。
+          独立提示词分两层：这里编辑<b>配置默认</b>；单个 Agent 可在「全链路」页用 (Agent × 本配置){" "}
+          <b>覆盖或关闭</b>，覆盖永远优先、不受下方开关限制。默认层只在本配置被<b>显式绑定</b>时总生效；
+          任务链/全局选路要开启下方「继承时也生效」才会注入。留空 = 不追加。
+        </p>
+        <p className="rounded-md border bg-muted/20 px-2 py-1.5 text-muted-foreground text-xs leading-relaxed">
+          {agentsLoad === "ready" ? (
+            <>
+              本默认作用于 <b>{defaultAffected.length}</b> 个 Agent：
+              {defaultAffected.length > 0 ? agentListText(defaultAffected, 10) : "（无）"}
+            </>
+          ) : (
+            <>本默认的作用面未知：Agent 列表未取到。<b>此时保存会被拒绝</b>，请稍后重试。</>
+          )}
+          {overriddenAgents.size > 0 && (
+            <>
+              ；另有 {overriddenAgents.size} 个 Agent 已用 (Agent × 本配置) 覆盖或关闭，不受默认改动影响：
+              {agentListText([...overriddenAgents].sort(), 6)}
+            </>
+          )}
+          。
+          {!profile?.is_default &&
+            "本配置当前不是全局激活；未绑定 Agent 的静态选路不落到它（运行时任务链 / 会话 pin 仍可能选中本配置）。"}
         </p>
         <div className="grid gap-1.5">
           <Label htmlFor="p-prompt-mode" className="text-xs">装配位置</Label>
@@ -940,14 +1010,21 @@ export function ProfileSheet({
         </div>
         {promptMode === "replace" && (
           <div className="rounded-md border border-amber-500/40 bg-amber-500/5 px-2 py-1.5 text-xs">
-            替换会移除该 Agent 的现有正文（技能索引、代码硬尾巴仍保留）。
+            替换会移除所有使用该配置的 Agent 的现有正文（技能索引、代码硬尾巴仍保留）；已用
+            (Agent × 本配置) 覆盖或关闭的 Agent 除外。
             {boundAgents.length > 0
-              ? `当前被 ${boundAgents.length} 个 Agent 绑定：${boundAgents.join("、")}。`
+              ? `当前被 ${boundAgents.length} 个 Agent 显式绑定：${agentListText(boundAgents, 8)}。`
               : "当前没有被 Agent 显式绑定。"}
           </div>
         )}
         <p className="text-muted-foreground text-[11px]">
-          当前被以下 Agent 显式绑定：{boundAgents.length > 0 ? boundAgents.join("、") : "（无）"}；改动对下一轮运行生效。
+          当前被以下 Agent 显式绑定：{boundAgents.length > 0 ? agentListText(boundAgents, 12) : "（无）"}
+          {profile?.is_default
+            ? promptApplyInherited
+              ? `；未绑定 Agent 会作为全局默认继承：${unboundAgents.length > 0 ? agentListText(unboundAgents, 10) : "（无）"}`
+              : "；未绑定 Agent 不会继承（「继承时也生效」关闭）"
+            : "；本配置不是全局激活配置"}
+          ；改动对下一轮运行生效。
         </p>
       </CollapsibleContent>
     </Collapsible>

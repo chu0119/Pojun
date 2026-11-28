@@ -1570,6 +1570,19 @@ export const api = {
     }),
   deleteAgentEffortOverride: (key: string, profileId: number) =>
     http<void>(`/agents/${key}/llm-effort-overrides/${profileId}`, { method: "DELETE" }),
+  // (Agent × LLM 配置) 的独立提示词覆盖：无行 = 继承配置默认；prompt="" = 本 Agent
+  // 不注入；非空 = 覆盖默认。覆盖不受配置的 prompt_apply_inherited 限制。
+  agentPromptOverrides: (key: string) =>
+    get<{ agent_key: string; overrides: { profile_id: number; prompt: string; prompt_mode: string; updated_at?: string }[] }>(
+      `/agents/${key}/llm-prompt-overrides`,
+    ),
+  setAgentPromptOverride: (key: string, profileId: number, prompt: string, mode: string) =>
+    http<void>(`/agents/${key}/llm-prompt-overrides/${profileId}`, {
+      method: "PUT",
+      body: JSON.stringify({ prompt, prompt_mode: mode }),
+    }),
+  deleteAgentPromptOverride: (key: string, profileId: number) =>
+    http<void>(`/agents/${key}/llm-prompt-overrides/${profileId}`, { method: "DELETE" }),
   // 只读路由投影：静态来源链/池 + 任务内运行期转跳历史。不构建 provider。
   agentLLMRoute: (key: string, opts?: { taskId?: string; limit?: number; before?: number }) => {
     const q = new URLSearchParams();

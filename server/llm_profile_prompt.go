@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/chu0119/pojun/agent"
@@ -21,6 +22,15 @@ func validProfilePromptMode(m string) bool {
 	return false
 }
 
+// trimPromptText normalizes line endings and strips trailing whitespace with
+// the same Unicode class as JS String.trim(), so "blank means clear" agrees
+// between the editor and the stored value (NBSP/U+2028 included).
+func trimPromptText(v string) string {
+	v = strings.ReplaceAll(v, "\r\n", "\n")
+	v = strings.ReplaceAll(v, "\r", "\n")
+	return strings.TrimRightFunc(v, unicode.IsSpace)
+}
+
 // normalizeProfilePromptRequest applies the save-path three-state semantics:
 // nil text/mode/apply keeps the stored value, an explicit empty text clears the
 // prompt, and a non-empty text without a mode defaults to prepend. Returns a
@@ -29,9 +39,7 @@ func validProfilePromptMode(m string) bool {
 func normalizeProfilePromptRequest(old db.PromptInfo, text, mode *string, apply *bool) (db.PromptInfo, string) {
 	next := old
 	if text != nil {
-		v := strings.ReplaceAll(*text, "\r\n", "\n")
-		v = strings.ReplaceAll(v, "\r", "\n")
-		v = strings.TrimRight(v, " \t\n")
+		v := trimPromptText(*text)
 		if strings.ContainsRune(v, 0) {
 			return db.PromptInfo{}, "独立提示词包含非法字符"
 		}
@@ -59,14 +67,86 @@ func normalizeProfilePromptRequest(old db.PromptInfo, text, mode *string, apply 
 	return next, ""
 }
 
-// profileOverlayFromInfo builds an active overlay from a stored prompt. Empty or
-// malformed prompts yield the zero value, so direct DB edits cannot inject a
-// mode the runtime does not understand.
+// normalizeAgentPromptRequest validates one (agent × profile) override save.
+// An empty body stores an explicit "do not inject" row (a DELETE restores
+// inheritance instead); a non-empty body without a mode defaults to prepend,
+// matching the profile-default save path. Returns the normalized text/mode and
+// a user-facing error string.
+func normalizeAgentPromptRequest(text, mode string) (string, string, string) {
+	v := trimPromptText(text)
+	if strings.ContainsRune(v, 0) {
+		return "", "", "独立提示词包含非法字符"
+	}
+	if utf8.RuneCountInString(v) > maxProfilePromptRunes {
+		return "", "", fmt.Sprintf("独立提示词过长（上限 %d 字符）", maxProfilePromptRunes)
+	}
+	m := strings.TrimSpace(mode)
+	if m != "" && !validProfilePromptMode(m) {
+		return "", "", "prompt_mode 只能是 prepend / append / replace"
+	}
+	if v == "" {
+		return "", "", ""
+	}
+	if m == "" {
+		m = "prepend"
+	}
+	return v, m, ""
+}
+
+// profileOverlayFromInfo builds an active overlay from a stored prompt. An empty
+// body yields the zero value; a non-empty body without a mode is treated as
+// prepend (the same normalization the save path applies), so a direct DB edit
+// cannot create a prompt that is silently neither injected nor reported.
 func profileOverlayFromInfo(id int64, pi db.PromptInfo, source string) agent.ProfilePrompt {
-	if strings.TrimSpace(pi.Text) == "" || !validProfilePromptMode(pi.Mode) {
+	if strings.TrimSpace(pi.Text) == "" {
 		return agent.ProfilePrompt{}
 	}
-	return agent.ProfilePrompt{Text: pi.Text, Mode: pi.Mode, ProfileID: id, Source: source}
+	mode := pi.Mode
+	if mode == "" {
+		mode = "prepend"
+	}
+	if !validProfilePromptMode(mode) {
+		return agent.ProfilePrompt{}
+	}
+	return agent.ProfilePrompt{Text: pi.Text, Mode: mode, ProfileID: id, Source: source}
+}
+
+// effectiveProfilePrompt is THE (profile × agent) independent-prompt rule,
+// shared by every runtime injection point:
+//
+//  1. An (agent, profile) override row wins outright:
+//     - empty body → this agent explicitly disabled the profile's prompt;
+//     - non-empty body → injected with its mode (empty mode = prepend).
+//     The override is never gated by prompt_apply_inherited: that flag belongs
+//     to the default layer only.
+//  2. Otherwise the profile's default prompt applies: always for an explicit
+//     binding / conversation pin (requireInherit=false), and for task-chain or
+//     global selection only when the profile set prompt_apply_inherited.
+//
+// A read error yields no overlay: fail closed rather than inject a prompt the
+// user may have disabled.
+func (s *Server) effectiveProfilePrompt(profileID int64, agentKey, source string, requireInherit bool) agent.ProfilePrompt {
+	if s == nil || s.m == nil || s.m.pg == nil || profileID <= 0 {
+		return agent.ProfilePrompt{}
+	}
+	pg := s.m.pg
+	if agentKey != "" {
+		ov, ok, err := pg.AgentProfilePrompt(agentKey, profileID)
+		if err != nil {
+			return agent.ProfilePrompt{}
+		}
+		if ok {
+			return profileOverlayFromInfo(profileID, db.PromptInfo{Text: ov.Text, Mode: ov.Mode}, "agent_override")
+		}
+	}
+	pi, err := pg.ProfilePrompt(profileID)
+	if err != nil {
+		return agent.ProfilePrompt{}
+	}
+	if requireInherit && !pi.ApplyInherited {
+		return agent.ProfilePrompt{}
+	}
+	return profileOverlayFromInfo(profileID, pi, source)
 }
 
 // inheritedProfileID returns the profile a task role would use when it has no
@@ -99,11 +179,15 @@ func (s *Server) inheritedProfileID(t *Task) (int64, string, bool) {
 // profilePromptForTaskRole resolves the overlay for one task role at run start.
 //
 // Precedence:
-//  1. agents.llm_profile_id — an explicit binding always applies its prompt,
-//     even if the runtime later falls back to the chain (identity, not service).
-//  2. Task-chain / global profile — applies only when the profile set
-//     prompt_apply_inherited. The system prompt is built once per run, so a
-//     mid-run quota failover does not rewrite it.
+//  1. agents.llm_profile_id — an explicit binding resolves that profile; its
+//     (agent × profile) override wins, else the profile default applies (even if
+//     the runtime later falls back to the chain — identity, not service).
+//  2. Task-chain / global profile — resolves the same way, but the profile
+//     default layer requires prompt_apply_inherited; an explicit override row
+//     still applies.
+//
+// The system prompt is built once per run, so a mid-run quota failover does not
+// rewrite it.
 //
 // goals/planner/worker/mainagent all use this; there is no per-role exclusion:
 // every agent row can bind a profile, and the same rule applies uniformly.
@@ -113,53 +197,34 @@ func (s *Server) profilePromptForTaskRole(t *Task, agentKey string) agent.Profil
 	}
 	pg := s.m.pg
 	if a, err := pg.GetAgentByKey(agentKey); err == nil && a != nil && a.LLMProfileID != nil {
-		pi, err := pg.ProfilePrompt(*a.LLMProfileID)
-		if err != nil {
-			return agent.ProfilePrompt{}
-		}
-		return profileOverlayFromInfo(*a.LLMProfileID, pi, "agent_binding")
+		return s.effectiveProfilePrompt(*a.LLMProfileID, agentKey, "agent_binding", false)
 	}
 	id, source, ok := s.inheritedProfileID(t)
 	if !ok {
 		return agent.ProfilePrompt{}
 	}
-	pi, err := pg.ProfilePrompt(id)
-	if err != nil || !pi.ApplyInherited {
-		return agent.ProfilePrompt{}
-	}
-	return profileOverlayFromInfo(id, pi, source)
+	return s.effectiveProfilePrompt(id, agentKey, source, true)
 }
 
 // profilePromptForChat mirrors resolveChatAgent's precedence: agent binding →
 // this conversation's pin → global profile. Binding and pin are explicit
-// choices, so their prompts apply even if the provider later falls back; the
-// global profile requires prompt_apply_inherited.
+// choices, so the profile default layer applies regardless of inheritance; the
+// global profile requires prompt_apply_inherited. An (agent × profile) override
+// wins in all three cases.
 func (s *Server) profilePromptForChat(c *db.Conversation) agent.ProfilePrompt {
 	if s == nil || s.m == nil || s.m.pg == nil || c == nil {
 		return agent.ProfilePrompt{}
 	}
 	pg := s.m.pg
 	if a, err := pg.GetAgentByKey(c.AgentKey); err == nil && a != nil && a.LLMProfileID != nil {
-		pi, err := pg.ProfilePrompt(*a.LLMProfileID)
-		if err != nil {
-			return agent.ProfilePrompt{}
-		}
-		return profileOverlayFromInfo(*a.LLMProfileID, pi, "agent_binding")
+		return s.effectiveProfilePrompt(*a.LLMProfileID, c.AgentKey, "agent_binding", false)
 	}
 	if c.LLMProfileID != nil {
-		pi, err := pg.ProfilePrompt(*c.LLMProfileID)
-		if err != nil {
-			return agent.ProfilePrompt{}
-		}
-		return profileOverlayFromInfo(*c.LLMProfileID, pi, "conversation_pin")
+		return s.effectiveProfilePrompt(*c.LLMProfileID, c.AgentKey, "conversation_pin", false)
 	}
 	p, err := pg.ActiveProfile()
 	if err != nil || p == nil || p.APIKey == "" {
 		return agent.ProfilePrompt{}
 	}
-	pi, err := pg.ProfilePrompt(p.ID)
-	if err != nil || !pi.ApplyInherited {
-		return agent.ProfilePrompt{}
-	}
-	return profileOverlayFromInfo(p.ID, pi, "global_profile")
+	return s.effectiveProfilePrompt(p.ID, c.AgentKey, "global_profile", true)
 }

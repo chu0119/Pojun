@@ -1433,8 +1433,9 @@ export interface LLMProfile {
   retry?: LLMRetryOverride;
   // 厂商预设来源（llmpresets.ID）。空 = 手动配置或旧数据。
   preset_id?: string;
-  // 独立提示词（v0.4.121）：纯文本；只在本配置被显式绑定到 Agent，或开启
-  // prompt_apply_inherited 后被任务链/全局选路选中时注入。空 = 未配置。
+  // 独立提示词的默认层（v0.4.123 起为「配置默认」）：纯文本；只在本配置被显式
+  // 绑定到 Agent，或开启 prompt_apply_inherited 后被任务链/全局选路选中时注入。
+  // 空 = 未配置。单个 Agent 可用 (Agent × 配置) 覆盖改写或关闭，见 prompt_overrides。
   prompt?: string;
   prompt_mode?: "prepend" | "append" | "replace" | "";
   prompt_apply_inherited?: boolean;
@@ -1446,6 +1447,8 @@ export interface LLMProfile {
   // profile=用户指定 | probe=已探测 | preset=厂商预设 | name=模型名推断 | default=默认不支持
   vision?: boolean;
   vision_source?: "profile" | "probe" | "preset" | "name" | "default";
+  // 反向引用：哪些 Agent 用 (Agent × 本配置) 覆盖/关闭了本配置的默认提示词（只读）。
+  prompt_overrides?: { agent_key: string; prompt_mode: string; prompt_chars: number; updated_at?: string }[];
 }
 
 // ─── LLM 厂商知识层（v0.4.91 配置重构）───
@@ -1680,10 +1683,24 @@ export interface PromptChainLLM {
   format: string;
   source: string;
   source_label: string;
+  /**
+   * 生效提示词的作用域：
+   * - agent_override：本 Agent 覆盖（覆盖永远生效）
+   * - agent_disabled：本 Agent 显式关闭
+   * - profile_default：无覆盖，配置默认生效
+   * - profile_default_inactive：无覆盖，配置默认存在但未生效
+   * - none：无覆盖且配置未设置默认
+   */
+  prompt_scope?: "agent_override" | "agent_disabled" | "profile_default" | "profile_default_inactive" | "none";
   prompt_mode: string;
   prompt_chars: number;
   prompt_apply_inherited: boolean;
   prompt_active: boolean;
+  /** 生效提示词的原文（覆盖或默认），链页覆盖编辑器的起点；空 = 无正文。 */
+  prompt_text?: string;
+  /** 配置默认层（覆盖编辑器的参照）。 */
+  default_prompt_mode?: string;
+  default_prompt_chars?: number;
   effort?: string;
   effort_source?: "override" | "profile" | "unset";
 }

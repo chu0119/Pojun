@@ -124,6 +124,29 @@
 - **任务 Playbook v4**：新增 API/Java/云 K8s/代码审计/支付逻辑/前端供应链/网络设备/
   AI LLM/数据取证/SRC 验收等模板，独立 flag `task_playbooks_v4`，不复活用户改过的同名模板。
 
+### 修复：独立提示词跨 Agent 静默污染（配置默认 + (Agent × 配置) 覆盖）
+
+- **数据模型**：`llm_profiles.prompt` 原地变为「配置默认层」；新增
+  `agent_profile_prompts(agent_key, profile_id, prompt, prompt_mode, updated_at)` 覆盖表。
+  无行 = 继承默认；行 + 空正文 = 本 Agent 显式不注入；行 + 非空 = 覆盖。
+  **覆盖永远生效，不受 `prompt_apply_inherited` 限制**——该开关只约束默认层。零数据迁移。
+- **运行时**：`profilePromptForTaskRole` / `profilePromptForChat` 统一走
+  `effectiveProfilePrompt`，先查 (Agent × 配置) 覆盖再回退默认层；读库失败按不注入处理。
+- **API**：新增 `GET/PUT/DELETE /api/agents/{key}/llm-prompt-overrides[/{profile_id}]`；
+  PUT 缺 `prompt` 返回 400、配置不存在返回 404、成功 204，DELETE 幂等 204。
+- **保存路径**：配置主体与默认提示词改为同一事务（`db.SaveProfileWithPrompt`）；
+  保存不存在的配置 id 由「200 且 0 行更新」改为 404。提示词保存的尾随空白判定与
+  JS `trim()` 对齐（NBSP / U+2028）。
+- **前端**：LLM 配置抽屉只编辑默认层，常驻「本默认作用于 N 个 Agent」标签并在保存时
+  点名受影响 Agent（含全局继承者，扣除已覆盖者）；全链路页只编辑覆盖层（继承 /
+  覆盖 / 不注入三选），并在预览态明确「保存会写入 (本 Agent × 预览配置) 的覆盖」。
+  「提示词正文」对象不再挂独立提示词编辑器。
+- **并发**：修保存/改强度回调在切换 Agent 后用旧 key 重载并抢占新请求的问题
+  （响应既校验请求序号，也校验当前 URL key 与响应 `agent_key`）；修配置列表快照
+  回填旧正文的问题（链页不再按挂载时快照写回整份配置）。
+- **mock**：按真实规则解析（Agent 绑定 / 全局继承 / 三种覆盖态），不再把任意 Agent
+  恒解析为 profile #1。
+
 ## [0.4.122] - 2026-11-26
 ### 修复：终态经验落库 UTF-8 截断（#75）
 
