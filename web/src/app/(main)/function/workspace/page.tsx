@@ -15,6 +15,7 @@ import {
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -68,6 +69,7 @@ type EditState = {
 };
 
 export default function WorkspacePage() {
+  const confirm = useConfirm();
   const [path, setPath] = React.useState("");
   const [entries, setEntries] = React.useState<WorkspaceEntry[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -129,8 +131,14 @@ export default function WorkspacePage() {
       });
   };
 
-  const del = (e: WorkspaceEntry) => {
-    if (!window.confirm(`确认删除 ${e.dir ? "目录" : "文件"} “${e.name}”？${e.dir ? "（含其下所有内容）" : ""}`)) return;
+  const del = async (e: WorkspaceEntry) => {
+    const ok = await confirm({
+      title: e.dir ? "删除目录？" : "删除文件？",
+      description: `确认删除${e.dir ? "目录" : "文件"}「${e.name}」？${e.dir ? "\n目录下的所有内容会一并删除，无法恢复。" : "\n删除后无法恢复。"}`,
+      confirmText: "删除",
+      destructive: true,
+    });
+    if (!ok) return;
     api
       .workspaceDelete(e.path)
       .then(() => {

@@ -171,8 +171,10 @@ function DetailView({
           type="button"
           className="inline-flex h-7 items-center gap-1 rounded-md px-1.5 text-muted-foreground text-xs hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-foreground"
           onClick={() => {
-            if (!pc.confirmDiscard()) return;
-            pc.select(null);
+            void (async () => {
+              if (!(await pc.confirmDiscard())) return;
+              void pc.select(null);
+            })();
           }}
         >
           <ArrowLeftIcon className="size-3.5" /> 总览

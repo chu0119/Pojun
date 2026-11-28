@@ -140,9 +140,13 @@
   抖动）与 AssetFailureGuard（脚本/样式失败与 chunk 族 unhandledrejection），
   并在 `<head>` 内联不依赖任何 chunk 的兜底（入口 chunk 失败时 React 不挂载）。
 - **点击反馈**：关系图在舞台 <520px 时不再 `disabled` 静默吞点击，改
-  `aria-disabled` + toast；URL 直达被切回清单同样提示；`window.confirm` 被取消
-  或被浏览器压制时提示"未切换：独立提示词有未保存的修改"；链页 Suspense
+  `aria-disabled` + toast；URL 直达被切回清单同样提示；链页 Suspense
   fallback 换骨架；`@antv/g6` 动态 import 补可见错误态。
+- **确认框**：全部 10 处 `window.confirm` 换成应用内 AlertDialog
+  （`useConfirm()`，危险操作实心红、默认焦点在"取消"）。原生弹窗既与界面
+  脱节，又会被浏览器「阻止此页面创建更多对话框」压制而静默返回 false——那
+  正是"点了没反应"的来源。顺带修 `AlertDialogAction` 用 className 覆盖
+  `bg-primary` 不生效的既有缺陷（新增 `destructive-solid` 变体）。
 - **口径**：页头分别展示服务器版本与前端代次；删除手写的 `APP_CONFIG.version`
   （2.2.0，与二进制和前端构建都无关）；更新卡等待重启时同时比较 `version` 与
   `web_build`，同版本重构建不再超时。
