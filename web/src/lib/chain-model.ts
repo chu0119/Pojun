@@ -114,6 +114,22 @@ export function effortSourceLabel(source?: string): string {
   }
 }
 
+/** 生效提示词的作用域（与后端 prompt_scope 同口径）。 */
+export function promptScopeLabel(scope?: string): string {
+  switch (scope) {
+    case "agent_override":
+      return "本 Agent 覆盖";
+    case "agent_disabled":
+      return "本 Agent 已关闭";
+    case "profile_default":
+      return "配置默认 · 生效";
+    case "profile_default_inactive":
+      return "配置默认 · 未生效";
+    default:
+      return "未配置";
+  }
+}
+
 function healthWord(m: PromptChainMCP): string {
   switch (m.health) {
     case "ok":
@@ -191,9 +207,10 @@ export function buildChainModel(chain: AgentPromptChain): ChainModel {
         id: "seg:profile_prompt",
         group: "system",
         title: "独立提示词",
-        note: profileSeg.source_label,
+        note: promptScopeLabel(chain.llm.prompt_scope),
         state: profileSeg.present ? "active" : "inactive",
-        stateWord: profileSeg.present ? "生效" : "未生效",
+        stateWord:
+          profileSeg.present ? "生效" : chain.llm.prompt_scope === "agent_disabled" ? "已关闭" : "未生效",
         chars: profileSeg.chars,
         target: { kind: "segment", key: profileSeg.key },
       }
@@ -440,7 +457,10 @@ export function buildChainModel(chain: AgentPromptChain): ChainModel {
       model: chain.llm.name ? `${chain.llm.format} · ${chain.llm.model}` : "未解析",
       profile: chain.llm.name || "未绑定",
       sourceLabel: chain.llm.source_label,
-      prompt: `${modeLabel(chain.llm.prompt_mode)} · ${chain.llm.prompt_active ? "生效" : "未生效"} · ${chain.llm.prompt_chars} 字符`,
+      prompt:
+        chain.llm.prompt_scope === "agent_disabled"
+          ? "本 Agent 已关闭（不注入）"
+          : `${promptScopeLabel(chain.llm.prompt_scope)} · ${modeLabel(chain.llm.prompt_mode)} · ${chain.llm.prompt_chars} 字符${chain.llm.prompt_active ? "" : " · 未生效"}`,
       effort: chain.llm.effort || "未设置",
       effortSource: effortSourceLabel(chain.llm.effort_source),
     },

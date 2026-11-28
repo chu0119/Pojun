@@ -1932,3 +1932,40 @@ CREATE INDEX IF NOT EXISTS idx_kb_retrieval_logs_actor ON kb_retrieval_logs(acto
 DROP TRIGGER IF EXISTS trg_kb_entries_upd ON kb_entries;
 CREATE TRIGGER trg_kb_entries_upd BEFORE UPDATE ON kb_entries
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Agent × LLM 配置的独立提示词覆盖（v0.4.123）
+-- 独立提示词原本只存在 llm_profiles.prompt：同一份配置被多个 Agent 共用时，
+-- 任何一个 Agent 的编辑都会改到全部使用者。本表把「提示词」从「配置」里解耦：
+--   · 无行        = 继承配置默认（llm_profiles.prompt，受 prompt_apply_inherited 约束）
+--   · 行 + 空正文 = 本 Agent 显式不注入（关闭）
+--   · 行 + 非空  = 覆盖配置默认（覆盖永远生效，不受继承开关限制）
+-- 删除 Agent 或配置即级联清理；同名重建不会继承旧覆盖。
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS agent_profile_prompts (
+    agent_key   TEXT   NOT NULL REFERENCES agents(key) ON DELETE CASCADE,
+    profile_id  BIGINT NOT NULL REFERENCES llm_profiles(id) ON DELETE CASCADE,
+    prompt      TEXT   NOT NULL DEFAULT '',
+    prompt_mode TEXT   NOT NULL DEFAULT '',
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (agent_key, profile_id)
+);
+CREATE INDEX IF NOT EXISTS idx_app_prompt_profile ON agent_profile_prompts(profile_id);
+-- 只接受运行时认识的四种取值（''=不注入）；保存路径会先把「非空正文 + 空模式」
+-- 归一为 prepend，这里兜住直接改库的写入。
+ALTER TABLE agent_profile_prompts
+    DROP CONSTRAINT IF EXISTS agent_profile_prompts_mode_check;
+ALTER TABLE agent_profile_prompts
+    ADD CONSTRAINT agent_profile_prompts_mode_check
+    CHECK (prompt_mode IN ('','prepend','append','replace'));
+-- 与 llm_profiles.prompt 同一组不变式：空正文 ⇔ 空模式（空正文=本 Agent 不注入），
+-- 以及 65535 码点上限。保存路径已归一化，这里兜住直接改库的写入。
+ALTER TABLE agent_profile_prompts
+    DROP CONSTRAINT IF EXISTS agent_profile_prompts_shape_check;
+ALTER TABLE agent_profile_prompts
+    ADD CONSTRAINT agent_profile_prompts_shape_check
+    CHECK ((prompt = '') = (prompt_mode = ''));
+ALTER TABLE agent_profile_prompts
+    DROP CONSTRAINT IF EXISTS agent_profile_prompts_len_check;
+ALTER TABLE agent_profile_prompts
+    ADD CONSTRAINT agent_profile_prompts_len_check
+    CHECK (char_length(prompt) <= 65535);

@@ -29,9 +29,9 @@ import { api } from "@/lib/api";
 import type { Agent, LLMProfile } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-// 全链路只读页：页头 + 舞台 + 检视器，单一纵向滚动。
+// 全链路页：页头 + 舞台 + 检视器，单一纵向滚动。
 // URL 契约：/system/agents/chain?key=<agentKey>&profile=<profileId>&view=list|map|route&sel=<对象 id>；
-// profile 只作只读预览，不改变绑定；切换 Agent 或预览配置时清空选中。
+// profile 改变的是解析预览，不改绑定；在预览中保存独立提示词会写 (本 Agent × 该配置) 的覆盖。
 
 const DEFAULT_AGENT = "worker";
 type View = "list" | "map" | "route";
@@ -199,7 +199,7 @@ function ChainPageInner() {
           <SelectTrigger
             className={cn("h-8 w-full max-w-60 font-mono text-xs", focusRing)}
             aria-label="预览 LLM 配置（不改变绑定）"
-            title="只读预览；不改变 Agent 绑定"
+            title="预览不改变 Agent 绑定；在预览中保存独立提示词会写入（本 Agent × 预览配置）的覆盖"
           >
             <span className="shrink-0 text-muted-foreground">
               {profileParam ? "预览中" : "预览配置"}

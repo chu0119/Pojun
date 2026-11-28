@@ -415,7 +415,8 @@ export default function LLMPage() {
         <div>
           <h1 className="font-semibold text-xl tracking-tight">LLM</h1>
           <p className="text-muted-foreground text-sm">
-            全 Agent 共享的格式 / 模型 / 限速配置。点击卡片编辑，星标为当前激活配置。
+            格式 / 模型 / 限速等运行参数由全 Agent 共享；独立提示词分「配置默认」与「(Agent × 配置) 覆盖」两层，
+            后者在「全链路」页按 Agent 编辑。点击卡片编辑，星标为当前激活配置。
           </p>
         </div>
         <div className="flex items-center gap-2">
